@@ -12,8 +12,24 @@ All JSON. Errors: {"detail": "<what went wrong and what to do>"} with a 4xx or 5
        -> {"removed": bool}
   POST /api/fit                                     body: {"model", "dataset", "modality": "audio", "scope": "closed"|"open"}
        -> {"job_id": str}                           409 if a run is already in progress
+                                                    409 while a replay is in progress; a finished run is recorded
+                                                    under <SENSE_HOME>/runs for replay
+                                                    a fit or replay started just after a run ends first waits
+                                                    until that run is recorded (409 if that takes over 10 s)
   GET  /api/jobs/<job_id>
        -> JobState dict                             id, request, status, events[], cards[], installed, error
+                                                    a replayed job (id "replay-...") also has
+                                                    "replay": {"of": run id, "recorded", "speed"}
+  GET  /api/runs
+       -> [{"id", "request", "status", "installed", "recorded", "origin", "seconds", "has_sense"}]
+                                                    recorded runs, newest first; origin "server" or "cli";
+                                                    has_sense: the record holds a copy of the sense it installed
+  POST /api/replay                                  body: {"run": run id, "speed": 1.0}
+       -> {"job_id": str}                           plays the recorded run back as a job (poll GET /api/jobs/<id>):
+                                                    each event when event.t / speed seconds have passed, and the
+                                                    recorded sense reinstalled at its install step. speed 0.1 to 1000.
+                                                    400 for an unknown run or a bad speed; 409 while an agent run
+                                                    or another replay is in progress
   GET  /api/samples?dataset=<name>
        -> [{"id", "label", "name"}]                 held-out example files the interface can offer
   GET  /api/samples/<id>
@@ -26,15 +42,19 @@ All JSON. Errors: {"detail": "<what went wrong and what to do>"} with a 4xx or 5
   GET  /                                            web/index.html; other files under web/ are served at /static/
 
 The server holds no model itself: it calls sense.models, sense.registry, sense.datasets and agent.jobs.
+Finished agent runs are recorded with sense.runs and played back by server.replay.
 """
 
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 import tempfile
 import threading
+import time
 from pathlib import Path
+from typing import Any
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse
@@ -45,6 +65,8 @@ from agent import jobs
 from sense import datasets, models, registry
 from sense.config import REPO
 from sense.contracts import FitRequest, SenseInput
+from sense import config, runs
+from server import replay
 
 WEB = REPO / "web"
 AUDIO_EXTENSIONS = {".wav", ".mp3", ".flac", ".ogg", ".opus", ".aif", ".aiff", ".au"}  # what soundfile reads; not .m4a
@@ -54,6 +76,11 @@ CHAT_TOKENS = 256  # the default 96 cut Qwen3.5-0.8B's replies off mid-sentence
 app = FastAPI(title="Sense harness")
 _sample_paths: dict[str, Path] = {}  # opaque id -> path, filled only from datasets.sample_files
 _chat_lock = threading.Lock()  # one model call at a time: the model objects are not thread safe
+_start_lock = threading.Lock()  # an agent run and a replay never start together
+WATCH_SECONDS = 0.5  # how often a finished agent run is looked for, to record it
+RECORD_WAIT_SECONDS = 10.0  # how long a fit or replay waits for the last finished agent run to be recorded
+_recorder: tuple[str, threading.Thread] | None = None  # (job id, watcher) of the last agent run started here
+log = logging.getLogger(__name__)
 
 
 class FitBody(RequestBody):
@@ -61,6 +88,11 @@ class FitBody(RequestBody):
     dataset: str
     modality: str = "audio"
     scope: str = "closed"
+
+
+class ReplayBody(RequestBody):
+    run: str
+    speed: Any = 1.0  # checked by server.replay, so that any bad speed is a 400
 
 
 # ----------------------------------------------------------------------------- helpers
@@ -158,15 +190,25 @@ def api_fit(body: FitBody) -> dict:
             f"{body.modality}. Pick a {body.modality} set, or ask for {dataset['modality']}."
         )
     request = FitRequest(model=body.model, dataset=body.dataset, modality=body.modality, scope=body.scope)
-    try:
-        return {"job_id": jobs.start(request)}
-    except RuntimeError as exc:
-        text = str(exc)
-        raise HTTPException(status_code=409, detail=f"{text[:1].upper()}{text[1:]}. Wait for it to finish, then start again.")
+    with _start_lock:
+        if replay.running():
+            raise HTTPException(status_code=409, detail="A replay is in progress. Wait for it to finish, then start again.")
+        _await_recording()
+        try:
+            job_id = jobs.start(request)
+        except RuntimeError as exc:
+            text = str(exc)
+            raise HTTPException(status_code=409, detail=f"{text[:1].upper()}{text[1:]}. Wait for it to finish, then start again.")
+        _record_when_finished(job_id)
+    return {"job_id": job_id}
 
 
 @app.get("/api/jobs/{job_id}")
 def api_job(job_id: str) -> dict:
+    replayed = replay.get(job_id)
+    if replayed is not None:
+        state, info = replayed
+        return state.to_dict() | {"replay": info}
     state = jobs.get(job_id)
     if state is None:
         raise _bad_request(f"Unknown job '{job_id}'. Start a run with POST /api/fit first.")
@@ -262,6 +304,73 @@ def api_chat(
     finally:
         for tmp in temp_paths:
             tmp.unlink(missing_ok=True)
+
+
+# ----------------------------------------------------------------------------- replay
+def _record_when_finished(job_id: str) -> None:
+    """Record the agent run with sense.runs once it has finished, from a daemon thread. Never raises.
+    Call with _start_lock held, so that a fit or replay started next finds this watcher in _recorder."""
+    global _recorder
+    home = config.home()
+
+    def watch() -> None:
+        try:
+            while True:
+                state = jobs.get(job_id)
+                if state is None:  # the job is gone (jobs were reset): nothing to record
+                    return
+                if state.status != "running":
+                    break
+                time.sleep(WATCH_SECONDS)
+            if config.home() != home:
+                log.warning("Agent run %s was not recorded: SENSE_HOME changed while it ran.", job_id)
+                return
+            runs.save_run(state, origin="server")
+        except Exception:
+            log.exception("Agent run %s could not be recorded for replay.", job_id)
+
+    watcher = threading.Thread(target=watch, name=f"record-run-{job_id}", daemon=True)
+    watcher.start()
+    _recorder = (job_id, watcher)
+
+
+def _await_recording() -> None:
+    """With _start_lock held: wait until the last agent run, if it has finished, has been recorded. A fit or a
+    replay started in the gap could otherwise change the registry first, and the run would be recorded without
+    the sense it installed. Raises a 409 if the recording takes longer than RECORD_WAIT_SECONDS."""
+    if _recorder is None:
+        return
+    job_id, recorder = _recorder
+    state = jobs.get(job_id)
+    if not recorder.is_alive() or state is None or state.status == "running":
+        return  # recorded already, nothing left to record, or still running (the caller then refuses to start)
+    recorder.join(RECORD_WAIT_SECONDS)
+    if recorder.is_alive():
+        raise HTTPException(status_code=409, detail="The last agent run is still being recorded. Try again in a moment.")
+
+
+@app.get("/api/runs")
+def api_runs() -> list[dict]:
+    return runs.list_runs()
+
+
+@app.post("/api/replay")
+def api_replay(body: ReplayBody) -> dict:
+    with _start_lock:
+        live = jobs.latest()
+        if live is not None and live.status == "running":
+            raise HTTPException(
+                status_code=409,
+                detail=f"An agent run on {live.request.model} is in progress. Wait for it to finish, then start the replay.",
+            )
+        _await_recording()
+        try:
+            return {"job_id": replay.start(body.run, body.speed)}
+        except ValueError as exc:
+            raise _bad_request(str(exc))
+        except RuntimeError as exc:
+            text = str(exc)
+            raise HTTPException(status_code=409, detail=f"{text[:1].upper()}{text[1:]}. Wait for it to finish, then start again.")
 
 
 # ----------------------------------------------------------------------------- interface

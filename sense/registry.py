@@ -5,6 +5,7 @@ Public surface (do not rename):
   installed(model_name) -> list[dict]           [{"bridge", "kind", "modality", "dataset", "card": ReportCard dict}]
   get_bridges(model_name) -> list[Bridge]       loaded bridges for chat, one per modality
   uninstall(model_name, modality) -> bool
+  sense_dir(model_name, modality) -> Path       where the sense of that model and modality lives (it may not exist)
 
 Layout: <home>/<model_name>/<modality>/card.json plus whatever Bridge.save writes.
 The saved card always has verdict "installed". A sense is written to a temporary directory first and then
@@ -76,6 +77,10 @@ def uninstall(model_name: str, modality: str) -> bool:
         return False
     shutil.rmtree(target)
     return True
+
+
+def sense_dir(model_name: str, modality: str) -> Path:
+    return _sense_dir(model_name, modality)
 
 
 def _safe(part: str) -> str:
