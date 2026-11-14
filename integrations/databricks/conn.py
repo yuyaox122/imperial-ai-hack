@@ -109,7 +109,6 @@ def warehouse() -> Warehouse:
 
 
 def experiment_path() -> str:
-    path = os.environ.get("SENSE_DBX_EXPERIMENT")
-    if path:
-        return path
-    return f"/Users/{client().current_user.me().user_name}/sensorium"
+    path = os.environ.get("SENSE_DBX_EXPERIMENT") or f"/Users/{client().current_user.me().user_name}/sensorium"
+    client().workspace.mkdirs(path.rsplit("/", 1)[0])  # a new workspace may not have the home folder yet
+    return path
