@@ -3,8 +3,8 @@
 Status: approved by the team lead (Yuyao) on Saturday 14 November at 18:17, as proposed by Michael at
 about 17:45. Four workloads, one per teammate, built on the prototype on `main` (PR #13).
 
-Owners: Jayden has workload 1, Michael workload 2 and Alex workload 3. Workload 4 has no owner yet; the
-lead will decide. The owner table is in `AGENTS.md`.
+Owners: Jayden has workload 1, Michael workload 2 and Alex workload 3. Yuyao took workload 4
+at 19:00 (issue #39). The owner table is in `AGENTS.md`.
 
 The lead also confirmed the main track, Autonomous Agents, and the sponsor prizes, Databricks and
 Linkup.
@@ -143,7 +143,6 @@ run.
 
 ## Still open for the lead
 
-- Who takes workload 4.
 - Whether to commit the cached embeddings to a repository that goes public on Sunday. They are 39 MB in
   total: 2.2 MB for GTZAN, 4.4 MB for ESC-50 and 34.8 MB for the AudioCaps caption text that the
   open-scope text bridge needs. Workload 2's fetch and rebuild steps may make committing them unnecessary.
