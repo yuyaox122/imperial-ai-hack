@@ -21,7 +21,6 @@ With --save PATH, the run is also written to PATH as JSON when it ends, whether 
 Exit status: 0 when the run finished (installed or refused), 1 when it failed, --save could not write its file,
 the folder could not make a set, or the set cannot carry this run (sense.datasets.fit_problem, checked before the
 run starts: for example scope open on a set with fewer than 3 labels).
->>>>>>> 21aed6a (Score free-text answers through a bridge and save CLI run records)
 """
 
 from __future__ import annotations

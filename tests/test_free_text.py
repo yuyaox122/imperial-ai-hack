@@ -6,16 +6,18 @@ Run: SENSE_FAKE=1 .venv/bin/python -m pytest -q tests/test_free_text.py
 
 from __future__ import annotations
 
+import dataclasses
 import importlib.util
 import json
 import sys
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from sense import bridges, config, datasets, models, registry
 from sense.contracts import FitRequest, JobState
-from sense.verify import free_text, labels_named, verify
+from sense.verify import _wilson, free_text, labels_named, verify
 
 SCRIPTS = Path(__file__).resolve().parent.parent / "scripts"
 
@@ -119,7 +121,8 @@ def test_free_text_through_a_vector_bridge_beats_its_controls(model, gtzan, vect
 
     examples = result["examples"]
     assert 1 <= len(examples) <= 10
-    assert len({ex["label"] for ex in examples}) > 1  # spread over the held-out clips, not ten of one label
+    # spread over the held-out clips: the first ten fake GTZAN clips cover only two labels
+    assert len({ex["label"] for ex in examples}) >= 5
     for ex in examples:
         assert set(ex) == {"source", "label", "reply", "named"}
         assert ex["label"] in gtzan.labels and ex["reply"]
@@ -132,6 +135,38 @@ def test_free_text_is_seeded_and_respects_max_items(model, gtzan, vector_bridge)
     assert a["n"] == 12 and a["result"]["n"] == 12 and a["max_new_tokens"] == 8 and a["seed"] == 3
     assert (a["result"], a["controls"], a["examples"]) == (b["result"], b["controls"], b["examples"])
     assert all(len(ex["reply"].split()) <= 8 for ex in a["examples"])
+    c = free_text(model, vector_bridge, gtzan, max_items=12, seed=4, max_new_tokens=8)
+    assert [ex["source"] for ex in a["examples"]] != [ex["source"] for ex in c["examples"]]  # the seed picks the clips
+
+
+def test_names_true_only_counts_a_reply_that_also_names_a_wrong_label_as_a_miss(model, gtzan, vector_bridge):
+    """The fake model names one label per reply, so names_true_only would equal names_true. A model that hedges
+    with a second label shows the two apart."""
+
+    class Hedger:
+        info = model.info
+
+        def chat(self, message, inputs, max_new_tokens=96):
+            return model.chat(message, inputs, max_new_tokens) + " Or maybe rock."
+
+    result = free_text(Hedger(), vector_bridge, gtzan)["result"]
+    rock = float(np.mean(gtzan.y[gtzan.test_idx] == gtzan.labels.index("rock")))
+    assert 0 < rock < 0.5  # only the rock clips name the true label and nothing else
+    assert result["names_true"] == 1.0 and result["names_none"] == 0.0
+    assert result["names_true_only"] == round(rock, 4)
+    assert result["names_other"] == round(1 - rock, 4)
+    assert result["interval"] == _wilson(rock, result["n"])
+
+
+def test_free_text_explains_a_draw_of_only_one_label(model, gtzan, vector_bridge):
+    with pytest.raises(ValueError, match=r"all of one label.*Raise max_items or change the seed"):
+        free_text(model, vector_bridge, gtzan, max_items=1)
+
+    y = gtzan.y.copy()
+    y[gtzan.test_idx] = 0
+    one_label = dataclasses.replace(gtzan, y=y)
+    with pytest.raises(ValueError, match="held-out split has at least two labels"):
+        free_text(model, vector_bridge, one_label)
 
 
 def test_free_text_through_a_text_bridge(model):
@@ -152,12 +187,14 @@ def test_free_text_refuses_a_bridge_built_for_another_model(model, gtzan, vector
 def test_score_free_text_writes_results_with_build_and_machine(tmp_path, capsys):
     out = tmp_path / "results" / "free_text.json"
     script = load_script("score_free_text")
-    assert script.main(["--model", "fake", "--dataset", "gtzan", "--max-items", "20", "--out", str(out)]) == 0
+    argv = ["--model", "fake", "--dataset", "gtzan", "--max-items", "20", "--tokens", "8", "--seed", "3"]
+    assert script.main([*argv, "--out", str(out)]) == 0
     printed = capsys.readouterr().out
     assert "names true only" in printed and "swapped input" in printed and str(out) in printed
 
     record = json.loads(out.read_text())
     assert record["bridge"] == "vector:gtzan" and record["n"] == 20
+    assert record["max_new_tokens"] == 8 and record["seed"] == 3
     assert record["result"]["names_true_only"] >= 0.8
     build = record["build"]
     assert {"seconds", "fit_seconds", "layer", "dev_accuracy"} <= set(build) and build["installed"] is False
@@ -194,6 +231,14 @@ def test_score_free_text_uses_the_installed_sense(model, gtzan, vector_bridge, t
     record = json.loads(out.read_text())
     assert record["bridge"] == "vector:gtzan" and record["build"]["installed"] is True
     assert record["build"]["layer"] == vector_bridge.layer
+
+
+def test_score_free_text_needs_room_for_two_labels(tmp_path, capsys):
+    out = tmp_path / "x.json"
+    with pytest.raises(SystemExit) as stop:
+        load_script("score_free_text").main(["--model", "fake", "--max-items", "1", "--out", str(out)])
+    assert stop.value.code == 2 and not out.exists()
+    assert "--max-items must be at least 2" in capsys.readouterr().err
 
 
 def test_score_free_text_fails_clearly_for_an_unknown_model(tmp_path, capsys):

@@ -124,8 +124,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--out", type=Path, default=None, help="where to write the JSON (default: "
                     "socket_pilot/artifacts/free_text_<model>_<dataset>_<bridge>.json)")
     args = ap.parse_args(argv)
-    if args.max_items < 1:
-        ap.error("--max-items must be at least 1.")
+    if args.max_items < 2:
+        ap.error("--max-items must be at least 2: the swapped-input control needs clips of two labels.")
     if args.tokens < 1:
         ap.error("--tokens must be at least 1.")
 

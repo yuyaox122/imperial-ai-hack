@@ -26,9 +26,10 @@ request; the lookup and specialist-alone controls ask nothing (sense.models_api 
 the same questions again asks the API nothing). Fewer items give a wider interval: the card's `n` says how many
 were scored and its `interval` how certain the accuracy is. An explicit max_items is used as given.
 
-free_text asks the same held-out clips an open question instead (dataset.question plus " Answer in a few
-words.") and counts how often the reply names the true label, under the same swapped and no-input controls.
-It returns a plain dict for a results file; nothing it measures goes on the ReportCard.
+free_text asks held-out clips from the same split (dataset.test_idx) an open question instead (dataset.question
+plus " Answer in a few words.") and counts how often the reply names the true label, under the same swapped and
+no-input controls. It draws its own sample, so with different max_items its clips need not be the clips on a
+report card. It returns a plain dict for a results file; nothing it measures goes on the ReportCard.
 """
 
 from __future__ import annotations
@@ -222,9 +223,19 @@ def free_text(
     test = _subsample(dataset.test_idx, max_items, rng)
     if len(test) == 0:
         raise ValueError(f"Dataset {dataset.name} has no held-out examples to score free-text answers on.")
+    truth = dataset.y[test]
+    if len(np.unique(truth)) < 2:
+        fix = (
+            "Raise max_items or change the seed."
+            if len(test) < len(dataset.test_idx)
+            else "Use a dataset whose held-out split has at least two labels."
+        )
+        raise ValueError(
+            f"The {len(test)} held-out clips drawn from {dataset.name} (max_items={max_items}, seed={seed}) are all "
+            f"of one label, so the swapped-input control cannot run. {fix}"
+        )
     swap = _swap_partners(test, dataset.y, rng)
     prompt = dataset.question + FREE_TEXT_SUFFIX
-    truth = dataset.y[test]
 
     def replies(inputs: list[list[SenseInput]]) -> list[str]:
         return [model.chat(prompt, inp, max_new_tokens=max_new_tokens) for inp in inputs]
