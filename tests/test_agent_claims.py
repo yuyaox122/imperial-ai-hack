@@ -210,3 +210,23 @@ def test_discovery_to_dict(monkeypatch):
     assert set(out) == {"claims", "chosen", "fallback", "origin", "note"}
     assert out["claims"][0]["subject"] == CLAP and isinstance(out["claims"][0], dict)
     assert isinstance(Discovery([], None, False, "live", "n").to_dict()["claims"], list)
+
+
+@pytest.mark.parametrize("chance", [0.5, 1 / 3, 0.2, 0.17])
+def test_evidence_does_not_invent_choice_count(chance):
+    c = claim()
+    settle_specialist_claims([c], CLAP, [card(0.9, chance=chance)])
+    assert "held-out questions" in c.evidence and "five-option" not in c.evidence
+    assert f"chance {chance:.1%}" in c.evidence
+
+
+def test_hub_outage_uses_fallback_without_refuting_claim(monkeypatch):
+    monkeypatch.setattr(research, "search_structured", searching([item(CLAP)]))
+    def unavailable(_):
+        raise ResearchUnavailable("HTTP 503: maintenance")
+    monkeypatch.setattr(research, "hub_model", unavailable)
+    result = find_specialists("audio", "wav", "sounds")
+    assert result.chosen is None and result.fallback
+    assert result.claims[0].status == "unverified"
+    assert "503" in result.claims[0].evidence and "503" in result.note
+    assert "no such" not in result.claims[0].evidence

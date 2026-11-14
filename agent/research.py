@@ -5,8 +5,8 @@ Public surface (do not rename):
   ResearchUnavailable                       raised when an answer cannot be had; the message names the cause
   Research(data, sources, origin)           sources are [{"name", "url", "snippet"}]; origin "live" | "cache" | "fake"
   search_structured(query, schema, *, include_domains=None, max_results=8, timeout=25.0) -> Research
-  hub_model(hub_id) -> dict | None          {"id", "pipeline_tag", "licence", "downloads"}; None if absent/unreachable
-  hub_dataset(hub_id) -> dict | None        {"id", "licence", "downloads"}; None if absent or unreachable
+  hub_model(hub_id) -> dict | None          {"id", "pipeline_tag", "licence", "downloads"}; None only for HTTP 404; raises if unavailable
+  hub_dataset(hub_id) -> dict | None        {"id", "licence", "downloads"}; None only for HTTP 404; raises if unavailable
   viewer(endpoint, **params) -> dict        GET https://datasets-server.huggingface.co/<endpoint>?<params>
   download(url, dest, *, timeout=20.0, max_bytes=20_000_000) -> int   bytes written to dest
 
@@ -21,8 +21,8 @@ port or downgrades https to http.
 
 Cache: each successful live JSON answer is saved as <SENSE_HOME>/research/<sha256(method, url, body)[:16]>.json
 (never the key or any header). On a network or HTTP error, or with no Linkup key, the cached answer is served
-with origin "cache"; with none, ResearchUnavailable names the cause. A Hub 401 or 404 means "no such repo"
-(the Hub answers 401 for a missing repo when no token is sent) and gives None without reading the cache.
+with origin "cache"; with none, ResearchUnavailable names the cause. A Hub 404 gives None without reading the cache. Access denial (including 401), outages and malformed
+records remain unavailable, since they cannot establish that a repository is missing.
 Downloads are not cached: download writes beside dest under a temporary name and renames on success, so a
 failed or oversized download leaves nothing at dest.
 
@@ -39,6 +39,9 @@ import http.client
 import json
 import os
 import re
+import socket
+import threading
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -54,11 +57,11 @@ HUB_API = "https://huggingface.co/api"
 VIEWER_URL = "https://datasets-server.huggingface.co"
 USER_AGENT = "sense-agent/0.1"
 SNIPPET_CHARS = 300  # a source's content is cut to this many characters
-MAX_RESPONSE_BYTES = 200_000_000  # _http never holds more than this in memory
+MAX_RESPONSE_BYTES = 200_000_000  # JSON body cap; downloads pass their smaller allowance
 _ERROR_BODY_CHARS = 200  # how much of an error response is quoted in ResearchUnavailable
 _HUB_ID = re.compile(r"^[\w.-]+(/[\w.-]+)?$")
 _ENDPOINT = re.compile(r"^[a-z][a-z-]*$")
-_NO_REPO = (401, 404)
+_NO_REPO = (404,)
 _FAKE_URL = "https://example.org/fake/"
 
 
@@ -190,6 +193,8 @@ def search_structured(
 def _linkup_problem(answer: object) -> str | None:
     """Why a Linkup answer is unusable (no "data" object), naming at most 10 top-level keys; None if usable."""
     if isinstance(answer, dict) and isinstance(answer.get("data"), dict):
+        if answer.get("sources") is not None and not isinstance(answer["sources"], list):
+            return "Linkup answered with invalid sources (expected a list)"
         return None
     if isinstance(answer, dict):
         keys = ", ".join(sorted(str(k) for k in answer)[:10]) or "none"
@@ -220,7 +225,7 @@ def hub_dataset(hub_id: str) -> dict | None:
     return {"id": info.get("id") or hub_id, "licence": _licence(info), "downloads": info.get("downloads")}
 
 
-def viewer(endpoint: str, **params) -> dict:
+def viewer(endpoint: str, *, timeout: float = 25.0, **params) -> dict:
     if config.fake():
         raise ResearchUnavailable("fake mode has no network")
     if not _ENDPOINT.match(endpoint):
@@ -228,7 +233,7 @@ def viewer(endpoint: str, **params) -> dict:
     url = f"{VIEWER_URL}/{endpoint}"
     if params:
         url += "?" + urllib.parse.urlencode(params)
-    answer, _ = _fetch_json("GET", url, timeout=25.0)
+    answer, _ = _fetch_json("GET", url, timeout=timeout)
     if not isinstance(answer, dict):
         raise ResearchUnavailable(f"the dataset viewer's {endpoint} answer is not a JSON object")
     return answer
@@ -239,11 +244,18 @@ def download(url: str, dest: Path, *, timeout: float = 20.0, max_bytes: int = 20
         raise ResearchUnavailable("fake mode has no network")
     _check_download_url(url)
     try:
-        data = _http("GET", url, timeout=timeout)
+        data = _http("GET", url, timeout=timeout, max_bytes=max_bytes)
     except _NETWORK_ERRORS + (ValueError,) as exc:  # ValueError includes UnicodeError
-        raise ResearchUnavailable(f"download from {_host(url)} failed: {_describe(exc, url)}") from exc
+        cause = _describe(exc, url, read_body=False)
+        if isinstance(exc, urllib.error.HTTPError):
+            exc.close()
+        failure = ResearchUnavailable(f"download from {_host(url)} failed: {cause}")
+        failure.bytes_received = getattr(exc, "bytes_received", 0)
+        raise failure from exc
     if len(data) > max_bytes:
-        raise ResearchUnavailable(f"download from {_host(url)} is {len(data):,} bytes, over the {max_bytes:,} limit")
+        failure = ResearchUnavailable(f"download from {_host(url)} is {len(data):,} bytes, over the {max_bytes:,} limit")
+        failure.bytes_received = len(data)
+        raise failure
     dest = Path(dest)
     dest.parent.mkdir(parents=True, exist_ok=True)
     tmp = dest.with_name(f".{dest.name}.{uuid.uuid4().hex[:8]}.part")
@@ -287,8 +299,14 @@ class _RedirectGuard(urllib.request.HTTPRedirectHandler):
         return redirected
 
 
-def _http(method: str, url: str, *, body: dict | None = None, headers: dict | None = None, timeout: float) -> bytes:
-    """The only function that opens a connection. Raises urllib/OS errors as they come."""
+def _http(method: str, url: str, *, body: dict | None = None, headers: dict | None = None,
+          timeout: float, max_bytes: int = MAX_RESPONSE_BYTES) -> bytes:
+    """Open a connection and read a bounded body within timeout, with one overflow probe byte.
+
+    urllib/OS errors retain their type and carry bytes_received for discarded body data.
+    Connection setup uses urllib's timeout; DNS resolution is controlled by the OS.
+    """
+    deadline = time.monotonic() + timeout
     data = json.dumps(body).encode() if body is not None else None
     all_headers = {"User-Agent": USER_AGENT, "Accept": "application/json, */*"}
     if data is not None:
@@ -296,11 +314,49 @@ def _http(method: str, url: str, *, body: dict | None = None, headers: dict | No
     all_headers.update(headers or {})
     request = urllib.request.Request(url, data=data, headers=all_headers, method=method)
     opener = urllib.request.build_opener(_RedirectGuard)
-    with opener.open(request, timeout=timeout) as response:
-        payload = response.read(MAX_RESPONSE_BYTES + 1)
-    if len(payload) > MAX_RESPONSE_BYTES:
-        raise ResearchUnavailable(f"the answer from {_host(url)} is over {MAX_RESPONSE_BYTES:,} bytes")
-    return payload
+    payload = bytearray()
+    try:
+        with opener.open(request, timeout=timeout) as response:
+            # The socket belongs to this response (urllib does not pool it). A
+            # watchdog also bounds internal chunk-framing reads, which may perform
+            # multiple socket reads inside HTTPResponse.read1 under a trickle stream.
+            sock = getattr(getattr(getattr(response, "fp", None), "raw", None), "_sock", None)
+            timer = None
+            if sock is not None and hasattr(sock, "shutdown"):
+                timer = threading.Timer(max(0, deadline - time.monotonic()), _stop_stream, args=(sock,))
+                timer.daemon = True
+                timer.start()
+            try:
+                while True:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise ResearchUnavailable("response deadline reached")
+                    # Shrink each wait to the remaining wall time; read1 returns
+                    # available data rather than waiting to fill a large read.
+                    if sock is not None:
+                        sock.settimeout(remaining)
+                    chunk = response.read1(min(64 * 1024, max_bytes + 1 - len(payload)))
+                    payload.extend(chunk)
+                    if len(payload) > max_bytes:
+                        raise ResearchUnavailable(f"the answer from {_host(url)} is over the {max_bytes:,} byte limit")
+                    if time.monotonic() >= deadline:
+                        raise ResearchUnavailable("response deadline reached")
+                    if not chunk:
+                        break
+            finally:
+                if timer is not None:
+                    timer.cancel()
+    except _NETWORK_ERRORS as exc:
+        exc.bytes_received = len(payload) + len(getattr(exc, "partial", b""))
+        raise
+    return bytes(payload)
+
+
+def _stop_stream(sock: socket.socket) -> None:
+    try:
+        sock.shutdown(socket.SHUT_RDWR)
+    except OSError:
+        pass  # The response may already have closed while the timer was firing.
 
 
 _NETWORK_ERRORS = (OSError, http.client.HTTPException, ResearchUnavailable)  # URLError and timeouts are OSError
@@ -363,15 +419,25 @@ def _write_cache(method: str, url: str, body: dict | None, answer: object) -> No
 
 
 def _hub(kind: str, hub_id: str) -> dict | None:
-    """The Hub's JSON for a model or dataset repo; None when the id is malformed, absent or unreachable."""
+    """The Hub record; None only for HTTP 404, unavailable/invalid responses raise."""
     if not isinstance(hub_id, str) or not _HUB_ID.match(hub_id) or {".", ".."} & set(hub_id.split("/")):
-        return None
+        raise ResearchUnavailable("invalid Hugging Face repository id")
     url = f"{HUB_API}/{kind}/{urllib.parse.quote(hub_id, safe='/')}"
-    try:
-        answer, _ = _fetch_json("GET", url, timeout=15.0, absent=_NO_REPO)
-    except ResearchUnavailable:
+    answer, origin = _fetch_json("GET", url, timeout=15.0, absent=_NO_REPO, check=_hub_problem)
+    # _fetch_json produces live None only for the explicit absent status; cached
+    # JSON null is malformed data, never evidence that a repository is missing.
+    if answer is None and origin == "live":
         return None
-    return answer if isinstance(answer, dict) else None
+    problem = _hub_problem(answer)
+    if problem:
+        raise ResearchUnavailable(problem)
+    return answer
+
+
+def _hub_problem(answer: object) -> str | None:
+    if not isinstance(answer, dict) or not isinstance(answer.get("id"), str) or not answer["id"]:
+        return "the Hugging Face Hub returned an invalid repository record (expected an object with an id)"
+    return None
 
 
 def _licence(info: dict) -> str | None:
@@ -382,7 +448,8 @@ def _licence(info: dict) -> str | None:
         value = ", ".join(str(v) for v in value if v) or None
     if isinstance(value, str) and value:
         return value
-    for tag in info.get("tags") or []:
+    tags = info.get("tags")
+    for tag in tags if isinstance(tags, list) else []:
         if isinstance(tag, str) and tag.startswith("license:"):
             return tag.partition(":")[2] or None
     return None
@@ -395,13 +462,13 @@ def _host(url: str) -> str:
         return "the server"
 
 
-def _describe(exc: Exception, url: str) -> str:
+def _describe(exc: Exception, url: str, *, read_body: bool = True) -> str:
     """A short cause for an error message. Never includes headers, and the Linkup key is masked."""
     if isinstance(exc, urllib.error.HTTPError):
         text = f"HTTP {exc.code}"
         if exc.code == 429:
             text += " (rate limit or credit used up)" if _host(url) == "api.linkup.so" else " (rate limit)"
-        detail = _error_body(exc)
+        detail = _error_body(exc) if read_body else ""
         if detail:
             text += f": {detail}"
     elif isinstance(exc, urllib.error.URLError):

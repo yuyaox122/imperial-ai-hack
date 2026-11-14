@@ -227,7 +227,8 @@ def test_fetch_sample_reads_the_recorded_viewer_shape(monkeypatch, tmp_path, hub
     r = fetch_sample(DatasetCandidate("renumics/esc50", "ESC-50", "https://huggingface.co/datasets/renumics/esc50"),
                      tmp_path / "s", "open")
     assert r.labels == {"dog": 30, "chirping_birds": 30, "vacuum_cleaner": 30} and r.n_rows_total == 2000
-    assert calls[0] == ("splits", {"dataset": "renumics/esc50"})
+    assert calls[0][0] == "splits" and calls[0][1]["dataset"] == "renumics/esc50"
+    assert 0 < calls[0][1]["timeout"] <= 25
     url, dest = written[0]
     assert url.startswith("https://datasets-server.huggingface.co/cached-assets/renumics/esc50/") and dest.suffix == ".wav"
     assert not any("src" in p.name or "http" in str(p) for p in (tmp_path / "s").rglob("*"))
@@ -487,3 +488,58 @@ def test_ask_json_failures_are_none(monkeypatch, live_llm, kw):
 def test_ask_json_unserialisable_data_is_none(monkeypatch, live_llm):
     fake_openai(monkeypatch)
     assert llm.ask_json("i", {"x": float("nan")}, SCHEMA) is None
+
+
+@pytest.mark.parametrize("labels,string_labels", [(["A+B", "A-B"], False), (["A+B", "A-B"], True),
+                                                   (["X" * 41, "X" * 40 + "Y"], False)])
+def test_colliding_label_folders_are_rejected_without_a_sample(monkeypatch, tmp_path, hub, labels, string_labels):
+    viewer = FakeViewer(60, lambda i: labels[i % 2] if string_labels else i % 2,
+                        [AUDIO_FEATURE, string_column("label") if string_labels else class_label(labels)])
+    written = hub(viewer)
+    with pytest.raises(DataUnavailable, match="collid"):
+        fetch_sample(CAND, tmp_path / "sample", "closed")
+    assert not written and not (tmp_path / "sample").exists()
+
+
+def test_malformed_audio_url_is_skipped_without_raw_error(tmp_path, hub):
+    viewer = FakeViewer(60, lambda i: i % 2, [AUDIO_FEATURE, class_label(["a", "b"])],
+                        cell=lambda i: {"src": "http://[::1/a.wav"})
+    written = hub(viewer)
+    with pytest.raises(DataUnavailable):
+        fetch_sample(CAND, tmp_path / "sample", "closed")
+    assert not written and not (tmp_path / "sample").exists()
+
+
+@pytest.mark.parametrize("kind", [[], {}, 1])
+def test_need_invalid_kind_falls_back(monkeypatch, kind):
+    monkeypatch.setattr(llm, "ask_json", lambda *a, **k: {"kind": kind, "labels": [], "reason": "bad"})
+    assert decide_need("describe anything", AUDIO).kind == "probe"
+
+
+@pytest.mark.parametrize("field", ["splits", "rows"])
+def test_invalid_viewer_collections_fail_with_cleanup(monkeypatch, tmp_path, hub, field):
+    good = cycling(["a", "b"])
+    def viewer(endpoint, **params):
+        answer = good(endpoint, **params)
+        return answer | {field: 1} if endpoint == field else answer
+    hub(viewer)
+    with pytest.raises(DataUnavailable, match=field):
+        fetch_sample(CAND, tmp_path / "sample", "closed")
+    assert not (tmp_path / "sample").exists()
+
+
+def test_dataset_hub_outage_keeps_claim_unknown_and_cause(monkeypatch):
+    monkeypatch.setattr(research, "search_structured", lambda *a, **k: Research(
+        {"datasets": [dataset_item("o/a")]}, [], "live"))
+    def unavailable(_):
+        raise ResearchUnavailable("HTTP 503: maintenance")
+    monkeypatch.setattr(research, "hub_dataset", unavailable)
+    candidates, claims, _ = find_datasets(DataNeed("labelled", "closed", [], "r"), "audio", "g")
+    assert candidates and claims[0].status == "unverified"
+    assert "503" in claims[0].evidence and "no such" not in claims[0].evidence
+
+
+def test_fake_dataset_claim_keeps_explicit_fake_provenance(monkeypatch):
+    monkeypatch.setenv("SENSE_FAKE", "1")
+    _, claims, _ = find_datasets(DataNeed("labelled", "closed", [], "r"), "audio", "g")
+    assert "Fake claim for tests" in claims[0].statement

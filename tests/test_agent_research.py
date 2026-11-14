@@ -36,14 +36,14 @@ def http_error(code: int, body: bytes = b"") -> urllib.error.HTTPError:
 
 
 def raising(exc: Exception):
-    def http(method, url, *, body=None, headers=None, timeout):
+    def http(method, url, *, body=None, headers=None, timeout, **limits):
         raise exc
 
     return http
 
 
 def returning(data: bytes, calls: list | None = None):
-    def http(method, url, *, body=None, headers=None, timeout):
+    def http(method, url, *, body=None, headers=None, timeout, **limits):
         if calls is not None:
             calls.append((method, url, body, headers))
         return data
@@ -63,7 +63,7 @@ def live_mode(monkeypatch, tmp_path):
 def test_linkup_request_is_exactly_as_documented(monkeypatch, tmp_path, live_mode):
     calls = []
 
-    def http(method, url, *, body=None, headers=None, timeout):
+    def http(method, url, *, body=None, headers=None, timeout, **limits):
         calls.append((method, url, body, headers))
         return json.dumps({"data": {"specialists": []}, "sources": []}).encode()
 
@@ -209,16 +209,17 @@ def test_licence_falls_back_to_the_licence_tag(monkeypatch, live_mode):
     assert research.hub_dataset("a/b")["licence"] == "mit"
 
 
-@pytest.mark.parametrize("code", [404, 401])  # the Hub answers 401, not 404, for a missing repo without a token
+@pytest.mark.parametrize("code", [404])
 def test_hub_404_is_none(monkeypatch, live_mode, code):
     monkeypatch.setattr(research, "_http", raising(http_error(code, fixture("hub_model_missing_http401.json"))))
     assert research.hub_model("example/does-not-exist") is None
     assert research.hub_dataset("example/does-not-exist") is None
 
 
-def test_unreachable_hub_with_no_cache_is_none_and_a_cached_answer_is_served(monkeypatch, live_mode):
+def test_unreachable_hub_raises_without_cache_and_serves_cached_answer(monkeypatch, live_mode):
     monkeypatch.setattr(research, "_http", raising(urllib.error.URLError("network down")))
-    assert research.hub_model("laion/clap-htsat-unfused") is None
+    with pytest.raises(research.ResearchUnavailable, match="network down"):
+        research.hub_model("laion/clap-htsat-unfused")
     monkeypatch.setattr(research, "_http", returning(fixture("hub_model_laion_clap-htsat-unfused.json")))
     live = research.hub_model("laion/clap-htsat-unfused")
     monkeypatch.setattr(research, "_http", raising(TimeoutError("timed out")))
@@ -232,10 +233,12 @@ def test_a_repo_that_has_gone_is_none_even_with_a_cached_answer(monkeypatch, liv
     assert research.hub_model("laion/clap-htsat-unfused") is None
 
 
-def test_a_malformed_hub_id_is_none_without_a_request(monkeypatch, live_mode):
+def test_a_malformed_hub_id_is_unavailable_without_a_request(monkeypatch, live_mode):
     monkeypatch.setattr(research, "_http", boom)
-    assert research.hub_model("../../etc/passwd") is None
-    assert research.hub_dataset("not a hub id") is None
+    with pytest.raises(research.ResearchUnavailable, match="invalid"):
+        research.hub_model("../../etc/passwd")
+    with pytest.raises(research.ResearchUnavailable, match="invalid"):
+        research.hub_dataset("not a hub id")
 
 
 # ----------------------------------------------------------------------------- dataset viewer
@@ -406,3 +409,209 @@ def test_an_error_body_is_read_at_most_4096_bytes(monkeypatch, live_mode):
 def test_fake_clap_has_the_live_pipeline_tag(monkeypatch):
     monkeypatch.setenv("SENSE_FAKE", "1")
     assert research.hub_model("laion/clap-htsat-unfused")["pipeline_tag"] == "feature-extraction"
+
+
+@pytest.mark.parametrize("sources", [1, {}, "bad"])
+def test_malformed_search_sources_are_unavailable(monkeypatch, live_mode, sources):
+    monkeypatch.setattr(research, "_http", returning(json.dumps({"data": {}, "sources": sources}).encode()))
+    with pytest.raises(research.ResearchUnavailable, match="sources"):
+        research.search_structured("q", SPECIALIST_SCHEMA_LIKE)
+
+
+@pytest.mark.parametrize("error", [TimeoutError("timed out"), http_error(503)])
+@pytest.mark.parametrize("lookup", [research.hub_model, research.hub_dataset])
+def test_hub_outage_is_unknown_not_missing(monkeypatch, live_mode, error, lookup):
+    monkeypatch.setattr(research, "_http", raising(error))
+    with pytest.raises(research.ResearchUnavailable, match="timed out|503"):
+        lookup("example/unavailable")
+
+
+class ControlledResponse:
+    """Transport fixture exposing bounded reads, elapsed time and socket timeouts."""
+    def __init__(self, payload, clock=None, delay=0, fail_after=None):
+        self.payload, self.clock, self.delay, self.fail_after = payload, clock, delay, fail_after
+        self.received, self.requests, self.timeouts, self.closed = 0, [], [], False
+        from types import SimpleNamespace
+        self.fp = SimpleNamespace(raw=SimpleNamespace(_sock=self))
+
+    def settimeout(self, timeout):
+        self.timeouts.append(timeout)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        self.closed = True
+
+    def read(self, size):
+        return self.read1(size)
+
+    def read1(self, size):
+        self.requests.append(size)
+        if self.clock is not None:
+            remaining = self.timeouts[-1] if self.timeouts else float("inf")
+            self.clock[0] += min(self.delay, remaining)
+            if self.delay >= remaining:
+                raise TimeoutError("timed out during stream")
+        if self.fail_after is not None and self.received >= self.fail_after:
+            raise ConnectionResetError("stream reset")
+        chunk = self.payload[self.received:self.received + min(size, 4)]
+        self.received += len(chunk)
+        return chunk
+
+
+def transport(monkeypatch, response):
+    from types import SimpleNamespace
+    monkeypatch.setattr(research.urllib.request, "build_opener",
+                        lambda *a: SimpleNamespace(open=lambda *a, **k: response))
+
+
+def test_download_enforces_byte_limit_in_transport(monkeypatch, live_mode, tmp_path):
+    response = ControlledResponse(b"x" * 1000)
+    transport(monkeypatch, response)
+    with pytest.raises(research.ResearchUnavailable, match="limit|over") as caught:
+        research.download("https://example.org/audio.wav", tmp_path / "audio.wav", max_bytes=10)
+    assert response.received <= 11 and max(response.requests) <= 11
+    assert caught.value.bytes_received == response.received and response.closed
+    assert not (tmp_path / "audio.wav").exists()
+
+
+def test_download_deadline_bounds_slow_stream(monkeypatch, live_mode, tmp_path):
+    clock = [0.0]
+    import time
+    monkeypatch.setattr(time, "monotonic", lambda: clock[0])
+    response = ControlledResponse(b"x" * 1000, clock, delay=0.4)
+    transport(monkeypatch, response)
+    with pytest.raises(research.ResearchUnavailable, match="timed out|deadline") as caught:
+        research.download("https://example.org/audio.wav", tmp_path / "audio.wav", timeout=1)
+    assert clock[0] <= 1.0 and response.received <= 8 and response.closed
+    assert caught.value.bytes_received == response.received
+    assert not (tmp_path / "audio.wav").exists()
+
+
+@pytest.mark.parametrize("code", [401, 403])
+def test_hub_access_denial_is_unknown(monkeypatch, live_mode, code):
+    monkeypatch.setattr(research, "_http", raising(http_error(code)))
+    with pytest.raises(research.ResearchUnavailable, match=str(code)):
+        research.hub_model("example/private")
+
+
+@pytest.mark.parametrize("payload", [b"null", b"[]", b"{}", b'{"error": "maintenance"}', b"not json"])
+def test_malformed_hub_record_is_unknown(monkeypatch, live_mode, payload):
+    monkeypatch.setattr(research, "_http", returning(payload))
+    with pytest.raises(research.ResearchUnavailable):
+        research.hub_dataset("example/dataset")
+
+
+def test_sample_aborts_partial_transfer_and_cleans_up(monkeypatch, live_mode, tmp_path):
+    from agent import data
+    response = ControlledResponse(b"x" * 1000, fail_after=4)
+    opened = install_sample_transport(monkeypatch, [response])
+    with pytest.raises(data.DataUnavailable, match="discarded bytes.*stream reset"):
+        data.fetch_sample(data.DatasetCandidate("o/d", "D", "https://example.org"), tmp_path / "sample", "closed")
+    assert len(opened) == 1 and response.received == 4 and response.closed
+    assert not (tmp_path / "sample").exists()
+
+
+def test_sample_passes_remaining_byte_budget_to_transport(monkeypatch, live_mode, tmp_path):
+    from agent import data
+    monkeypatch.setattr(data, "MAX_BYTES", 10)
+    success, oversized = ControlledResponse(b"1234"), ControlledResponse(b"x" * 1000)
+    opened = install_sample_transport(monkeypatch, [success, oversized])
+    with pytest.raises(data.DataUnavailable, match="byte limit"):
+        data.fetch_sample(data.DatasetCandidate("o/d", "D", "https://example.org"), tmp_path / "sample", "closed")
+    assert len(opened) == 2 and success.received == 4 and oversized.received <= 7
+    assert max(oversized.requests) <= 7 and not (tmp_path / "sample").exists()
+
+
+def test_sample_passes_remaining_deadline_to_stream(monkeypatch, live_mode, tmp_path):
+    from agent import data
+    clock = [0.0]
+    monkeypatch.setattr(data, "_now", lambda: clock[0])
+    monkeypatch.setattr(research.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(data, "DEADLINE_S", 1.0)
+    response = ControlledResponse(b"x" * 1000, clock, delay=0.3)
+    opened = install_sample_transport(monkeypatch, [response], clock)
+    with pytest.raises(data.DataUnavailable):
+        data.fetch_sample(data.DatasetCandidate("o/d", "D", "https://example.org"), tmp_path / "sample", "closed")
+    assert len(opened) == 1 and clock[0] <= 1.0 and response.closed
+    assert response.timeouts[0] == pytest.approx(0.6)
+    assert not (tmp_path / "sample").exists()
+
+
+def install_sample_transport(monkeypatch, responses, clock=None):
+    from types import SimpleNamespace
+    opened = []
+    def viewer(endpoint, **params):
+        if clock is not None:
+            clock[0] += 0.2
+        if endpoint == "splits":
+            return {"splits": [{"config": "default", "split": "train"}]}
+        return {"features": [{"name": "audio", "type": {"_type": "Audio"}},
+                              {"name": "label", "type": {"_type": "ClassLabel", "names": ["a", "b"]}}],
+                "num_rows_total": 40,
+                "rows": [{"row_idx": i, "row": {"label": i % 2, "audio": {"src": f"https://example.org/{i}.wav"}}}
+                         for i in range(40)]}
+    def open_response(request, timeout):
+        opened.append((request, timeout))
+        assert len(opened) <= len(responses), "a failed transfer must not start another download"
+        return responses[len(opened) - 1]
+    monkeypatch.setattr(research, "viewer", viewer)
+    monkeypatch.setattr(research.urllib.request, "build_opener", lambda *a: SimpleNamespace(open=open_response))
+    return opened
+
+
+def test_chunk_framing_trickle_cannot_extend_download_deadline(monkeypatch, live_mode, tmp_path):
+    """Exercise CPython's actual HTTPResponse chunk parser over a local socket pair.
+
+    Every byte arrives before the socket timeout; a per-read timeout alone cannot
+    stop the parser's internal readline from consuming the entire slow header.
+    """
+    import http.client
+    import socket
+    import threading
+    import time
+    from types import SimpleNamespace
+
+    client, server = socket.socketpair()
+    stop = threading.Event()
+    server.sendall(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n")
+    response = http.client.HTTPResponse(client)
+    response.begin()
+    def send_body():
+        try:
+            for byte in b"0" * 60 + b"1\r\nx\r\n0\r\n\r\n":
+                if stop.wait(0.01):
+                    return
+                server.sendall(bytes([byte]))
+        except OSError:
+            pass
+    sender = threading.Thread(target=send_body, daemon=True)
+    monkeypatch.setattr(research.urllib.request, "build_opener",
+                        lambda *a: SimpleNamespace(open=lambda *a, **k: response))
+    sender.start()
+    started = time.monotonic()
+    try:
+        with pytest.raises(research.ResearchUnavailable):
+            research.download("https://example.org/audio.wav", tmp_path / "audio.wav", timeout=0.12)
+        assert time.monotonic() - started < 0.5
+        assert not (tmp_path / "audio.wav").exists()
+    finally:
+        stop.set()
+        client.close()
+        server.close()
+        sender.join(timeout=1)
+
+
+
+def test_download_error_body_is_not_an_unbudgeted_transfer(monkeypatch, live_mode, tmp_path):
+    class UnreadableBody(io.BytesIO):
+        def read(self, *args):
+            pytest.fail("an error body must not be read outside the download budget")
+    body = UnreadableBody(b"x" * 1000)
+    error = urllib.error.HTTPError("https://example.org/x", 503, "unavailable", {}, body)
+    monkeypatch.setattr(research, "_http", raising(error))
+    with pytest.raises(research.ResearchUnavailable, match="503") as caught:
+        research.download("https://example.org/x", tmp_path / "audio.wav", max_bytes=10)
+    assert caught.value.bytes_received == 0 and body.closed
+    assert not (tmp_path / "audio.wav").exists()

@@ -80,13 +80,22 @@ def find_specialists(modality: str, fmt: str, goal: str) -> Discovery:
         return Discovery([], None, prewired is not None, "unavailable", f"Research was unavailable ({exc}), {tail}.")
     claims = _specialist_claims(found)
     chosen = None
+    unavailable = []
     for claim in claims:
-        if research.hub_model(claim.subject) is None:
+        try:
+            info = research.hub_model(claim.subject)
+        except research.ResearchUnavailable as exc:
+            claim.evidence = f"The model's Hub record could not be checked: {exc}"
+            unavailable.append(str(exc))
+            continue
+        if info is None:
             claim.status, claim.evidence = "refuted", "no such model on the Hugging Face Hub"
         elif chosen is None and RUNNABLE.get(claim.subject) == modality:
             chosen = claim.subject
-    return Discovery(claims, chosen, chosen is None and prewired is not None, found.origin,
-                     _note(len(claims), chosen, prewired, modality))
+    note = _note(len(claims), chosen, prewired, modality)
+    if unavailable:
+        note += " Hub checks were unavailable: " + "; ".join(dict.fromkeys(unavailable)) + "."
+    return Discovery(claims, chosen, chosen is None and prewired is not None, found.origin, note)
 
 
 def _specialist_claims(found: research.Research) -> list[Claim]:
@@ -120,7 +129,7 @@ def _note(n: int, chosen: str | None, prewired: str | None, modality: str) -> st
     if chosen:
         return f"{named}; {chosen} exists on the Hub and can be loaded here, so it is used."
     if prewired:
-        return f"{named}, none both on the Hub and loadable here, so the pre-wired specialist {prewired} is used."
+        return f"{named}, none verified on the Hub and loadable here, so the pre-wired specialist {prewired} is used."
     return f"{named}, and no {modality} specialist loads here."
 
 

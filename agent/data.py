@@ -20,8 +20,10 @@ fetch_sample owns `dest`: it replaces whatever is there, and every file it write
 dest/<safe_label>/<row_idx>.<audio extension>, so no label text or URL can place a file outside dest. It lists up to
 MAX_PAGES pages of the dataset viewer spread evenly over the whole split (so a split sorted by label still shows
 several labels), keeps at most MAX_LABELS labels in the order they appear, and then downloads at most PER_LABEL
-files per label, label by label in turn, each label's rows picked evenly across the split. A failed download skips
-that row. Downloading stops when every label is full, at MAX_BYTES or at DEADLINE_S. Labels with fewer than
+files per label, label by label in turn, each label's rows picked evenly across the split. Colliding normalized
+labels are rejected. A failure before body bytes arrive skips that row; a partially transferred failure aborts
+and cleans up the sample so discarded bytes cannot fuel retries beyond the budget. Downloading stops when every
+label is full, at MAX_BYTES (plus at most one overflow probe byte) or at DEADLINE_S. Labels with fewer than
 MIN_PER_LABEL files are deleted; fewer than 2 labels left (3 for scope "open") deletes dest and raises
 DataUnavailable. A ResearchUnavailable from the viewer (including fake mode, which has no network) becomes
 DataUnavailable after dest is deleted. The viewer's audio URLs are signed and expire: they are used at once and
@@ -153,7 +155,7 @@ def _need_from(answer: object) -> DataNeed | None:
     if not isinstance(answer, dict):
         return None
     kind, labels, reason = answer.get("kind"), answer.get("labels"), answer.get("reason")
-    if kind not in _SCOPE or not isinstance(labels, list) or len(labels) > MAX_NEED_LABELS:
+    if not isinstance(kind, str) or kind not in _SCOPE or not isinstance(labels, list) or len(labels) > MAX_NEED_LABELS:
         return None
     if not all(isinstance(label, str) for label in labels):
         return None
@@ -185,12 +187,18 @@ def find_datasets(need: DataNeed, modality: str, goal: str) -> tuple[list[Datase
         if not isinstance(item, dict) or not citable(item.get("hub_id"), item.get("source_url")):
             continue
         candidate, claim = _candidate(item, _text(names.get(item["source_url"])))
-        info = research.hub_dataset(candidate.hub_id)
-        if info is None:
-            claim.status, claim.evidence = "refuted", "no such dataset on the Hugging Face Hub"
+        if found.origin == "fake":
+            claim.statement = "Fake claim for tests: " + claim.statement
+        try:
+            info = research.hub_dataset(candidate.hub_id)
+        except research.ResearchUnavailable as exc:
+            claim.evidence = f"The dataset's Hub record could not be checked: {exc}"
         else:
-            candidate.licence = info.get("licence")
-            claim.evidence = f"The Hub has this dataset, with licence {candidate.licence or 'not stated'}."
+            if info is None:
+                claim.status, claim.evidence = "refuted", "no such dataset on the Hugging Face Hub"
+            else:
+                candidate.licence = info.get("licence")
+                claim.evidence = f"The Hub has this dataset, with licence {candidate.licence or 'not stated'}."
         candidates.append(candidate)
         claims.append(claim)
     return candidates, claims, found.origin
@@ -237,20 +245,20 @@ def fetch_sample(candidate: DatasetCandidate, dest: Path, scope: str) -> FetchRe
 
 def _fetch(candidate: DatasetCandidate, dest: Path, scope: str) -> FetchReport:
     start, hub_id = _now(), candidate.hub_id
-    split = _pick_split(research.viewer("splits", dataset=hub_id), hub_id)
+    split = _pick_split(research.viewer("splits", dataset=hub_id, timeout=min(25.0, _remaining(start))), hub_id)
     params = {"dataset": hub_id, "config": split["config"], "split": split["split"]}
-    first = research.viewer("rows", **params, offset=0, length=PAGE_ROWS)
+    first = research.viewer("rows", **params, offset=0, length=PAGE_ROWS, timeout=min(25.0, _remaining(start)))
     audio_col, label_col, names = _columns(first.get("features"), hub_id)
     total = first.get("num_rows_total")
-    total = total if isinstance(total, int) and total >= 0 else len(first.get("rows") or [])
+    total = total if isinstance(total, int) and total >= 0 else len(_row_entries(first))
     rows: dict[str, list[tuple[int, str]]] = {}  # label -> [(row_idx, audio url)]
     seen: set[int] = set()
-    texts: dict[str, int] = {}  # label text of a string column -> its index, for safe_label
+    texts: dict[str, object] = {}  # safe folder -> original label identity
     _collect(first, audio_col, label_col, names, rows, seen, texts)
     for offset in _offsets(total)[1:]:
         if _now() - start > DEADLINE_S:
             break
-        page = research.viewer("rows", **params, offset=offset, length=PAGE_ROWS)
+        page = research.viewer("rows", **params, offset=offset, length=PAGE_ROWS, timeout=min(25.0, _remaining(start)))
         _collect(page, audio_col, label_col, names, rows, seen, texts)
     queues = {label: _spread(sorted(found), PER_LABEL) for label, found in rows.items()}
     counts, sizes = _download_all(queues, dest, start)
@@ -258,8 +266,11 @@ def _fetch(candidate: DatasetCandidate, dest: Path, scope: str) -> FetchReport:
 
 
 def _pick_split(answer: dict, hub_id: str) -> dict:
+    raw = answer.get("splits")
+    if not isinstance(raw, list):
+        raise DataUnavailable(f"the dataset viewer returned invalid splits for {hub_id}")
     splits = [
-        s for s in answer.get("splits") or []
+        s for s in raw
         if isinstance(s, dict) and isinstance(s.get("config"), str) and isinstance(s.get("split"), str)
     ]
     if not splits:
@@ -296,8 +307,8 @@ def _offsets(total: int) -> list[int]:
 
 
 def _collect(page: dict, audio_col: str, label_col: str, names: list[str] | None,
-             rows: dict[str, list[tuple[int, str]]], seen: set[int], texts: dict[str, int]) -> None:
-    for entry in page.get("rows") or []:
+             rows: dict[str, list[tuple[int, str]]], seen: set[int], texts: dict[str, object]) -> None:
+    for entry in _row_entries(page):
         if not isinstance(entry, dict):
             continue
         idx, row = entry.get("row_idx"), entry.get("row")
@@ -314,12 +325,30 @@ def _collect(page: dict, audio_col: str, label_col: str, names: list[str] | None
         rows[label].append((idx, src))
 
 
-def _label(cell: object, names: list[str] | None, texts: dict[str, int]) -> str | None:
+def _row_entries(page: dict) -> list:
+    entries = page.get("rows")
+    if not isinstance(entries, list):
+        raise DataUnavailable("the dataset viewer returned invalid rows (expected a list)")
+    return entries
+
+
+def _label(cell: object, names: list[str] | None, texts: dict[str, object]) -> str | None:
     if names is not None and isinstance(cell, int) and not isinstance(cell, bool):
-        return safe_label(names[cell], cell) if 0 <= cell < len(names) else None
-    if isinstance(cell, str) and cell.strip():
-        return safe_label(cell, texts.setdefault(cell, len(texts)))
-    return None
+        if not 0 <= cell < len(names):
+            return None
+        raw, index = names[cell], cell
+    elif isinstance(cell, str) and cell.strip():
+        raw = cell
+        index = next((i for i, value in enumerate(texts.values()) if value == raw), len(texts))
+    else:
+        return None
+    label = safe_label(raw, index)
+    # Distinct source labels must never silently share a folder, including after truncation.
+    identity = (cell if names is not None else raw)
+    previous = texts.setdefault(label, identity)
+    if previous != identity:
+        raise DataUnavailable(f"dataset labels collide in sample folder {label!r}")
+    return label
 
 
 def _src(cell: object) -> str | None:
@@ -353,20 +382,33 @@ def _download_all(queues: dict[str, list[tuple[int, str]]], dest: Path, start: f
                 return counts, sizes
             idx, src = queue.popleft()
             progressed = True
-            n = _download_one(src, dest, label, idx, MAX_BYTES - spent)
+            n = _download_one(src, dest, label, idx, MAX_BYTES - spent, min(20.0, _remaining(start)))
             if n is not None:
                 counts[label], sizes[label], spent = counts[label] + 1, sizes[label] + n, spent + n
         if not progressed:
             return counts, sizes
 
 
-def _download_one(src: str, dest: Path, label: str, idx: int, budget: int) -> int | None:
-    target = dest / label / f"{idx}.{_extension(src)}"
-    if not target.resolve().is_relative_to(dest.resolve()):  # safe_label makes this impossible; checked anyway
-        return None
+def _remaining(start: float) -> float:
+    remaining = DEADLINE_S - (_now() - start)
+    if remaining <= 0:
+        raise DataUnavailable("the sample deadline was reached")
+    return remaining
+
+
+def _download_one(src: str, dest: Path, label: str, idx: int, budget: int, timeout: float) -> int | None:
     try:
-        return research.download(src, target, max_bytes=min(FILE_MAX_BYTES, budget))
-    except (research.ResearchUnavailable, OSError):
+        target = dest / label / f"{idx}.{_extension(src)}"
+        if not target.resolve().is_relative_to(dest.resolve()):
+            return None
+        return research.download(src, target, timeout=timeout, max_bytes=min(FILE_MAX_BYTES, budget))
+    except research.ResearchUnavailable as exc:
+        if getattr(exc, "bytes_received", 0):
+            # Abort after any partially transferred failure: discarded bytes cannot fuel
+            # repeated oversized or broken transfers outside the sample's byte budget.
+            raise DataUnavailable(f"sample transfer stopped after {exc.bytes_received} discarded bytes: {exc}") from exc
+        return None
+    except (OSError, ValueError):
         return None
 
 

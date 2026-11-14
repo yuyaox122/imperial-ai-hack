@@ -83,7 +83,7 @@ def _settle(claim: Claim, card: ReportCard) -> None:
     s, c, n = float(card.controls["specialist_alone"]), float(card.chance), card.n
     # Rounded so that a score exactly on the margin (0.45 with chance 0.2) is not lost to float error.
     claim.status = "confirmed" if round(s - c, 9) >= MARGIN else "refuted"
-    evidence = f"On our data the specialist alone scored {s:.1%} on {n} held-out five-option questions (chance {c:.1%})"
+    evidence = f"On our data the specialist alone scored {s:.1%} on {n} held-out questions (chance {c:.1%})"
     if claim.value is not None:
         evidence += f"; the source claims {claim.value:.1%} on {claim.metric or 'its benchmark'}, a different test"
     claim.evidence = evidence + "."
