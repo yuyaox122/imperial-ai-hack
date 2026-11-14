@@ -1,0 +1,112 @@
+{
+  "host": "models--Qwen--Qwen3.5-0.8B",
+  "socket_layer": 1,
+  "split": {
+    "duplicates": "each group in one split",
+    "left_out": [
+      "metal.00058.wav",
+      "rock.00016.wav"
+    ],
+    "duplicate_groups_kept_in_one_split": 13,
+    "sizes": {
+      "fit": 600,
+      "dev": 201,
+      "test": 196
+    }
+  },
+  "dev_sweep": [
+    {
+      "layer": 0,
+      "plug": 80.6
+    },
+    {
+      "layer": 1,
+      "plug": 83.6
+    },
+    {
+      "layer": 2,
+      "plug": 78.1
+    },
+    {
+      "layer": 3,
+      "plug": 57.2
+    }
+  ],
+  "test": {
+    "genre, five options, held-out tracks (n=196)": {
+      "plug": [
+        83.7,
+        78.6,
+        88.8
+      ],
+      "swapped audio": [
+        14.3,
+        9.7,
+        19.4
+      ],
+      "nearest fit track": [
+        78.1,
+        71.9,
+        83.7
+      ],
+      "own text (ceiling)": [
+        100.0,
+        100.0,
+        100.0
+      ],
+      "no write": [
+        23.5,
+        17.9,
+        29.6
+      ],
+      "CLAP zero-shot (no LM)": [
+        51.0,
+        43.9,
+        58.2
+      ]
+    },
+    "rock or classical, two options (chance 50)": {
+      "all genres seen (n=39)": [
+        94.9,
+        87.2,
+        100.0
+      ],
+      "all genres seen, audio swapped (n=39)": [
+        5.1,
+        0.0,
+        12.8
+      ],
+      "no write (n=199)": [
+        49.2,
+        42.2,
+        56.3
+      ],
+      "rock, classical held out (n=199)": [
+        51.8,
+        44.7,
+        58.8
+      ],
+      "text-only plug (n=199)": [
+        50.3,
+        43.7,
+        57.3
+      ],
+      "environmental sounds only (n=199)": [
+        50.3,
+        43.2,
+        57.8
+      ],
+      "nearest caption pasted as text, no socket (n=199)": [
+        63.8,
+        57.3,
+        70.4
+      ],
+      "CLAP zero-shot, no LM (n=199)": [
+        98.5,
+        96.5,
+        100.0
+      ]
+    }
+  },
+  "seconds": 145.6
+}

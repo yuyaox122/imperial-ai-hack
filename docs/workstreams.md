@@ -143,9 +143,7 @@ run.
 
 ## Still open for the lead
 
-- Whether to commit the cached embeddings to a repository that goes public on Sunday. They are 39 MB in
-  total: 2.2 MB for GTZAN, 4.4 MB for ESC-50 and 34.8 MB for the AudioCaps caption text that the
-  open-scope text bridge needs. Workload 2's fetch and rebuild steps may make committing them unnecessary.
+Nothing at 19:20 on Saturday.
 
 ## Decided by the lead on 14 November
 
@@ -153,3 +151,9 @@ run.
   and neuron drafts both go ahead, and Alex decides how they combine.
 - Michael's direction stands: the agent decides whether it needs data and finds it itself, while
   splitting, controls and the acceptance gate stay in `sense/verify.py` and `agent/planner.py`.
+- 19:20: we do not commit the 39 MB of cached embeddings to the public repository. #23's fetch, checksums
+  and rebuild are the route, plus a direct copy from Michael for the demo laptop.
+- 19:20: the pilot's GTZAN figures are re-measured on the de-duplicated split; until then the README quotes
+  only the new agent-run numbers and marks the pilot figures as approximate. The unseen-sounds result is
+  written "41 of 80 (51.25%)" everywhere.
+- 19:20: Databricks keeps MLflow, since the smoke test passed on every step.

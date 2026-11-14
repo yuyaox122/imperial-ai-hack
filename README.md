@@ -60,7 +60,7 @@ Only one model process should run at a time on a 24 GB laptop. Loading a second 
 
 ## What works today
 
-Measured on 14 November 2026 on an M4 Pro with 24 GB, Qwen3.5-0.8B in float16 on MPS, through `scripts/demo_cli.py` and the HTTP server. Each card scores 200 held-out five-option questions (chance 20%) and carries a 95% Wilson interval for its accuracy.
+Measured on 14 November 2026 on an M4 Pro with 24 GB, Qwen3.5-0.8B in float16 on MPS, through `scripts/demo_cli.py` and the HTTP server. Each card scores 200 held-out five-option questions (chance 20%) and carries a 95% Wilson interval for its accuracy. GTZAN numbers use the de-duplicated split (PR #43): GTZAN holds 14 byte-identical recordings, and copies now stay in one split. The run records are in `socket_pilot/artifacts/run_*.json`, and every run is also in Databricks (see [Databricks](#databricks)).
 
 The acceptance rules are in one place, `RulePlanner` in `agent/planner.py`. A vector bridge passes when it beats chance and swapped input by 25 points each; for open scope it must also score at least 45% on classes left out of fitting and stay within 20 points of its accuracy on fitted classes. A text bridge passes when it beats chance by 15 points and swapped input by 10. The vector bridge is preferred when the two are within 3 points.
 
@@ -68,16 +68,18 @@ With `OPENAI_API_KEY` set, the LLM planner (`agent/planner_llm.py`) proposes whi
 
 | Run | Candidate | Accuracy | Swapped input | No input | Nearest-example lookup | Specialist alone | Text bridge | Unseen classes | Verdict |
 |---|---|---|---|---|---|---|---|---|---|
-| GTZAN, closed | `vector:gtzan` | 81.0% | 12.5% | 22.0% | 84.5% | 52.5% | 48.5% | | installed |
-| GTZAN, closed | `text:gtzan` | 48.5% | 20.0% | 22.0% | 84.5% | 52.5% | | | passed, not chosen |
-| ESC-50, open | `vector:esc50` | 96.5% | 18.0% | 21.0% | 99.5% | 99.0% | 80.5% | 51.2% | rejected |
+| GTZAN, closed | `vector:gtzan` | 79.5% | 12.5% | 22.0% | 84.5% | 53.5% | 47.5% | | installed |
+| GTZAN, closed | `text:gtzan` | 47.5% | 20.0% | 22.0% | 84.5% | 53.5% | | | passed the rules, not chosen |
+| ESC-50, open | `vector:esc50` | 96.5% | 18.0% | 21.0% | 99.5% | 99.0% | 80.5% | 51.25% (41 of 80) | rejected |
 | ESC-50, open | `text:captions` | 80.5% | 17.5% | 21.0% | 99.5% | 99.0% | | | installed |
 
 `text:gtzan` pastes the label CLAP matches best ('sounds like "rock"'); `text:captions` pastes the nearest of 12,000 AudioCaps captions. Nearest-example lookup answers the same five-option questions without the base model: it picks the offered label whose fitted clip is closest to the held-out clip in CLAP space. Specialist alone is CLAP with no base model and no fitted examples: it picks the offered label whose text is closest to the clip. Unseen classes refits the vector bridge with a fifth of the labels left out and scores it on held-out clips of those labels: 40 clips of 2 genres for GTZAN, 80 clips of 10 sounds for ESC-50.
 
-A whole agent run took 57.7 s (GTZAN closed) and 64.0 s (ESC-50 open). The vector bridge's layer is chosen among blocks 0 to 4 on 200 dev questions.
+A whole agent run took 56.0 s (GTZAN closed) and 64.0 s (ESC-50 open). The vector bridge's layer is chosen among blocks 0 to 4 on 200 dev questions. The closed-form fit of one block takes 0.5 to 0.7 s on GTZAN (597 clips) and 1.1 to 1.3 s on ESC-50 (1,200 clips); the whole fit step, five blocks each scored on the dev questions, takes 23 to 26 s.
 
-The research run (`socket_pilot/run_music.py`) reported 84.9% for the GTZAN vector bridge, against 81.0% here. The difference is the layer choice and the question draw, not a bug: on held-out clips, blocks 0, 1 and 2 average 80.8, 82.2 and 79.0% over three question seeds.
+The research run (`socket_pilot/run_music.py`), re-measured on the de-duplicated split (PR #51), gives 83.7% [78.6, 88.8] for the GTZAN vector bridge on 196 held-out tracks (84.9% before de-duplication), against 79.5% here; its lookup scores 78.1% and swapped input 14.3%. With rock and classical both held out of fitting it scores 51.8% [44.7, 58.8], where chance is 50% (53.5% before). The two runs differ in split, scored tracks and option order as well as in the duplicates, and every change is inside the 95% intervals. `socket_pilot/README.md` shows both columns. Over three question seeds on the earlier split, blocks 0, 1 and 2 averaged 80.8, 82.2 and 79.0%, so the layer choice and the question draw also move the number by a few points.
+
+In free chat the vector bridge is much weaker than on multiple choice. Asked "Which genre (or sound) is in the audio clip? Answer in a few words." on 100 held-out clips, the reply named the true label and no other 37.0% of the time on GTZAN (95% interval 28.2 to 46.8%; swapped input 6.0%, no input 8.0%) and 45.0% on ESC-50 (35.6 to 54.8%; 0.0% and 0.0%). On GTZAN the model always names some genre but leans to hip hop and rock. On ESC-50 the matching is strict, so "Clock" for clock tick counts as naming no label, and 45% is a floor. Results: `socket_pilot/artifacts/free_text_*.json`, from `scripts/score_free_text.py`.
 
 In the GTZAN run the LLM planner chose the install; in the ESC-50 run its choice failed the rules and the rule planner decided. Its proposed plan differed between two otherwise identical ESC-50 runs (vector only, then text only), which is why the loop verifies every available bridge.
 
@@ -87,14 +89,32 @@ Chat through the installed `vector:gtzan` bridge worked on held-out clips. The b
 
 A run names the sense it affects. When it installs a bridge for a model that already has an audio sense, the trace says which sense it replaced and with what score. When it installs nothing, the trace names the earlier sense that chat keeps using. Each chat took 2.6 to 4.1 s, including CLAP's first load. Every endpoint in `server/app.py` was exercised against the real model: models, datasets, fit, jobs (including 409 for a second run and 400 for a bad scope), senses, samples (the WAV is served), chat and the interface.
 
+## Databricks
+
+Every agent run is recorded in a Databricks workspace (Free Edition), so each install has a pass or fail record behind it.
+
+- Delta tables `workspace.sensorium.runs`, `report_cards` and `trace_events`. Each report card is a row, with the accuracy, its interval, every control as its own column, the verdict and whether it was installed.
+- The run record (`run.json`) in the Volume `/Volumes/workspace/sensorium/runs/<run id>/`.
+- One MLflow run per verified bridge in the experiment `/Users/<you>/sensorium`, with the accuracy and controls as metrics and the verdict as a tag.
+
+```bash
+uv sync --group databricks                                  # client libraries, optional
+.venv/bin/python -m integrations.databricks smoke           # checks auth, the warehouse, a Volume upload, a table insert, MLflow
+.venv/bin/python -m integrations.databricks serve --port 8000    # the usual server; every finished run is written to Databricks
+.venv/bin/python -m integrations.databricks backfill socket_pilot/artifacts/run_*.json   # recorded runs
+```
+
+Auth comes from `~/.databrickscfg` or `DATABRICKS_HOST` and `DATABRICKS_TOKEN`. Writing a run replaces that run's rows, so backfilling twice is safe. The writer runs on its own thread after the run ends and never holds up an agent run (`integrations/databricks/sink.py`).
+
 ## What does not work yet
 
 - **GTZAN open scope sits on the bar.** In an earlier run `text:captions` scored 35.5% against a 35.0% bar, and 32.0 to 37.0% over question seeds 0 to 4, so whether it installs depends on the draw. Use ESC-50 to demonstrate open scope.
-- **The unseen-classes control is noisy.** For ESC-50 it was 41.2% in one run and 51.2% in another (80 clips of 10 left-out sounds; the chosen layer differed). Both are far below the 96.5% on fitted sounds, which is what the within-20-points rule checks.
-- **Nearest-example lookup beats the vector bridge.** On the same questions, lookup in CLAP space scores 84.5% on GTZAN against the bridge's 81.0%, and 99.5% on ESC-50 against 96.5%. The planner does not use lookup as a bar, so the bridge is installed anyway.
-- **On ESC-50 the specialist alone is as good as the bridge.** CLAP matching label text scores 99.0% with no base model. On GTZAN it scores 52.5%, so there the fitted bridge adds 28.5 points over the specialist's own text matching.
+- **The unseen-classes control is noisy.** For ESC-50 it was 41.2% in one run and 51.25% (41 of 80) in another (80 clips of 10 left-out sounds; the chosen layer differed). Both are far below the 96.5% on fitted sounds, which is what the within-20-points rule checks.
+- **Nearest-example lookup beats the vector bridge.** On the same questions, lookup in CLAP space scores 84.5% on GTZAN against the bridge's 79.5%, and 99.5% on ESC-50 against 96.5%. The planner does not use lookup as a bar, so the bridge is installed anyway.
+- **On ESC-50 the specialist alone is as good as the bridge.** CLAP matching label text scores 99.0% with no base model. On GTZAN it scores 53.5%, so there the fitted bridge adds 26.0 points over the specialist's own text matching.
 - **The vector bridge passes a label, not a description.** The model treats the written vector like the word for the label: for the metal and jazz clips it said it was answering "Based on the names provided". Anything it says beyond the label is invented.
 - **The LLM planner's plan is unreliable.** See above; its install choice is checked against the rules. One planning call and one decision call are made per run.
+- **The LLM planner's stated reasons can be wrong.** In the GTZAN run it wrote that `text:gtzan` (47.5%, swapped input 20.0%) was "below the required accuracy > swapped + 0.10 threshold", which is false: the text bar is 35% and the swapped bar 30%, and it cleared both. The install was still right, because the rules check the choice, but the card's reason text comes from the model and is not checked.
 - **Tool, image and native bridges are not built.** A tool bridge that lets an API model call the specialist is in progress (#26). API models are verified on 50 held-out questions, not 200, so their intervals are wider (about 12 points either way).
 - **Qwen3.5-2B is listed but untested in this harness.** It loads through the same code as the 0.8B; only the research scripts have run it.
 - **Chat has no history.** Each message stands alone, so a follow-up question needs the file attached again. Image inputs are not wired into `QwenModel.chat`.

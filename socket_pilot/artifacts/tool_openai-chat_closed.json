@@ -1,0 +1,99 @@
+{
+  "api_model": "gpt-5.4-mini",
+  "sets": {
+    "esc50": {
+      "card": {
+        "model": "openai-chat",
+        "modality": "audio",
+        "dataset": "esc50",
+        "scope": "closed",
+        "bridge": "tool:esc50",
+        "kind": "tool",
+        "n": 50,
+        "chance": 0.2,
+        "accuracy": 0.96,
+        "controls": {
+          "swapped": 0.22,
+          "no_input": 0.18,
+          "lookup": 1.0,
+          "specialist_alone": 0.96
+        },
+        "verdict": "candidate",
+        "reason": "",
+        "created": "2026-11-14T19:27:55+00:00",
+        "interval": [
+          0.8654,
+          0.989
+        ]
+      },
+      "seconds": 41.4,
+      "usage": {
+        "calls": 200,
+        "cache_hits": 50,
+        "prompt_tokens": 83907,
+        "completion_tokens": 3883
+      },
+      "chat": {
+        "file": "5-203128-A-0.wav",
+        "label": "dog",
+        "calls": [
+          {
+            "arguments": {},
+            "result": "Nearest labels (CLAP): dog 0.20, clock alarm 0.12, clapping 0.12."
+          }
+        ],
+        "reply": "I hear a **dog barking**."
+      }
+    },
+    "gtzan": {
+      "card": {
+        "model": "openai-chat",
+        "modality": "audio",
+        "dataset": "gtzan",
+        "scope": "closed",
+        "bridge": "tool:gtzan",
+        "kind": "tool",
+        "n": 50,
+        "chance": 0.2,
+        "accuracy": 0.52,
+        "controls": {
+          "swapped": 0.16,
+          "no_input": 0.22,
+          "lookup": 0.8,
+          "specialist_alone": 0.5
+        },
+        "verdict": "candidate",
+        "reason": "",
+        "created": "2026-11-14T19:28:39+00:00",
+        "interval": [
+          0.3851,
+          0.652
+        ]
+      },
+      "seconds": 42.3,
+      "usage": {
+        "calls": 250,
+        "cache_hits": 0,
+        "prompt_tokens": 86420,
+        "completion_tokens": 3650
+      },
+      "chat": {
+        "file": "rock.00044.wav",
+        "label": "rock",
+        "calls": [
+          {
+            "arguments": {},
+            "result": "Nearest labels (CLAP): blues 0.59, rock 0.54, pop 0.52."
+          }
+        ],
+        "reply": "The audio clip sounds most like **blues** music, with some **rock** and **pop** characteristics."
+      }
+    }
+  },
+  "usage_total": {
+    "calls": 454,
+    "cache_hits": 50,
+    "prompt_tokens": 171775,
+    "completion_tokens": 7602
+  }
+}
