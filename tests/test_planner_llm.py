@@ -22,7 +22,9 @@ def completion(answer, *, finish="stop", refusal=None):
 
 
 @pytest.fixture
-def api(monkeypatch):
+def api(monkeypatch, tmp_path):
+    monkeypatch.setenv("SENSE_HOME", str(tmp_path))
+    monkeypatch.setattr(config, "fake", lambda: False)  # Explicit adapter tests use a mocked client.
     registration = Mock()
     monkeypatch.setattr(agent.planner, "register_planner", registration)
     monkeypatch.setattr(config, "openai_key", lambda: "test-key")
@@ -114,6 +116,7 @@ def test_api_model_can_only_plan_text(api, request_data, model, dataset):
     assert api.module.LLMPlanner().plan(request_data, model, dataset) == ["text"]
     kwargs = api.client.chat.completions.create.call_args.kwargs
     assert json.loads(kwargs["messages"][1]["content"])["allowed"] == ["text"]
+    request_data.scope = "open"  # A new request exercises API validation rather than a memo hit.
     api.client.chat.completions.create.return_value = completion({"bridges": ["vector"]})
     assert api.module.LLMPlanner().plan(request_data, model, dataset) == ["text"]
     api.rules.plan.assert_called_once_with(request_data, model, dataset)
@@ -302,3 +305,153 @@ def test_llm_assessment_includes_mandatory_floor(api, request_data, cards, swapp
     ok, reason = api.module.LLMPlanner().assess(request_data, cards[1])
     assert not ok
     assert "failed" in reason and "swapped" in reason
+
+
+def test_plan_order_is_canonical(api, request_data, model, dataset):
+    api.client.chat.completions.create.return_value = completion({"bridges": ["text", "vector"]})
+    assert api.module.ORDER == ["vector", "text"]
+    assert api.module.LLMPlanner().plan(request_data, model, dataset) == ["vector", "text"]
+
+
+def test_identical_requests_share_a_persistent_plan(api, request_data, model, dataset, tmp_path):
+    api.client.chat.completions.create.side_effect = [
+        completion({"bridges": ["vector"]}), completion({"bridges": ["text"]}),
+    ]
+    first = api.module.LLMPlanner().plan(request_data, model, dataset)
+    second = api.module.LLMPlanner().plan(request_data, model, dataset)
+    assert first == second == ["vector"]
+    assert api.client.chat.completions.create.call_count == 1
+    assert len(list((tmp_path / "plans").glob("*.json"))) == 1
+
+
+@pytest.mark.parametrize("install", ["vector:sounds", None])
+def test_identical_cards_share_a_persistent_decision(api, request_data, cards, install):
+    api.client.chat.completions.create.return_value = completion({"install": install, "reason": "85% vs 20%."})
+    first = api.module.LLMPlanner().decide(request_data, cards)
+    second = api.module.LLMPlanner().decide(request_data, cards)
+    assert first == second
+    assert first.install == install
+    assert api.client.chat.completions.create.call_count == 1
+
+
+@pytest.mark.parametrize("change", ["request", "model", "dataset", "llm_model"])
+def test_changed_plan_inputs_miss_cache(api, request_data, model, dataset, monkeypatch, change):
+    api.client.chat.completions.create.return_value = completion({"bridges": ["vector"]})
+    api.module.LLMPlanner().plan(request_data, model, dataset)
+    if change == "request":
+        request_data.scope = "open"
+    elif change == "model":
+        model.label = "Updated model"
+    elif change == "dataset":
+        dataset.title = "Updated dataset"
+    else:
+        monkeypatch.setenv("SENSE_LLM_MODEL", "another-model")
+    api.module.LLMPlanner().plan(request_data, model, dataset)
+    assert api.client.chat.completions.create.call_count == 2
+
+
+def test_changed_cards_miss_cache(api, request_data, cards):
+    api.client.chat.completions.create.side_effect = [
+        completion({"install": "vector:sounds", "reason": "85% vs 20%."}),
+        completion({"install": "text:captions", "reason": "70% vs 20%."}),
+    ]
+    assert api.module.LLMPlanner().decide(request_data, cards).install == "vector:sounds"
+    cards[0].accuracy = .84
+    assert api.module.LLMPlanner().decide(request_data, cards).install == "text:captions"
+    assert api.client.chat.completions.create.call_count == 2
+
+
+@pytest.mark.parametrize("method", ["plan", "decide"])
+@pytest.mark.parametrize("failure", [RuntimeError("API unavailable"), completion({"invalid": True})])
+def test_fallback_answers_are_not_memoised(api, request_data, model, dataset, cards, tmp_path, method, failure):
+    good = {"bridges": ["vector"]} if method == "plan" else {"install": "vector:sounds", "reason": "85% vs 20%."}
+    api.client.chat.completions.create.side_effect = [failure, completion(good)]
+    args = (request_data, model, dataset) if method == "plan" else (request_data, cards)
+    getattr(api.module.LLMPlanner(), method)(*args)
+    assert not list((tmp_path / "plans").glob("*.json"))
+    result = getattr(api.module.LLMPlanner(), method)(*args)
+    assert result == ["vector"] if method == "plan" else result.install == "vector:sounds"
+    assert api.client.chat.completions.create.call_count == 2
+
+
+def test_cached_decision_cannot_bypass_a_changed_gate(api, request_data, cards):
+    api.client.chat.completions.create.return_value = completion({"install": "vector:sounds", "reason": "85% vs 20%."})
+    assert api.module.LLMPlanner().decide(request_data, cards).install == "vector:sounds"
+    real_assess = agent.planner.RulePlanner().assess
+    api.rules.assess.side_effect = lambda request, card: (
+        (False, "Vector no longer passes the current gate.") if card.kind == "vector" else real_assess(request, card)
+    )
+    assert api.module.LLMPlanner().decide(request_data, cards).install == "text:captions"
+
+
+def test_json_mapping_order_does_not_change_memo_identity(api, request_data, cards):
+    api.client.chat.completions.create.return_value = completion({"install": "vector:sounds", "reason": "85% vs 20%."})
+    first = api.module.LLMPlanner().decide(request_data, cards)
+    cards[0].controls = dict(reversed(list(cards[0].controls.items())))
+    assert api.module.LLMPlanner().decide(request_data, cards) == first
+    assert api.client.chat.completions.create.call_count == 1
+
+
+def test_cache_write_failure_preserves_validated_decision(api, request_data, cards, tmp_path):
+    (tmp_path / "plans").write_text("Not a directory")
+    api.client.chat.completions.create.return_value = completion({"install": None, "reason": "85% vs 20%."})
+    assert api.module.LLMPlanner().decide(request_data, cards).install is None
+    api.rules.decide.assert_not_called()
+
+
+def test_cache_hit_rechecks_gate_after_lookup(api, request_data, cards, monkeypatch):
+    api.client.chat.completions.create.return_value = completion({"install": "vector:sounds", "reason": "85% vs 20%."})
+    assert api.module.LLMPlanner().decide(request_data, cards).install == "vector:sounds"
+    planner = api.module.LLMPlanner()
+    lookup = planner._answer
+    real_assess = agent.planner.RulePlanner().assess
+
+    def change_gate_during_lookup(*args):
+        answer = lookup(*args)
+        api.rules.assess.side_effect = lambda request, card: (
+            (False, "Changed gate rejects vector.") if card.kind == "vector" else real_assess(request, card)
+        )
+        return answer
+
+    monkeypatch.setattr(planner, "_answer", change_gate_during_lookup)
+    assert planner.decide(request_data, cards).install == "text:captions"
+    assert api.client.chat.completions.create.call_count == 1
+
+
+def test_corrupt_memo_is_a_cache_miss(api, request_data, model, dataset, tmp_path):
+    api.client.chat.completions.create.return_value = completion({"bridges": ["vector"]})
+    api.module.LLMPlanner().plan(request_data, model, dataset)
+    memo = next((tmp_path / "plans").glob("*.json"))
+    memo.write_text("{truncated")
+    assert api.module.LLMPlanner().plan(request_data, model, dataset) == ["vector"]
+    assert api.client.chat.completions.create.call_count == 2
+    assert json.loads(memo.read_text()) == {"bridges": ["vector"]}
+
+
+def test_fake_mode_uses_rules_even_with_live_memos(api, request_data, model, dataset, cards, monkeypatch):
+    api.client.chat.completions.create.side_effect = [
+        completion({"bridges": ["vector"]}),
+        completion({"install": "vector:sounds", "reason": "85% vs 20%."}),
+    ]
+    planner = api.module.LLMPlanner()
+    assert planner.plan(request_data, model, dataset) == ["vector"]
+    assert planner.decide(request_data, cards).install == "vector:sounds"
+    monkeypatch.setattr(config, "fake", lambda: True)
+    api.client.chat.completions.create.reset_mock()
+    api.factory.reset_mock()
+    planner = api.module.LLMPlanner()
+    assert planner.plan(request_data, model, dataset) == ["text"]
+    assert planner.decide(request_data, cards) == api.rules.decide.return_value
+    request_data.dataset = "uncached"
+    planner.plan(request_data, model, dataset)
+    planner.decide(request_data, cards)
+    api.client.chat.completions.create.assert_not_called()
+    api.factory.assert_not_called()
+
+
+def test_changed_cache_version_misses(api, request_data, model, dataset, monkeypatch):
+    api.client.chat.completions.create.return_value = completion({"bridges": ["vector"]})
+    api.module.LLMPlanner().plan(request_data, model, dataset)
+    monkeypatch.setattr(api.module, "_MEMO_VERSION", api.module._MEMO_VERSION + 1)
+    api.module.LLMPlanner().plan(request_data, model, dataset)
+    assert api.client.chat.completions.create.call_count == 2
