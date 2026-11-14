@@ -39,10 +39,16 @@ def vector_bridge(model, gtzan):
     return bridges.fit_vector_bridge(model, gtzan, gtzan.fit_idx)
 
 
-def test_fake_mode_lists_only_the_fake_model(model):
-    assert [m.name for m in models.available_models()] == ["fake"]
+def test_fake_mode_lists_only_the_fake_models(model):
+    listed = models.available_models()
+    assert [m.name for m in listed] == ["fake", "fake-api"]
+    fake, fake_api = listed
+    assert fake.open_weights and not fake.tools
+    assert not fake_api.open_weights and fake_api.tools and fake_api.available
     assert models.load_model("fake") is model
     assert isinstance(model, OpenModel)
+    api = models.load_model("fake-api")
+    assert api.info.tools is True and api.info.name == "fake-api" and api is models.load_model("fake-api")
     with pytest.raises(ValueError, match="fake mode"):
         models.load_model("qwen3.5-0.8b")
 
