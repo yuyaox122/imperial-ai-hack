@@ -40,7 +40,9 @@ Point at the report card:
 
 **1:55 – 2:35 · A real task: forest monitoring.** Run `integrations.databricks triage` (or show the saved table).
 > "A team listening for illegal logging wants chainsaws, hand saws and engines flagged, so a ranger doesn't listen to every clip."
-- 400 clips, 24 of them targets. Flagged **[N]**, caught **[X] of 24**, so a ranger listens to **[Y]%** of the batch. *(Numbers come from Michael's real run of PR #54; fill them in before rehearsal 1.)*
+- We chose how to ask on a dev fold (ESC-50 fold 4) and report on fold 5. On dev, three multiple-choice wordings flagged every one of the 400 clips **with no audio at all**: the 0.8B says "chainsaw" to silence. Only an open question beat no input (21 flagged, 13 of 24 caught, 61.9% precision).
+- Held-out fold 5, open question: 400 clips, 24 of them targets. Flagged **26**, caught **13 of 24**, precision **50.0%** (no input flags 0). CLAP lookup alone: 24 flagged, **23 of 24** caught, **95.8%** precision.
+> "So on this task the sense does the work and the base model adds nothing. We'd ship the lookup. Our harness is what told us so: the no-input row is a control, the same as on the report cards."
 - Show the no-input row: what the model says without the audio.
 - Switch to Databricks: the `triage_batches` and `report_cards` tables. "Every install, every control, every flag is a row here."
 
