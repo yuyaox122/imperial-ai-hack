@@ -193,6 +193,106 @@ def test_a_cancel_as_the_replay_ends_is_applied_or_refused_never_both(client):
         assert not replay.running()
 
 
+def test_cancel_returns_once_the_replay_has_stopped(client):
+    runs.save_run(synthetic("slow", last_t=60.0))
+    job_id = replay.start("slow", speed=1)
+    playing_with(client, job_id, 1)
+    assert replay.cancel(job_id) is True
+    assert not replay.running()  # at once, in-process: cancel waited for the worker
+    assert replay.get(job_id)[0].status == "failed"
+
+
+def ends_with_install(run_id: str) -> None:
+    """Save a record whose last event is [install] "ok", so the replay's end comes straight after the reinstall."""
+    runs.save_run(JobState(
+        id=run_id,
+        request=FitRequest(model="fake", dataset="gtzan"),
+        status="done",
+        events=[
+            TraceEvent(step="inspect", status="start", message="Loading.", t=0.0),
+            TraceEvent(step="install", status="ok", message="Installed.", t=0.0),
+        ],
+    ))
+
+
+class BlockedRestore:
+    """A stand-in for runs.restore_sense that blocks until `gate` is set, then returns True or raises `error`."""
+
+    def __init__(self, error: Exception | None = None):
+        self.entered = threading.Event()
+        self.gate = threading.Event()
+        self.error = error
+
+    def __call__(self, run_id: str) -> bool:
+        self.entered.set()
+        assert self.gate.wait(10)
+        if self.error is not None:
+            raise self.error
+        return True
+
+
+def cancel_during_restore(job_id: str, restore: BlockedRestore) -> tuple[bool, bool]:
+    """Cancel while the replay is blocked in the reinstall, then let the reinstall finish. Returns what cancel
+    returned and whether replay.running() was still True the moment it returned."""
+    assert restore.entered.wait(10)
+    answer: dict = {}
+
+    def call():
+        answer["cancelled"] = replay.cancel(job_id)
+        answer["running"] = replay.running()
+
+    canceller = threading.Thread(target=call)
+    canceller.start()
+    wait_for(lambda: job_id in replay._workers and replay._workers[job_id][0].is_set())  # the cancel flag is up
+    time.sleep(0.05)
+    assert canceller.is_alive()  # cancel waits for the worker, which is still reinstalling
+    restore.gate.set()
+    canceller.join(10)
+    assert not canceller.is_alive()
+    return answer["cancelled"], answer["running"]
+
+
+def test_a_cancel_during_the_last_reinstall_is_applied_at_the_end(client, monkeypatch):
+    """The cancel lands after the last wait: only the check at the end can apply it, so the replay must not end
+    "done" once cancel has answered True."""
+    ends_with_install("inst")
+    restore = BlockedRestore()
+    monkeypatch.setattr(runs, "restore_sense", restore)
+    job_id = replay.start("inst", speed=1000)
+    assert cancel_during_restore(job_id, restore) == (True, False)
+
+    state = client.get(f"/api/jobs/{job_id}").json()
+    assert state["status"] == "failed" and state["error"] == "Cancelled."
+    assert state["cards"] == [] and state["installed"] is None
+    assert lines(state["events"]) == [
+        ("inspect", "start", "Loading."), ("install", "ok", "Installed."), ("error", "fail", CANCELLED)
+    ]
+
+
+def test_a_replay_that_fails_after_a_cancel_still_ends_cancelled(client, monkeypatch):
+    ends_with_install("inst")
+    restore = BlockedRestore(OSError("No space left on device"))
+    monkeypatch.setattr(runs, "restore_sense", restore)
+    job_id = replay.start("inst", speed=1000)
+    assert cancel_during_restore(job_id, restore) == (True, False)
+
+    state = client.get(f"/api/jobs/{job_id}").json()
+    assert state["status"] == "failed" and state["error"] == "Cancelled."
+    assert lines(state["events"])[0] == ("inspect", "start", "Loading.")
+    failure, last = state["events"][-2:]
+    assert (failure["step"], failure["status"]) == ("error", "fail")
+    assert "OSError: No space left on device" in failure["message"] and failure["data"] == {"replay": True}
+    assert lines([last]) == [("error", "fail", CANCELLED)] and last["data"] == {"replay": True, "cancelled": True}
+
+    restore = BlockedRestore(OSError("No space left on device"))  # the same failure without a cancel
+    monkeypatch.setattr(runs, "restore_sense", restore)
+    job_id = replay.start("inst", speed=1000)
+    restore.gate.set()
+    state = finished(client, job_id)
+    assert state["status"] == "failed" and state["error"] == "Replay stopped: OSError: No space left on device"
+    assert CANCELLED not in [e["message"] for e in state["events"]]
+
+
 # ----------------------------------------------------------------------------- the endpoint
 def test_delete_on_an_unknown_job_is_a_400(client):
     for job_id in ("missing", "replay-000000000000"):

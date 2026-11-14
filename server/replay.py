@@ -25,6 +25,9 @@ were, empty and None, since they are only set at the end. A sense already reinst
 installed. cancel waits up to CANCEL_WAIT_SECONDS for the worker to stop, which it does at once unless the
 cancel comes while a sense is being reinstalled, so running() is normally False when cancel returns and a new
 replay or agent run can start. A cancel that comes as the replay reaches its end is either applied or reported False.
+So is one that comes as the replay fails: if the replay fails after a cancel was accepted (say the reinstall in
+progress raises), its [error] event about the failure comes just before the cancel event and it still ends
+"Cancelled.".
 
 Only one replay plays at a time: a second start raises RuntimeError("a replay is already in progress").
 server/app.py also keeps replays and live agent runs apart. Replays live in memory only.
@@ -151,15 +154,19 @@ def _play(
     except Exception as exc:
         log.exception("The replay of run %s stopped.", run_id)
         detail = f"{type(exc).__name__}: {exc}" if str(exc) else type(exc).__name__
-        job.events.append(TraceEvent(
-            step="error",
-            status="fail",
-            message=f"The replay of run {run_id} stopped. {detail} Record the run again, or replay another one.",
-            data={"replay": True},
-            t=round((time.monotonic() - t0) * speed, 3),
-        ))
-        job.error = f"Replay stopped: {detail}"
-        job.status = "failed"
+        with _lock:  # as at the end: a cancel that came first is applied here, a later one is refused
+            job.events.append(TraceEvent(
+                step="error",
+                status="fail",
+                message=f"The replay of run {run_id} stopped. {detail} Record the run again, or replay another one.",
+                data={"replay": True},
+                t=round((time.monotonic() - t0) * speed, 3),
+            ))
+            if stop.is_set():  # cancel has already answered True: end as cancelled, this failure just before
+                _end_cancelled(job, t0, speed)
+                return
+            job.error = f"Replay stopped: {detail}"
+            job.status = "failed"
     finally:
         _workers.pop(job.id, None)
 
