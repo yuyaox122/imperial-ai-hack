@@ -47,9 +47,10 @@ repository root.
    safetensors weights.
 
 5. Write .env.local in the repository root (git ignores it): one KEY=VALUE per line, with no comment after a
-   value. SENSE_DATA_DIR is the directory from step 3. Add SENSE_HF_CACHE only if Qwen is in a cache other
-   than the default one. SENSE_SAMPLE_DIRS is optional (sample clips in the interface, and demo_cli --ask):
-   the GTZAN genres directory and the ESC-50 audio directory, joined by ':'. Leave SENSE_FAKE unset.
+   value. Write full paths: ~ is not expanded in .env.local. SENSE_DATA_DIR is the directory from step 3. Add
+   SENSE_HF_CACHE only if Qwen is in a cache other than the default one. SENSE_SAMPLE_DIRS is optional (only
+   for sample clips in the interface): the GTZAN genres directory and the ESC-50 audio directory, joined by
+   ':'. Leave SENSE_FAKE unset.
        SENSE_DATA_DIR=/Users/<you>/.cache/sense-harness/artifacts
        SENSE_HF_CACHE=/Volumes/<disk>/hf-cache
        SENSE_SAMPLE_DIRS=/Users/<you>/data/gtzan/genres:/Users/<you>/data/ESC-50-master/audio
@@ -141,6 +142,8 @@ def check(load_clap: bool = False, rebuilt: bool = False) -> int:
     print(f"Checking this machine for real mode. Embeddings directory (SENSE_DATA_DIR): {config.data_dir()}\n")
     _check_python(report)
     _check_fake(report)
+    if config.hf_cache():
+        _unexpanded(report, "SENSE_HF_CACHE", config.hf_cache())
     try:
         from sense import models, specialists
 
@@ -190,6 +193,33 @@ def _hf_caches() -> list[str]:
     return list(dict.fromkeys(c for c in (config.hf_cache(), constants.HF_HUB_CACHE) if c))
 
 
+def _looks_like_path(source: str) -> bool:
+    """True when a model setting names a local path rather than a Hugging Face repo id."""
+    if source.startswith(("~", ".")) or Path(source).is_absolute():
+        return True
+    from huggingface_hub.utils import HFValidationError, validate_repo_id
+
+    try:
+        validate_repo_id(source)
+    except HFValidationError:
+        return True
+    return False
+
+
+def _unexpanded(report: _Report, what: str, value: str, required: bool = True) -> bool:
+    """Report a path setting that starts with ~ and return True. The .env files are read without shell expansion
+    and the harness does not expand ~ in SENSE_DATA_DIR, SENSE_HF_CACHE, SENSE_CLAP or SENSE_SAMPLE_DIRS, so such
+    a path points nowhere. (SENSE_QWEN_* are expanded, so they are not checked here.)"""
+    if not value.startswith("~"):
+        return False
+    report.line(
+        "MISMATCH", what, f"{value} starts with ~, which the harness does not expand",
+        "write the full path (/Users/<you>/... or /home/<you>/...) in .env.local; ~ is not expanded there",
+        required=required,
+    )
+    return True
+
+
 def _check_qwen(report: _Report, models, name: str, required: bool) -> None:
     label, env = QWEN[name]
     what = f"{label} weights" + ("" if required else " (optional)")
@@ -198,14 +228,19 @@ def _check_qwen(report: _Report, models, name: str, required: bool) -> None:
     if snapshot is not None:
         report.line("OK", what, str(snapshot), required=required)
         return
+    fetch = f"`.venv/bin/python scripts/setup_machine.py fetch --model {name}`"
     if Path(source).expanduser().is_dir():
         detail = f"{env} points at {source}, which holds no config.json and *.safetensors"
+        fix = f"put the model's config.json and *.safetensors files in {source}, or remove {env} and run {fetch}"
+    elif _looks_like_path(source):
+        detail = f"{env} points at {source}, which is not a directory on this machine"
+        fix = f"correct {env} in .env.local, or remove it and run {fetch}"
     else:
         detail = f"no snapshot of {source} with config.json and *.safetensors in {' or '.join(_hf_caches())}"
-    fix = (
-        f"run `.venv/bin/python scripts/setup_machine.py fetch --model {name}`, or set SENSE_HF_CACHE to the "
-        f"Hugging Face cache that holds it, or {env} to a local model directory"
-    )
+        fix = (
+            f"run {fetch}, or set SENSE_HF_CACHE to the Hugging Face cache that holds it, or {env} to a local "
+            "model directory"
+        )
     if not required:
         fix += " (only needed to offer the 2B model)"
     report.line("MISSING", what, detail, fix, required=required)
@@ -221,8 +256,16 @@ def _missing_clap_files(present) -> list[str]:
 
 def _check_clap(report: _Report, specialists, load_clap: bool) -> None:
     source = config.model_source("clap")
-    local = Path(source).expanduser()
+    if _unexpanded(report, "SENSE_CLAP", source):
+        return
+    local = Path(source)  # not expanduser: transformers loads SENSE_CLAP as written
     fetch = "run `.venv/bin/python scripts/setup_machine.py fetch` with a network connection"
+    if not local.is_dir() and _looks_like_path(source):
+        report.line(
+            "MISSING", "SENSE_CLAP", f"points at {source}, which is not a directory on this machine",
+            f"correct SENSE_CLAP in .env.local, or remove it to use {CLAP_DEFAULT} and {fetch}",
+        )
+        return
     if local.is_dir():
         where = str(local)
         fix = f"put them in {local}, or unset SENSE_CLAP and {fetch}"
@@ -278,6 +321,8 @@ def _try_load_clap() -> tuple[bool, str]:
 
 def _check_embeddings(report: _Report, rebuilt: bool) -> None:
     data = config.data_dir()
+    if _unexpanded(report, "SENSE_DATA_DIR", str(data)):
+        return
     expected = _read_checksums(CHECKSUM_FILE)
     reference = _shown(CHECKSUM_FILE)
     for name, keys in EMBEDDING_FILES.items():
@@ -341,10 +386,12 @@ def _check_samples(report: _Report) -> None:
         report.line(
             "MISSING", "sample audio (optional)", "SENSE_SAMPLE_DIRS is not set",
             f"set SENSE_SAMPLE_DIRS in .env.local to the GTZAN genres directory and the ESC-50 audio directory, "
-            f"joined by {os.pathsep!r} (only needed for sample clips in the interface and demo_cli --ask)",
+            f"joined by {os.pathsep!r} (only needed for sample clips in the interface)",
             required=False,
         )
     for directory in dirs:
+        if _unexpanded(report, f"sample audio {directory} (optional)", str(directory), required=False):
+            continue
         if directory.is_dir():
             report.line("OK", f"sample audio {directory} (optional)", "directory exists", required=False)
         else:
@@ -372,11 +419,17 @@ def _fetch_plan(model: str) -> tuple[list[_Fetch], list[str]]:
     qwen = config.model_source(model)
     if Path(qwen).expanduser().is_dir():
         skipped.append(f"{label} weights: {env} points at the local directory {qwen}, so there is nothing to fetch.")
+    elif _looks_like_path(qwen):
+        skipped.append(f"{label} weights: skipped. {env} points at {qwen}, which is not a directory on this machine. "
+                       f"Correct {env} in .env.local, or remove it and run fetch again.")
     else:
         plan.append(_Fetch(f"{label} weights", qwen, "main", QWEN_PATTERNS, config.hf_cache()))
     clap = config.model_source("clap")
     if Path(clap).expanduser().is_dir():
         skipped.append(f"CLAP: SENSE_CLAP points at the local directory {clap}, so there is nothing to fetch.")
+    elif _looks_like_path(clap):
+        skipped.append(f"CLAP: skipped. SENSE_CLAP points at {clap}, which is not a directory on this machine. "
+                       "Correct SENSE_CLAP in .env.local, or remove it and run fetch again.")
     else:
         weights_revision = CLAP_WEIGHTS_REVISION if clap == CLAP_DEFAULT else "main"
         plan.append(_Fetch("CLAP config, processor and tokenizer", clap, "main", CLAP_PATTERNS, None))
@@ -485,6 +538,13 @@ def rebuild(gtzan, esc50, captions, out=None, dry_run: bool = False, force: bool
     out_dir = Path(out).expanduser().absolute() if out else config.data_dir()
     commands = _rebuild_commands(gtzan, esc50, captions, out_dir)
     problems = _rebuild_problems(gtzan, esc50, captions)
+    if not out and str(out_dir).startswith("~"):
+        problems.append(f"SENSE_DATA_DIR is {out_dir}, and ~ is not expanded in .env.local. Write the full path "
+                        "there, or pass --out.")
+    clap = config.model_source("clap")
+    if not Path(clap).is_dir() and _looks_like_path(clap):
+        problems.append(f"SENSE_CLAP is {clap}, which is not a directory on this machine. Correct SENSE_CLAP in "
+                        ".env.local (with a full path: ~ is not expanded there), or remove it.")
     if dry_run:
         print(f"Dry run: nothing is run. These commands would write the three embedding files into {out_dir}:")
         for command in commands.values():

@@ -1,6 +1,7 @@
 """scripts/setup_machine.py, fully offline: a fake Hugging Face cache and small dummy .npz files in tmp_path.
 
-Nothing here downloads, loads weights or imports torch; snapshot_download and subprocess.run are replaced.
+Nothing here downloads, loads weights or imports torch; snapshot_download, subprocess.run and the CLAP loader are
+replaced, and the Hugging Face hub is set offline so that an accidental download fails fast.
 """
 
 from __future__ import annotations
@@ -46,6 +47,9 @@ def machine(tmp_path, monkeypatch):
         monkeypatch.delenv(var, raising=False)
     monkeypatch.setenv("SENSE_DATA_DIR", str(data))
     monkeypatch.setattr(hf_constants, "HF_HUB_CACHE", str(hub))
+    monkeypatch.setattr(hf_constants, "HF_HUB_OFFLINE", True)  # any hub access by accident fails instead of downloading
+    monkeypatch.setenv("HF_HUB_OFFLINE", "1")
+    monkeypatch.setattr(sm, "_try_load_clap", lambda: pytest.fail("check loaded CLAP without --load-clap"))
     monkeypatch.setattr(sm, "CHECKSUM_FILE", tmp_path / "embeddings.sha256")
     return SimpleNamespace(tmp=tmp_path, hub=hub, data=data, sums=tmp_path / "embeddings.sha256")
 
@@ -111,6 +115,14 @@ def status_of(out: str, what: str) -> str:
 
 def check_lines(out: str) -> list[str]:
     return [line for line in out.splitlines() if line.split(" ", 1)[0] in STATUSES]
+
+
+def line_named(out: str, what: str) -> str:
+    """The check line for requirement `what` exactly (lines read "<STATUS> <what>: <detail>")."""
+    for line in check_lines(out):
+        if line[9:].startswith(f"{what}:"):
+            return line
+    raise AssertionError(f"no check line for {what!r}")
 
 
 # ----------------------------------------------------------------------------- check
@@ -185,6 +197,125 @@ def test_check_fails_when_the_weights_are_not_found(machine, capsys, monkeypatch
     assert status_of(out, "CLAP config and processor") == "OK"
     qwen_line = next(line for line in out.splitlines() if "Qwen3.5 0.8B weights" in line)
     assert "fix:" in qwen_line and "fetch" in qwen_line
+
+
+REQUIRED = [
+    ("Qwen3.5 0.8B weights", {"qwen": False}, ()),
+    ("CLAP config and processor", {"clap_main": False}, ()),
+    ("CLAP weights", {"clap_weights": False}, ()),
+    *[(name, {}, (name,)) for name in sm.EMBEDDING_FILES],
+]
+
+
+@pytest.mark.parametrize("what, weights, skip", REQUIRED, ids=[r[0] for r in REQUIRED])
+def test_check_fails_when_any_one_required_item_is_missing(machine, capsys, what, weights, skip):
+    install_weights(machine.hub, **weights)
+    write_embeddings(machine.data, machine.sums, skip=skip)
+    assert sm.main(["check"]) == 1
+    out = capsys.readouterr().out
+    line = line_named(out, what)
+    assert line.startswith("MISSING") and "fix:" in line
+    assert f"Real mode is not ready: fix {what} (see" in out  # the only required item that failed
+    assert "(optional)" not in line_named(out, "Qwen3.5 0.8B weights")
+
+
+def test_check_rebuilt_wants_a_non_empty_matrix_first(machine, capsys):
+    install_weights(machine.hub)
+    write_embeddings(machine.data)
+    for emb in (np.arange(8, dtype=np.float32), np.zeros((0, 8), np.float32)):  # 1-D, then empty
+        np.savez(machine.data / "gtzan_clap.npz", **{**_arrays("gtzan_clap.npz"), "emb": emb})
+        assert sm.main(["check", "--rebuilt"]) == 1
+        line = line_named(capsys.readouterr().out, "gtzan_clap.npz")
+        assert line.startswith("MISMATCH") and "non-empty 2-D" in line
+
+
+@pytest.mark.parametrize("drop, ok", [
+    (("tokenizer.json",), True),
+    (("vocab.json", "merges.txt"), True),
+    (("tokenizer.json", "vocab.json"), False),
+    (("tokenizer.json", "merges.txt"), False),
+])
+def test_check_needs_tokenizer_json_or_vocab_and_merges(machine, capsys, drop, ok):
+    install_weights(machine.hub, clap_main=False)
+    snapshot(machine.hub, "laion/clap-htsat-unfused", [f for f in CLAP_MAIN if f not in drop])
+    write_embeddings(machine.data, machine.sums)
+    assert sm.main(["check"]) == (0 if ok else 1)
+    line = line_named(capsys.readouterr().out, "CLAP config and processor")
+    assert line.startswith("OK" if ok else "MISSING")
+    if not ok:
+        assert "tokenizer.json (or vocab.json and merges.txt)" in line
+
+
+def test_check_reads_a_local_clap_directory(machine, capsys, monkeypatch):
+    install_weights(machine.hub, clap_main=False, clap_weights=False)
+    write_embeddings(machine.data, machine.sums)
+    local = machine.tmp / "clap"
+    local.mkdir()
+    monkeypatch.setenv("SENSE_CLAP", str(local))
+    assert sm.main(["check"]) == 1  # an empty directory
+    out = capsys.readouterr().out
+    assert line_named(out, "CLAP config and processor").startswith("MISSING")
+    assert line_named(out, "CLAP weights").startswith("MISSING")
+
+    for name in [*CLAP_MAIN, "model.safetensors"]:
+        (local / name).write_text("x")
+    assert sm.main(["check"]) == 0
+    out = capsys.readouterr().out
+    assert line_named(out, "CLAP config and processor") == f"{'OK':<9}CLAP config and processor: {local}"
+    assert line_named(out, "CLAP weights") == f"{'OK':<9}CLAP weights: {local / 'model.safetensors'}"
+
+
+def test_model_settings_that_point_nowhere_are_reported_not_fetched(machine, capsys, monkeypatch):
+    install_weights(machine.hub)
+    write_embeddings(machine.data, machine.sums)
+    gone = machine.tmp / "missing"
+    monkeypatch.setenv("SENSE_CLAP", str(gone / "clap"))
+    monkeypatch.setenv("SENSE_QWEN_0P8B", str(gone / "qwen"))
+    assert sm.main(["check"]) == 1  # no traceback from the Hugging Face repo id validation
+    out = capsys.readouterr().out
+    qwen, clap = line_named(out, "Qwen3.5 0.8B weights"), line_named(out, "SENSE_CLAP")
+    for line, env in ((qwen, "SENSE_QWEN_0P8B"), (clap, "SENSE_CLAP")):
+        assert line.startswith("MISSING") and "not a directory" in line and f"correct {env}" in line
+    for name in sm.EMBEDDING_FILES:  # check went on after the model lines
+        assert line_named(out, name).startswith("OK")
+
+    monkeypatch.setattr(huggingface_hub, "snapshot_download", _no_download)
+    assert sm.main(["fetch", "--dry-run"]) == 0
+    assert sm.main(["fetch"]) == 0
+    out = capsys.readouterr().out
+    assert out.count("which is not a directory on this machine") == 4
+    assert all("skipped" in line for line in out.splitlines() if str(gone) in line)  # the plan lists neither
+
+
+def test_a_qwen_directory_without_weights_is_not_sent_to_fetch(machine, capsys, monkeypatch):
+    install_weights(machine.hub)
+    write_embeddings(machine.data, machine.sums)
+    monkeypatch.setenv("SENSE_QWEN_0P8B", str(machine.tmp))
+    assert sm.main(["check"]) == 1
+    line = line_named(capsys.readouterr().out, "Qwen3.5 0.8B weights")
+    assert "holds no config.json" in line and "put the model's config.json and *.safetensors files in" in line
+
+
+def test_check_flags_paths_that_start_with_a_tilde(machine, capsys, monkeypatch):
+    install_weights(machine.hub)
+    write_embeddings(machine.data, machine.sums)
+    settings = {"SENSE_DATA_DIR": "~/sense-data", "SENSE_HF_CACHE": "~/hf-cache", "SENSE_CLAP": "~/clap",
+                "SENSE_SAMPLE_DIRS": "~/genres"}
+    for var, value in settings.items():
+        monkeypatch.setenv(var, value)
+    assert sm.main(["check"]) == 1
+    out = capsys.readouterr().out
+    for what in ("SENSE_DATA_DIR", "SENSE_HF_CACHE", "SENSE_CLAP", "sample audio ~/genres (optional)"):
+        line = line_named(out, what)
+        assert line.startswith("MISMATCH") and "~ is not expanded" in line and "full path" in line
+    assert "not in ~/" not in out  # no MISSING lines that say the files are not where they are
+    assert "Real mode is not ready: fix SENSE_HF_CACHE, SENSE_CLAP, SENSE_DATA_DIR (see" in out
+
+    d = datasets(machine.tmp)
+    assert sm.main(["rebuild", "--gtzan", str(d.gtzan), "--esc50", str(d.esc50), "--captions", str(d.captions),
+                    "--dry-run"]) == 0
+    notes = [line for line in capsys.readouterr().out.splitlines() if line.startswith("Note:")]
+    assert len(notes) == 2 and "SENSE_DATA_DIR is ~/sense-data" in notes[0] and "SENSE_CLAP is ~/clap" in notes[1]
 
 
 def test_check_passes_when_the_weight_lookups_find_them(machine, capsys, monkeypatch):
@@ -395,6 +526,8 @@ def test_rebuild_dry_run_prints_three_isolated_commands(machine, capsys, monkeyp
         assert Path(command[2]).name == script
         assert command[command.index(data_arg) + 1] == str(data_path)
         assert command[command.index("--out") + 1] == str(d.out / name)
+        assert command[command.index("--model") + 1] == "laion/clap-htsat-unfused"
+    assert commands[2][commands[2].index("--limit") + 1] == str(sm.CAPTION_LIMIT) == "12000"
     assert not d.out.exists()
 
 
