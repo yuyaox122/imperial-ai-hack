@@ -157,6 +157,7 @@ def main(argv: list[str] | None = None) -> int:
         "build": {
             "seconds": build_seconds,
             "fit_seconds": getattr(bridge, "fit_seconds", None),
+            "fit_seconds_by_layer": bridges.describe(bridge)["fit_seconds_by_layer"],
             "layer": getattr(bridge, "layer", None),
             "dev_accuracy": {str(k): v for k, v in dev.items()} if isinstance(dev, dict) else dev,
             "installed": args.installed,
