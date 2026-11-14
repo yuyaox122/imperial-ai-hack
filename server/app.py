@@ -20,8 +20,10 @@ All JSON. Errors: {"detail": "<what went wrong and what to do>"} with a 4xx or 5
   DELETE /api/senses?model=<name>&modality=<modality>
        -> {"removed": bool}
   POST /api/fit                                     body: {"model", "dataset", "modality": "audio", "scope": "closed"|"open"}
-       -> {"job_id": str}                           409 if a run is already in progress; 400 for scope "open" on
-                                                    a set with fewer than 3 labels
+       -> {"job_id": str}                           409 if a run is already in progress; 400 if the run could not
+                                                    get as far as verifying (sense.datasets.fit_problem): scope
+                                                    "open" on a set with fewer than 3 labels or too few examples
+                                                    to fit on, or a folder set embedded in the other mode
                                                     409 while a replay is in progress; a finished run is recorded
                                                     under <SENSE_HOME>/runs for replay
                                                     a fit or replay started just after a run ends first waits
@@ -220,12 +222,13 @@ def api_fit(body: FitBody) -> dict:
     dataset = _check_dataset(body.dataset)
     if body.scope not in SCOPES:
         raise _bad_request(f"Unknown scope '{body.scope}'. Use 'closed' or 'open'.")
-    if body.scope == "open" and len(dataset["labels"]) < 3:
-        raise _bad_request(
-            f"Scope 'open' needs a set with at least 3 labels, because its unseen-classes check refits the bridge "
-            f"with some labels left out; {body.dataset} has {len(dataset['labels'])}. Use scope 'closed', or add "
-            "label folders and build the set again."
-        )
+    if body.scope == "open" or dataset.get("origin") == "folder":  # a built-in set is always big enough for closed
+        try:
+            problem = datasets.fit_problem(datasets.load_labelled_set(body.dataset), body.scope)
+        except (ValueError, FileNotFoundError) as exc:
+            raise _bad_request(str(exc))
+        if problem:
+            raise _bad_request(problem)
     if body.modality != dataset["modality"]:
         raise _bad_request(
             f"The set {body.dataset} holds {dataset['modality']} examples, but the request is for "

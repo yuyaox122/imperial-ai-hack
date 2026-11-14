@@ -22,6 +22,7 @@ from server import app as server_app
 def client(monkeypatch, tmp_path):
     monkeypatch.setenv("SENSE_FAKE", "1")
     monkeypatch.setenv("SENSE_HOME", str(tmp_path / "home"))
+    monkeypatch.delenv("SENSE_SETS_DIR", raising=False)  # folder sets live under SENSE_HOME, so the test sees none
     monkeypatch.setattr(jobs, "_jobs", {})
     monkeypatch.setattr(jobs, "_latest_id", None)
     monkeypatch.setattr(planner_mod, "_preferred", None)  # the rule planner, even if an LLM planner is registered

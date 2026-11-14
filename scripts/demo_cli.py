@@ -12,7 +12,9 @@ reused if the files are unchanged), a one-line summary of it is printed, and the
 
 Prints each trace event as it happens, then every report card. With --ask, the file goes through the sense the
 run installed (or the one already installed, if the run installed nothing) and the model's reply is printed.
-Exit status: 0 when the run finished (installed or refused), 1 when it failed or the folder could not make a set.
+Exit status: 0 when the run finished (installed or refused), 1 when it failed, the folder could not make a set, or
+the set cannot carry this run (sense.datasets.fit_problem, checked before the run starts: for example scope open on
+a set with fewer than 3 labels).
 """
 
 from __future__ import annotations
@@ -123,11 +125,14 @@ def main() -> int:
             print(f"Could not build a labelled set from {args.folder}: {exc}", file=sys.stderr)
             return 1
         print(folder_summary(ds), flush=True)
-        if args.scope == "open" and len(ds.labels) < 3:
-            print(f"Scope open needs a set with at least 3 labels; {ds.name} has {len(ds.labels)}. "
-                  "Use --scope closed, or add label folders.", file=sys.stderr)
-            return 1
         dataset = ds.name
+    try:
+        problem = datasets.fit_problem(datasets.load_labelled_set(dataset), args.scope)
+    except (ValueError, FileNotFoundError):
+        problem = None  # an unknown or missing set: the run's [inspect] step says so
+    if problem:
+        print(problem, file=sys.stderr)
+        return 1
 
     mode ="fake mode (SENSE_FAKE=1)" if config.fake() else "real models"
     print(f"Agent run: {args.model}, {dataset}, scope {args.scope}, {mode}\n", flush=True)

@@ -12,6 +12,8 @@ Public surface (do not rename):
                                                  label, save it under config.sets_dir() and return it
   caption_bank() -> tuple[np.ndarray, list[str]] specialist text embeddings and the caption texts, for the text bridge
   sample_files(name, per_label=1) -> list[dict]  [{"path", "label"}] from the held-out split, when raw files are on disk
+  fit_problem(ds, scope="closed") -> str | None  why an agent run on this set and scope would stop before verifying
+                                                 anything, or None; the server and scripts/demo_cli.py check it first
 
 Built-in sets. Embeddings come from config.data_dir(): esc50_clap.npz, gtzan_clap.npz, audiocaps_text_clap.npz,
 written by the scripts in socket_pilot/ (keys documented in socket_pilot/clap_embed.py, clap_embed_gtzan.py,
@@ -28,24 +30,33 @@ ignored, and hidden files are skipped. Then, in order:
   2. At most max_per_label files per label, a seeded pick, so the embedding pass is bounded.
   3. The specialist embeds the files in batches; a file it cannot read is skipped and listed in meta.
   4. Every label needs at least min_per_label usable files; min_per_label is at least 4, so that each label can
-     have fit, dev and test examples. A set needs at least 2 labels.
+     have fit, dev and test examples. A set needs at least 2 labels. A short label is reported with the reasons
+     its other files were not used, and this is checked before embedding too, so no time is spent on a folder
+     that cannot make a set.
   5. Near duplicates: clips of one label whose specialist embeddings have cosine >= 0.999 form a group (joined
      transitively), and a group always goes to one split whole. Near duplicates across labels are counted, not
      dropped.
   6. Split per label, 60/20/20 by groups: a seeded permutation of the groups fills fit up to round(0.6 n) clips,
      then dev up to round(0.2 n), and the rest go to test, always leaving at least one group each for dev and
-     test. A label with fewer than 3 distinct groups cannot be split, which is an error.
+     test. A label with fewer than 3 distinct groups cannot be split, which is an error. So is a split that
+     leaves fewer than 5 examples to fit on in all, the least a vector bridge (sense.bridges) fits on.
 Storage: <config.sets_dir()>/<name>/set.json (name, title, question, modality, labels, absolute file paths, y,
 the three splits, meta, fingerprint, format) and set.npz (emb, label_text_emb). config.sets_dir() is
 SENSE_SETS_DIR, by default <SENSE_HOME>/datasets. A set is written to a temporary directory and then moved into
-place, so a reader never sees a half-written set. The fingerprint covers the folder, the names, sizes and
-modification times of the audio files in its label folders, max_per_label, min_per_label, seed, question,
-modality and the specialist ("fake" in fake mode, else config.model_source("clap")). Calling from_folder again
-with the same fingerprint loads the saved set without embedding again; a different fingerprint rebuilds and
-replaces it. Folder sets load in fake and real mode alike; meta["specialist"] says which specialist embedded them.
+place, so a reader never sees a half-written set. Saving replaces only a saved set: a source folder inside
+config.sets_dir() is refused, and so is a name whose directory there holds anything but set.json and set.npz.
+The fingerprint covers the folder, the names, sizes and modification times of the audio files in its label
+folders, max_per_label, min_per_label, seed, question, modality and the specialist ("fake" in fake mode, else
+config.model_source("clap")). Calling from_folder again with the same fingerprint loads the saved set without
+embedding again; a different fingerprint rebuilds and replaces it. Either way a title, source or licence left
+out of the call keeps the saved one (source and licence only from a set built from the same folder), so a later
+call from the interface does not erase what the agent recorded. Folder sets load in fake and real mode alike;
+meta["specialist"] says which specialist embedded them, and fit_problem refuses a run on a set embedded in the
+other mode.
 
 Scope "open" needs a set with at least 3 labels: its unseen-classes control (sense.verify) refits the bridge
-with a fifth of the labels, at least one, left out, and a bridge needs at least 2 labels to fit on.
+with a fifth of the labels, at least one, left out, and a bridge needs at least 2 labels and 5 examples to fit
+on. fit_problem checks both, assuming the labels with the most fit examples are the ones left out.
 """
 
 from __future__ import annotations
@@ -99,25 +110,23 @@ def available_sets() -> list[dict]:
             continue
         ds = load_labelled_set(name)
         out.append(_entry(ds, "builtin"))
-    for name in _folder_set_names():
-        try:
-            ds = _load_folder_set(name)
-        except Exception as err:  # one damaged folder set must not hide the others
-            _log.warning("Leaving the folder set %r out of the list: %s", name, err)
-            continue
-        out.append(_entry(ds, "folder"))
+    with _swap_lock:  # a set that from_folder is replacing is listed, not briefly missing
+        for name in _folder_set_names():
+            try:
+                ds = _load_folder_set(name)
+            except Exception as err:  # one damaged folder set must not hide the others
+                _log.warning("Leaving the folder set %r out of the list: %s", name, err)
+                continue
+            out.append(_entry(ds, "folder"))
     return out
 
 
 def load_labelled_set(name: str) -> LabelledSet:
     if name not in _SETS:
-        if _is_folder_set(name):
-            return _load_folder_set(name)
-        choices = ", ".join([*_SETS, *_folder_set_names()])
-        raise ValueError(
-            f"Unknown dataset {name!r}. Choose one of: {choices}; or build a set from a folder of labelled audio "
-            "files with sense.datasets.from_folder."
-        )
+        with _swap_lock:  # a set that from_folder is replacing is read whole, not briefly missing
+            if _is_folder_set(name):
+                return _load_folder_set(name)
+        raise _unknown(name)
     if config.fake():
         return _fake_set(name)
     return _real_set(name, str(config.data_dir()), tuple(map(str, config.sample_dirs())))
@@ -139,6 +148,54 @@ def sample_files(name: str, per_label: int = 1) -> list[dict]:
     if config.fake():  # the synthetic built-in sets: write a fake audio file for each pick
         return [{"path": str(_fake_sample(ds, i)), "label": ds.labels[ds.y[i]]} for i in picks]
     return []
+
+
+def fit_problem(ds: LabelledSet, scope: str = "closed") -> str | None:
+    """Why an agent run on this set and scope would stop before it can verify anything, or None.
+
+    It checks that a folder set was embedded by the specialist of this mode (fake or real), and that the set has
+    the 5 fit examples a vector bridge needs (sense.bridges.fit_vector_bridge). For scope "open" it also checks
+    the unseen-classes control (sense.verify), which refits the bridge with a fifth of the labels, at least one,
+    left out: that needs 3 labels or more, and 5 fit examples even when the labels left out are the ones with the
+    most fit examples."""
+    specialist = ds.meta.get("specialist")
+    if specialist and (specialist == "fake") != config.fake():
+        return (
+            f"The set {ds.name} was embedded by the {specialist} specialist, but the harness is in "
+            f"{'fake' if config.fake() else 'real'} mode, so its embeddings do not match the specialist in use. "
+            "Build it again in this mode (POST /api/datasets, or scripts/demo_cli.py --folder)."
+        )
+    n_fit = np.bincount(np.asarray(ds.y)[ds.fit_idx], minlength=len(ds.labels))
+    if n_fit.sum() < _MIN_FIT:
+        return (
+            f"The set {ds.name} has {int(n_fit.sum())} examples to fit on, but a vector bridge needs at least "
+            f"{_MIN_FIT}. Build it again from a folder with more distinct recordings."
+        )
+    if scope == "open":
+        if len(ds.labels) < 3:
+            return (
+                "Scope 'open' needs a set with at least 3 labels, because its unseen-classes check refits the bridge "
+                f"with some labels left out; {ds.name} has {len(ds.labels)}. Use scope 'closed', or add label "
+                "folders and build the set again."
+            )
+        held = max(1, len(ds.labels) // 5)
+        left = int(n_fit.sum() - np.sort(n_fit)[::-1][:held].sum())
+        if left < _MIN_FIT:
+            return (
+                f"Scope 'open' needs more examples to fit on in {ds.name}: its unseen-classes check refits the bridge "
+                f"with {held} label{'' if held == 1 else 's'} left out, which can leave {left} examples, and a vector "
+                f"bridge needs at least {_MIN_FIT}. Use scope 'closed', or add recordings to the label folders and "
+                "build the set again."
+            )
+    return None
+
+
+def _unknown(name: str) -> ValueError:
+    choices = ", ".join([*_SETS, *_folder_set_names()])
+    return ValueError(
+        f"Unknown dataset {name!r}. Choose one of: {choices}; or build a set from a folder of labelled audio "
+        "files with sense.datasets.from_folder."
+    )
 
 
 # ----------------------------------------------------------------------------- real data
@@ -279,13 +336,18 @@ def _fake_sample(ds: LabelledSet, i: int) -> Path:
 _FOLDER_FORMAT = 1  # version of set.json and set.npz; a saved set of another version is built again
 _FOLDER_QUESTION = "Which sound is in the audio clip?"
 _MIN_PER_LABEL = 4  # one fit, one dev and one test example need at least this many (60/20/20 of 4 is 2/1/1)
+_MIN_FIT = 5  # the fewest fit examples sense.bridges.fit_vector_bridge accepts
+_SAVED_FILES = {"set.json", "set.npz"}  # all a saved folder set's directory holds
+_READ_TYPES = ", ".join(sorted(AUDIO_EXTENSIONS))
 _EMBED_BATCH = 16
 _NEAR_DUPLICATE = 0.999  # cosine of L2-normalised specialist embeddings at or above which two clips are one group
 _MAX_LISTED = 20  # entries kept in meta["skipped"]; meta["n_skipped"] keeps the full count
 _SET_NAME = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
 _RESERVED = {"captions"}  # "text:captions" names the caption-bank text bridge; a set of that name would clash
 _log = logging.getLogger(__name__)
-_swap_lock = threading.Lock()  # one rename-into-place at a time within this process
+# Held while a set is moved into place and while folder sets are found and read, so that within this process a
+# reader never finds a set missing while it is being replaced.
+_swap_lock = threading.RLock()
 
 
 def from_folder(
@@ -303,9 +365,10 @@ def from_folder(
 ) -> LabelledSet:
     """Build a labelled set from a folder with one sub-folder of audio files per label, save it under
     config.sets_dir()/<name> and return it. If a set of that name was saved from the same files with the same
-    settings, it is loaded instead of embedded again (title, source and licence are updated if they changed).
-    Raises ValueError, saying what to change, when the folder cannot make a usable set. The rules are in the
-    module docstring; `source` and `licence` are recorded in meta for whoever reads the set later."""
+    settings, it is loaded instead of embedded again; a title, source or licence given here replaces the saved
+    one, and one left out keeps it. Raises ValueError, saying what to change, when the folder cannot make a
+    usable set. The rules are in the module docstring; `source` and `licence` are recorded in meta for whoever
+    reads the set later."""
     if not str(path).strip():
         raise ValueError(
             "No folder was given. Pass the path of a folder that holds one sub-folder of audio files per label."
@@ -317,7 +380,15 @@ def from_folder(
             "files per label."
         )
     root = root.resolve()
+    sets = config.sets_dir().expanduser().resolve()
+    if root == sets or sets in root.parents:
+        raise ValueError(
+            f"{root} lies inside SENSE_SETS_DIR ({sets}), where the harness saves the sets it builds, so saving a "
+            "set could overwrite these files. Move the folder out of it, or point SENSE_SETS_DIR somewhere else."
+        )
     name = _set_name(root.name if name is None else name)
+    if _not_a_saved_set(config.sets_dir() / name):
+        raise _foreign_error(config.sets_dir() / name)
     max_per_label, min_per_label, seed = int(max_per_label), int(min_per_label), int(seed)
     if min_per_label < _MIN_PER_LABEL:
         raise ValueError(
@@ -334,7 +405,6 @@ def from_folder(
     specialist = get_specialist(modality)  # ValueError for a modality without a specialist; loads no weights
     question = (question or "").strip() or _FOLDER_QUESTION
     folders = _label_folders(root)
-    title = (title or "").strip() or f"{root.name} (folder, {len(folders)} labels)"
     listings = [_list_label_folder(directory) for _, directory in folders]
     settings = {
         "max_per_label": max_per_label,
@@ -345,15 +415,20 @@ def from_folder(
         "specialist": _specialist_id(),
     }
     fingerprint = _fingerprint(root, folders, listings, settings)
+    title = (title or "").strip()
+    previous = _saved_meta(name, root)  # what was recorded for this folder under this name, if anything
+    source, licence = source or previous.get("source", ""), licence or previous.get("licence", "")
 
     saved = _saved_set(name, fingerprint)
     if saved is not None:
-        if (saved.title, saved.meta.get("source"), saved.meta.get("licence")) == (title, source, licence):
+        title = title or saved.title
+        if (saved.title, saved.meta.get("source", ""), saved.meta.get("licence", "")) == (title, source, licence):
             return saved
         updated = replace(saved, title=title, meta={**saved.meta, "source": source, "licence": licence})
         _save_folder_set(updated, fingerprint)
         return updated
 
+    title = title or f"{root.name} (folder, {len(folders)} labels)"
     ds = _build_folder_set(
         root, name, title, question, modality, specialist, folders, listings, settings, source, licence
     )
@@ -446,15 +521,16 @@ def _label_folders(root: Path) -> list[tuple[str, Path]]:
 
 
 def _list_label_folder(directory: Path) -> dict:
-    """The audio files directly inside one label folder, the number of other files, and each audio file's
+    """The audio files directly inside one label folder, the number and types of other files, and each audio file's
     (name, size, mtime_ns) for the fingerprint. Hidden files (such as .DS_Store) are skipped."""
     files = [p for p in _entries(directory) if not p.name.startswith(".") and p.is_file()]
     audio = [p for p in files if p.suffix.lower() in AUDIO_EXTENSIONS]
+    other_types = sorted({p.suffix.lower() or "no extension" for p in files if p not in audio})
     stats = []
     for p in audio:
         st = p.stat()
         stats.append([p.name, st.st_size, st.st_mtime_ns])
-    return {"audio": audio, "non_audio": len(files) - len(audio), "stats": stats}
+    return {"audio": audio, "non_audio": len(files) - len(audio), "non_audio_types": other_types, "stats": stats}
 
 
 def _fingerprint(root: Path, folders: list[tuple[str, Path]], listings: list[dict], settings: dict) -> str:
@@ -487,6 +563,34 @@ def _saved_set(name: str, fingerprint: str) -> LabelledSet | None:
         return None
 
 
+def _saved_meta(name: str, root: Path) -> dict:
+    """meta of the set saved under this name if it was built from this folder and its set.json can be read, else {}."""
+    try:
+        meta = json.loads((config.sets_dir() / name / "set.json").read_text()).get("meta")
+    except (OSError, ValueError, AttributeError):
+        return {}
+    return meta if isinstance(meta, dict) and meta.get("folder") == str(root) else {}
+
+
+def _not_a_saved_set(target: Path) -> bool:
+    """True if target exists and is not the directory of a saved folder set (one holding only set.json and set.npz),
+    so saving a set there would delete something else."""
+    if target.is_symlink():
+        return True
+    if not target.exists():
+        return False
+    try:
+        return not target.is_dir() or any(p.name not in _SAVED_FILES for p in target.iterdir())
+    except OSError:
+        return True
+
+
+def _foreign_error(target: Path) -> ValueError:
+    return ValueError(
+        f"{target} already exists and is not a set saved by from_folder, so it is left alone. Pass another name."
+    )
+
+
 def _build_folder_set(
     root: Path,
     name: str,
@@ -505,21 +609,17 @@ def _build_folder_set(
     def rel(p: Path) -> str:
         return p.relative_to(root).as_posix()
 
-    kept, hashes, n_duplicates, conflicts, skipped = _drop_exact_duplicates([x["audio"] for x in listings], rel)
+    kept, hashes, duplicates, conflicts, skipped = _drop_exact_duplicates([x["audio"] for x in listings], rel)
+    minimum = settings["min_per_label"]
+    # before embedding, so no time is spent on a folder that cannot make a set
+    _check_enough(folders, listings, [len(files) for files in kept], duplicates, conflicts, skipped, minimum)
     kept, n_capped = _cap(kept, settings["max_per_label"], settings["seed"])
     to_embed = [p for files in kept for p in files]
     rows, unreadable, seconds = _embed(specialist, to_embed, rel)
     skipped += unreadable
 
     usable = [[p for p in files if p in rows] for files in kept]
-    minimum = settings["min_per_label"]
-    short = [f"{labels[c]} has {len(files)}" for c, files in enumerate(usable) if len(files) < minimum]
-    if short:
-        raise ValueError(
-            f"Too few usable audio files: {', '.join(short)}, but every label needs at least "
-            f"{settings['min_per_label']} (min_per_label). Add audio files to those folders or lower min_per_label "
-            "(4 at least); a folder whose name starts with '_' is left out."
-        )
+    _check_enough(folders, listings, [len(files) for files in usable], duplicates, conflicts, skipped, minimum)
 
     paths = [p for files in usable for p in files]
     y = np.array([c for c, files in enumerate(usable) for _ in files], dtype=np.int64)
@@ -549,6 +649,12 @@ def _build_folder_set(
             f"whose specialist embeddings have cosine {_NEAR_DUPLICATE} or more count as one. Add more distinct "
             "recordings to those folders."
         )
+    if len(splits[0]) < _MIN_FIT:
+        per_label = ", ".join(f"{label} {int((y[splits[0]] == c).sum())}" for c, label in enumerate(labels))
+        raise ValueError(
+            f"The split leaves {len(splits[0])} examples to fit on ({per_label}), but a vector bridge needs at least "
+            f"{_MIN_FIT}. Add more distinct recordings to the label folders."
+        )
     split_of = np.zeros(len(paths), dtype=np.int64)
     for k, split in enumerate(splits):
         split_of[split] = k
@@ -573,7 +679,7 @@ def _build_folder_set(
         "per_label": {label: int((y == c).sum()) for c, label in enumerate(labels)},
         "splits": {"fit": len(fit_idx), "dev": len(dev_idx), "test": len(test_idx)},
         "non_audio": sum(x["non_audio"] for x in listings),
-        "duplicates": n_duplicates,
+        "duplicates": sum(duplicates),
         "conflicts": conflicts,
         "n_capped": n_capped,
         "skipped": skipped[:_MAX_LISTED],
@@ -603,9 +709,9 @@ def _build_folder_set(
 
 def _drop_exact_duplicates(
     audio: list[list[Path]], rel
-) -> tuple[list[list[Path]], dict[Path, str], int, list[str], list[dict]]:
-    """Per label, the files to keep (sorted by path), the SHA-1 of each kept file, the number of extra copies dropped
-    within a label, the relative paths of files whose bytes appear under two or more labels (all dropped), and the
+) -> tuple[list[list[Path]], dict[Path, str], list[int], list[str], list[dict]]:
+    """Per label, the files to keep (sorted by path), the SHA-1 of each kept file, per label the number of extra
+    copies dropped, the relative paths of files whose bytes appear under two or more labels (all dropped), and the
     files that could not be opened."""
     copies: dict[str, list[tuple[int, Path]]] = {}
     skipped: list[dict] = []
@@ -620,7 +726,7 @@ def _drop_exact_duplicates(
             copies.setdefault(digest, []).append((c, p))
     kept: list[list[Path]] = [[] for _ in audio]
     hashes: dict[Path, str] = {}
-    n_duplicates, conflicts = 0, []
+    duplicates, conflicts = [0 for _ in audio], []
     for digest, found in copies.items():
         if len({c for c, _ in found}) > 1:
             conflicts += [rel(p) for _, p in found]
@@ -628,8 +734,46 @@ def _drop_exact_duplicates(
         c, first = min(found, key=lambda cp: cp[1])
         kept[c].append(first)
         hashes[first] = digest
-        n_duplicates += len(found) - 1
-    return [sorted(files) for files in kept], hashes, n_duplicates, sorted(conflicts), skipped
+        duplicates[c] += len(found) - 1
+    return [sorted(files) for files in kept], hashes, duplicates, sorted(conflicts), skipped
+
+
+def _check_enough(
+    folders: list[tuple[str, Path]],
+    listings: list[dict],
+    counts: list[int],
+    duplicates: list[int],
+    conflicts: list[str],
+    skipped: list[dict],
+    minimum: int,
+) -> None:
+    """ValueError naming every label with fewer than `minimum` usable files, with why its other files were not used."""
+    short = []
+    for (label, directory), listing, count, n_duplicates in zip(folders, listings, counts, duplicates):
+        if count >= minimum:
+            continue
+        prefix = f"{directory.name}/"  # skipped and conflicting files are listed by path relative to the folder
+        reasons = []
+        if listing["non_audio"]:
+            types = ", ".join(listing["non_audio_types"])
+            reasons.append(f"{listing['non_audio']} of a type that is not read ({types})")
+        if n_duplicates:
+            reasons.append(f"{n_duplicates} exact duplicate{'' if n_duplicates == 1 else 's'}")
+        n_conflicts = sum(f.startswith(prefix) for f in conflicts)
+        if n_conflicts:
+            reasons.append(f"{n_conflicts} with the same bytes as a file under another label")
+        unreadable = [s for s in skipped if s["file"].startswith(prefix)]
+        if unreadable:
+            first = unreadable[0]
+            reasons.append(f"{len(unreadable)} could not be read (e.g. {first['file']}: {first['why'].rstrip('.')})")
+        total = len(listing["audio"]) + listing["non_audio"]
+        short.append(f"{label} has {count}" + (f" of {total} files: {', '.join(reasons)}" if reasons else ""))
+    if short:
+        raise ValueError(
+            f"Too few usable audio files: {'; '.join(short)}. Every label needs at least {minimum} (min_per_label). "
+            f"Add audio files ({_READ_TYPES}) to those folders, or lower min_per_label (4 at least); a folder whose "
+            "name starts with '_' is left out."
+        )
 
 
 def _cap(kept: list[list[Path]], max_per_label: int, seed: int) -> tuple[list[list[Path]], int]:
@@ -743,12 +887,14 @@ def _check_no_leak(split_of: np.ndarray, group_of: np.ndarray, hashes: list[str]
 
 
 def _save_folder_set(ds: LabelledSet, fingerprint: str) -> None:
-    """Write set.json and set.npz to a staging directory, then move it into place under config.sets_dir()."""
+    """Write set.json and set.npz to a staging directory, then move it into place under config.sets_dir(). Only a
+    saved folder set is replaced; anything else at that path raises ValueError and is left alone."""
     root = config.sets_dir()
     root.mkdir(parents=True, exist_ok=True)
     target = root / ds.name
     tag = f"{os.getpid()}-{uuid.uuid4().hex[:8]}"
     staging = root / f".{ds.name}.building-{tag}"
+    old = None
     record = {
         "format": _FOLDER_FORMAT,
         "name": ds.name,
@@ -769,19 +915,31 @@ def _save_folder_set(ds: LabelledSet, fingerprint: str) -> None:
         np.savez(staging / "set.npz", emb=ds.emb, label_text_emb=ds.label_text_emb, fingerprint=np.array(fingerprint))
         (staging / "set.json").write_text(json.dumps(record, indent=1))
         with _swap_lock:
-            if target.exists():
+            if target.exists() or target.is_symlink():
+                if _not_a_saved_set(target):
+                    raise _foreign_error(target)
                 old = root / f".{ds.name}.removing-{tag}"
                 target.rename(old)
-                shutil.rmtree(old, ignore_errors=True)
-            staging.rename(target)
+            try:
+                staging.rename(target)
+            except OSError:
+                if old is not None:  # put the replaced set back rather than lose it
+                    old.rename(target)
+                    old = None
+                raise
     finally:
         if staging.exists():
             shutil.rmtree(staging, ignore_errors=True)
+        if old is not None:  # the replaced set, removed after the swap so readers wait only for two renames
+            shutil.rmtree(old, ignore_errors=True)
 
 
 def _load_folder_set(name: str) -> LabelledSet:
     directory = config.sets_dir() / name
-    st = (directory / "set.json").stat()
+    try:
+        st = (directory / "set.json").stat()
+    except FileNotFoundError:  # removed by another process since it was found
+        raise _unknown(name) from None
     return _read_folder_set(str(directory), st.st_mtime_ns, st.st_ino, st.st_size)
 
 

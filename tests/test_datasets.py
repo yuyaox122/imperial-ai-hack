@@ -1,13 +1,20 @@
-"""Folder sets in fake mode: sense.datasets.from_folder, loading and listing them, and the HTTP routes that use them.
+"""Folder sets: sense.datasets.from_folder, loading and listing them, and the HTTP routes and the CLI that use them.
+
+All in fake mode, except one test that reads saved sets in real mode; that touches only set.json and set.npz and
+loads no weights.
 
 Run: SENSE_FAKE=1 .venv/bin/python -m pytest -q tests/test_datasets.py
 """
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import logging
+import os
 import shutil
+import sys
+import threading
 import time
 from pathlib import Path
 
@@ -187,6 +194,63 @@ def test_a_saved_set_is_reused_and_a_changed_folder_is_built_again(folder, embed
     assert embed_calls  # another setting is another fingerprint
 
 
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"question": "Which genre of music is this?"},
+        {"seed": 1},
+        {"max_per_label": 9},
+        "specialist",
+    ],
+    ids=["question", "seed", "max_per_label", "specialist"],
+)
+def test_every_fingerprint_setting_rebuilds(folder, embed_calls, monkeypatch, change):
+    datasets.from_folder(folder, "farm")
+    embed_calls.clear()
+    if change == "specialist":  # what a real-mode CLAP build would record, without loading CLAP
+        monkeypatch.setattr(datasets, "_specialist_id", lambda: "laion/clap-htsat-unfused")
+        change = {}
+    ds = datasets.from_folder(folder, "farm", **change)
+    assert embed_calls  # not the saved set
+    if "question" in change:
+        assert ds.question == change["question"]
+        np.testing.assert_allclose(ds.label_text_emb[0], FakeSpecialist().embed_texts(["dog music"])[0])
+
+
+def test_a_file_rewritten_in_place_rebuilds(folder, embed_calls):
+    first = datasets.from_folder(folder, "farm")
+    clip = (folder / "dog" / "dog_000.wav").resolve()
+    row = first.files.index(str(clip))
+    FakeSpecialist.write_sample(FAKE_CONCEPTS.index("dog"), clip, seed=999)  # other audio under the same name
+    later = clip.stat().st_mtime_ns + 5_000_000_000
+    os.utime(clip, ns=(later, later))
+    embed_calls.clear()
+    again = datasets.from_folder(folder, "farm")
+    assert embed_calls
+    assert not np.allclose(again.emb[again.files.index(str(clip))], first.emb[row])
+
+
+def test_a_default_call_keeps_the_recorded_title_source_and_licence(folder, embed_calls):
+    datasets.from_folder(folder, "farm", title="Farm sounds", source="https://example.org/farm", licence="CC-BY 4.0")
+    embed_calls.clear()
+    kept = datasets.from_folder(folder, "farm")  # as POST /api/datasets and demo_cli.py --folder call it
+    assert embed_calls == []
+    assert (kept.title, kept.meta["source"], kept.meta["licence"]) == ("Farm sounds", "https://example.org/farm",
+                                                                       "CC-BY 4.0")
+    on_disk = datasets.load_labelled_set("farm")
+    assert (on_disk.title, on_disk.meta["source"], on_disk.meta["licence"]) == (kept.title, kept.meta["source"],
+                                                                                kept.meta["licence"])
+
+    rebuilt = datasets.from_folder(folder, "farm", max_per_label=8)  # another setting: built again
+    assert embed_calls
+    assert (rebuilt.meta["source"], rebuilt.meta["licence"]) == ("https://example.org/farm", "CC-BY 4.0")
+    assert rebuilt.title == "Farm Sounds (folder, 3 labels)"  # a rebuild gets the default title unless given one
+
+    renamed = datasets.from_folder(folder, "farm", max_per_label=8, title="Farm", licence="CC0")
+    assert (renamed.title, renamed.meta["source"], renamed.meta["licence"]) == ("Farm", "https://example.org/farm",
+                                                                                "CC0")
+
+
 def test_a_damaged_saved_set_is_built_again(folder, embed_calls, fake_home):
     datasets.from_folder(folder, "farm")
     (fake_home / "datasets" / "farm" / "set.npz").write_bytes(b"truncated")
@@ -231,6 +295,62 @@ def test_near_duplicates_never_span_splits(tmp_path):
         assert {"fit", "dev", "test"} == set(dog)
 
 
+def test_the_near_duplicate_threshold_is_a_cosine_of_0_999():
+    def at(angle: float) -> np.ndarray:
+        return np.array([[1.0, 0.0], [np.cos(angle), np.sin(angle)]])
+
+    assert datasets._near_duplicate_groups(at(0.03)) == [[0, 1]]  # cosine 0.99955
+    assert datasets._near_duplicate_groups(at(0.05)) == [[0], [1]]  # cosine 0.99875
+
+
+def test_a_large_group_does_not_empty_dev_or_test(tmp_path):
+    folder = make_folder(tmp_path / "groups", {"rooster": 10})
+    first, *_ = write_label(folder, "dog", 3)
+    for suffix in (".flac", ".aiff", ".au"):  # one group of 4 and two single clips
+        same_samples(first, first.with_suffix(suffix))
+    for seed in range(6):
+        ds = datasets.from_folder(folder, f"groups-{seed}", seed=seed)
+        assert ds.meta["near_duplicate_groups"] == 1
+        dog = {s for f, s in split_of(ds).items() if f.startswith("dog/")}
+        assert dog == {"fit", "dev", "test"}
+
+
+def test_a_split_with_too_few_examples_to_fit_on_is_refused(tmp_path):
+    two = make_folder(tmp_path / "two", {"dog": 4, "rooster": 4})
+    with pytest.raises(ValueError, match="leaves 4 examples to fit on \\(dog 2, rooster 2\\).*at least 5"):
+        datasets.from_folder(two, min_per_label=4)
+
+    # at the defaults, near duplicates can push clips out of fit: 5 files but 3 distinct clips per label
+    folder = tmp_path / "samey"
+    for label in ("dog", "rooster"):
+        first, *_ = write_label(folder, label, 3)
+        same_samples(first, first.with_suffix(".flac"))
+        same_samples(first, first.with_suffix(".aiff"))
+    refused = 0
+    for seed in range(6):
+        try:
+            ds = datasets.from_folder(folder, f"samey-{seed}", seed=seed)
+        except ValueError as err:
+            assert "examples to fit on" in str(err)
+            refused += 1
+        else:
+            assert len(ds.fit_idx) >= 5
+    assert refused
+
+
+def test_fit_problem_says_when_a_run_cannot_get_going(tmp_path):
+    three = datasets.from_folder(make_folder(tmp_path / "three", {"dog": 4, "rooster": 4, "sea_waves": 4}),
+                                 min_per_label=4)
+    assert len(three.fit_idx) == 6
+    assert datasets.fit_problem(three, "closed") is None
+    assert "1 label left out, which can leave 4 examples" in datasets.fit_problem(three, "open")
+    two = datasets.from_folder(make_folder(tmp_path / "pair", {"dog": 6, "rooster": 6}))
+    assert datasets.fit_problem(two, "closed") is None
+    assert "at least 3 labels" in datasets.fit_problem(two, "open")
+    for name in ("gtzan", "esc50"):
+        assert datasets.fit_problem(datasets.load_labelled_set(name), "open") is None
+
+
 def test_non_audio_and_unreadable_files_are_skipped_and_counted(folder):
     (folder / "dog" / "notes.txt").write_text("recorded at the farm")
     (folder / "dog" / "broken.wav").write_bytes(b"not audio at all")
@@ -241,6 +361,30 @@ def test_non_audio_and_unreadable_files_are_skipped_and_counted(folder):
     assert skipped["file"] == "dog/broken.wav" and "Could not read broken.wav as audio" in skipped["why"]
     assert str(folder) not in skipped["why"]
     assert m["per_label"]["dog"] == 10  # the rest of the batch was embedded file by file
+
+
+def test_a_short_label_is_reported_with_why_its_files_were_not_used(tmp_path, embed_calls):
+    folder = make_folder(tmp_path / "phone", {"rooster": 8})
+    for i in range(8):  # voice memos: audio, but of a type the specialist does not read
+        (folder / "dog" / f"memo_{i}.m4a").parent.mkdir(exist_ok=True)
+        (folder / "dog" / f"memo_{i}.m4a").write_bytes(f"m4a {i}".encode())
+    [clip] = write_label(folder, "sea_waves", 1)
+    for i in range(5):
+        shutil.copy(clip, folder / "sea_waves" / f"copy_{i}.wav")
+    with pytest.raises(ValueError) as err:
+        datasets.from_folder(folder)
+    message = str(err.value)
+    assert "dog has 0 of 8 files: 8 of a type that is not read (.m4a)" in message
+    assert "sea waves has 1 of 6 files: 5 exact duplicates" in message
+    assert ".flac" in message and "rooster" not in message
+    assert embed_calls == []  # found before any embedding
+
+    folder = make_folder(tmp_path / "broken", {"rooster": 8, "dog": 8})
+    for i in range(8):
+        (folder / "cat" / f"cat_{i}.wav").parent.mkdir(exist_ok=True)
+        (folder / "cat" / f"cat_{i}.wav").write_bytes(f"not audio {i}".encode())
+    with pytest.raises(ValueError, match=r"cat has 0 of 8 files: 8 could not be read \(e.g. cat/cat_0.wav: Could not"):
+        datasets.from_folder(folder)
 
 
 def test_the_skipped_list_is_capped_but_counted(folder):
@@ -265,7 +409,7 @@ def test_errors_say_what_is_wrong(tmp_path, folder):
         datasets.from_folder(one)
 
     short = make_folder(tmp_path / "short", {"dog": 10, "rooster": 3, "sea_waves": 2})
-    with pytest.raises(ValueError, match="rooster has 3, sea waves has 2.*at least 5.*lower min_per_label"):
+    with pytest.raises(ValueError, match="rooster has 3; sea waves has 2. .*at least 5.*lower min_per_label"):
         datasets.from_folder(short)
 
     with pytest.raises(ValueError, match="min_per_label is 3"):
@@ -288,6 +432,29 @@ def test_errors_say_what_is_wrong(tmp_path, folder):
     write_label(clash, "sea-waves", 5)
     with pytest.raises(ValueError, match="'sea-waves' and 'sea_waves'|'sea_waves' and 'sea-waves'"):
         datasets.from_folder(clash)
+
+
+def test_a_source_folder_inside_the_sets_dir_is_refused_and_left_alone(tmp_path, monkeypatch):
+    monkeypatch.setenv("SENSE_SETS_DIR", str(tmp_path / "my_sets"))
+    birds = make_folder(tmp_path / "my_sets" / "birds", {"dog": 6, "rooster": 6})
+    before = sorted(birds.rglob("*"))
+    for path in (birds, tmp_path / "my_sets"):
+        with pytest.raises(ValueError, match="lies inside SENSE_SETS_DIR.*Move the folder out of it"):
+            datasets.from_folder(path)
+    assert sorted(birds.rglob("*")) == before
+
+
+def test_a_name_taken_by_another_directory_is_refused_and_left_alone(folder, fake_home, embed_calls):
+    other = fake_home / "datasets" / "farm"
+    other.mkdir(parents=True)
+    (other / "notes.txt").write_text("not a saved set")
+    with pytest.raises(ValueError, match="is not a set saved by from_folder, so it is left alone. Pass another name"):
+        datasets.from_folder(folder, "farm")
+    assert (other / "notes.txt").read_text() == "not a saved set" and embed_calls == []
+
+    (other / "notes.txt").unlink()  # an empty directory is replaced
+    assert len(datasets.from_folder(folder, "farm").y) == 30
+    assert sorted(p.name for p in other.iterdir()) == ["set.json", "set.npz"]
 
 
 def test_a_label_of_near_identical_clips_cannot_be_split(tmp_path):
@@ -349,6 +516,56 @@ def test_unknown_and_damaged_sets(folder, fake_home, caplog):
     assert "broken" in caplog.text
     with pytest.raises(ValueError, match="cannot be read.*Build it again"):
         datasets.load_labelled_set("broken")
+    with pytest.raises(ValueError, match="Unknown dataset 'gone'"):  # removed between finding and reading it
+        datasets._load_folder_set("gone")
+
+
+def test_names_cannot_reach_outside_the_sets_dir(folder, fake_home):
+    datasets.from_folder(folder, "farm")
+    shutil.copytree(fake_home / "datasets" / "farm", fake_home / "evil")
+    with pytest.raises(ValueError, match="Unknown dataset"):
+        datasets.load_labelled_set("../evil")
+
+
+def test_folder_sets_load_in_real_mode(folder, monkeypatch, tmp_path, caplog):
+    built = datasets.from_folder(folder, "farm")
+    datasets._read_folder_set.cache_clear()
+    monkeypatch.delenv("SENSE_FAKE")
+    monkeypatch.setenv("SENSE_DATA_DIR", str(tmp_path / "no-builtins"))
+    assert not config.fake()
+    with caplog.at_level(logging.WARNING, logger="sense.datasets"):
+        assert [d["name"] for d in datasets.available_sets()] == ["farm"]
+    assert "fake specialist" in caplog.text
+    assert datasets.load_labelled_set("farm").files == built.files
+    samples = datasets.sample_files("farm")
+    assert len(samples) == 3 and all(Path(s["path"]).is_file() for s in samples)
+    problem = datasets.fit_problem(datasets.load_labelled_set("farm"))
+    assert "embedded by the fake specialist, but the harness is in real mode" in problem
+
+
+def test_readers_never_see_a_set_missing_while_it_is_replaced(folder):
+    datasets.from_folder(folder, "farm")
+    errors: list[str] = []
+    done = threading.Event()
+
+    def read() -> None:
+        while not done.is_set():
+            try:
+                datasets.load_labelled_set("farm")
+                assert "farm" in [d["name"] for d in datasets.available_sets()]
+            except Exception as err:  # noqa: BLE001 - every failure counts
+                errors.append(f"{type(err).__name__}: {err}")
+
+    reader = threading.Thread(target=read)
+    reader.start()
+    try:
+        for i in range(40):  # the save path only: a new title, no embedding
+            datasets.from_folder(folder, "farm", title=f"Farm {i}")
+    finally:
+        done.set()
+        reader.join()
+    assert errors == []
+    assert datasets.load_labelled_set("farm").title == "Farm 39"
 
 
 def test_sets_dir_follows_sense_sets_dir(folder, monkeypatch, tmp_path):
@@ -393,6 +610,7 @@ def test_post_datasets_builds_a_set(client, folder, tmp_path):
     r = client.post("/api/datasets", json={"path": str(folder), "max_per_label": 5, "question": "What is this?"})
     assert r.status_code == 200, r.text
     assert r.json()["name"] == "farm-sounds" and r.json()["meta"]["per_label"]["dog"] == 5
+    assert datasets.load_labelled_set("farm-sounds").question == "What is this?"
 
     r = client.post("/api/datasets", json={"path": str(tmp_path / "missing")})
     assert r.status_code == 400 and "not an existing folder" in r.json()["detail"]
@@ -405,6 +623,26 @@ def test_open_scope_needs_three_labels(client, tmp_path):
     assert client.post("/api/datasets", json={"path": str(two)}).status_code == 200
     r = client.post("/api/fit", json={"model": "fake", "dataset": "two", "scope": "open"})
     assert r.status_code == 400 and "at least 3 labels" in r.json()["detail"]
+
+    datasets.from_folder(make_folder(tmp_path / "small", {"dog": 4, "rooster": 4, "sea_waves": 4}), min_per_label=4)
+    r = client.post("/api/fit", json={"model": "fake", "dataset": "small", "scope": "open"})
+    assert r.status_code == 400 and "can leave 4 examples" in r.json()["detail"]
+
+
+def test_posting_a_folder_again_keeps_what_the_agent_recorded(client, folder):
+    datasets.from_folder(folder, "farm", title="Farm sounds", source="https://example.org/farm", licence="CC-BY 4.0")
+    r = client.post("/api/datasets", json={"path": str(folder), "name": "farm"})
+    assert r.status_code == 200, r.text
+    entry = r.json()
+    assert entry["title"] == "Farm sounds"
+    assert (entry["meta"]["source"], entry["meta"]["licence"]) == ("https://example.org/farm", "CC-BY 4.0")
+
+
+def test_a_closed_fit_on_a_folder_set_is_checked_with_fit_problem(client, folder, monkeypatch):
+    datasets.from_folder(folder, "farm")
+    monkeypatch.setattr(datasets, "fit_problem", lambda ds, scope="closed": f"{ds.name} was embedded elsewhere")
+    r = client.post("/api/fit", json={"model": "fake", "dataset": "farm", "scope": "closed"})
+    assert r.status_code == 400 and r.json()["detail"] == "farm was embedded elsewhere"
 
 
 def test_a_folder_set_runs_end_to_end(client, tmp_path):
@@ -431,3 +669,44 @@ def test_a_folder_set_runs_end_to_end(client, tmp_path):
     r = client.post("/api/chat", data={"model": "fake", "message": "What is this?", "sample_ids": [rooster["id"]]})
     assert r.status_code == 200, r.text
     assert "rooster" in r.json()["reply"] and r.json()["used"][0]["bridge"] == "vector:field"
+
+
+# ----------------------------------------------------------------------------- scripts/demo_cli.py
+@pytest.fixture
+def cli(monkeypatch, client):  # client: a fresh job table and the rule planner
+    spec = importlib.util.spec_from_file_location("demo_cli", config.REPO / "scripts" / "demo_cli.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    def run(*argv: str) -> int:
+        monkeypatch.setattr(sys, "argv", ["demo_cli.py", *argv])
+        return module.main()
+
+    return run, module
+
+
+def test_the_cli_builds_a_set_from_a_folder_and_runs_on_it(cli, tmp_path, capsys):
+    run, module = cli
+    assert module.CONTROL_NAMES["specialist_alone"] == "specialist alone"
+    folder = make_folder(tmp_path / "field", {"dog": 10, "rooster": 10, "sea_waves": 10})
+    code = run("--model", "fake", "--folder", str(folder), "--name", "My Set", "--question", "What made this sound?",
+               "--scope", "closed")
+    out = capsys.readouterr().out
+    assert code == 0, out
+    assert "Folder set my-set: 3 labels, 30 of 30 audio files used (18 fit, 6 dev, 6 test)" in out
+    assert "Installed: vector:my-set" in out
+    assert datasets.load_labelled_set("my-set").question == "What made this sound?"
+
+    with pytest.raises(SystemExit):
+        run("--model", "fake", "--dataset", "my-set", "--name", "other")
+    assert "--name and --question go with --folder" in capsys.readouterr().err
+
+
+def test_the_cli_checks_open_scope_for_folder_and_dataset_alike(cli, tmp_path, capsys):
+    run, _ = cli
+    two = make_folder(tmp_path / "two", {"dog": 6, "rooster": 6})
+    assert run("--model", "fake", "--folder", str(two), "--scope", "open") == 1
+    assert "at least 3 labels" in capsys.readouterr().err
+    assert run("--model", "fake", "--dataset", "two", "--scope", "open") == 1
+    captured = capsys.readouterr()
+    assert "at least 3 labels" in captured.err and "two has 2" in captured.err and "Agent run" not in captured.out
