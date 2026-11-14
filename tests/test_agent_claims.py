@@ -102,7 +102,7 @@ def test_dataset_claims_and_hub_refuted_claims_are_left_alone():
 def test_claim_to_dict_has_every_field():
     assert claim().to_dict() == {
         "subject": CLAP, "kind": "specialist", "statement": "Fake claim", "source_url": "https://example.org/a",
-        "source_name": "", "metric": "a fake benchmark", "value": 0.9, "status": "unverified", "evidence": "",
+        "source_name": "", "metric": "a fake benchmark", "value": 0.9, "status": "unverified", "evidence": "", "assertions": {}, "observed": {},
     }
 
 
@@ -230,3 +230,33 @@ def test_hub_outage_uses_fallback_without_refuting_claim(monkeypatch):
     assert result.claims[0].status == "unverified"
     assert "503" in result.claims[0].evidence and "503" in result.note
     assert "no such" not in result.claims[0].evidence
+
+
+
+@pytest.mark.parametrize("assertions, observed, expected", [
+    ({"licence": "mit"}, {"hub_exists": True, "licence": "mit"}, "confirmed"),
+    ({"licence": "mit"}, {"hub_exists": True, "licence": "apache-2.0"}, "refuted"),
+    ({"licence": "mit"}, {"hub_error": "HTTP 503"}, "not_testable"),
+    ({"licence": "mit", "n_examples": 1000, "labels": ["rock", "jazz"]},
+     {"hub_exists": True, "licence": "mit", "selected_split": {"n_rows": 1000},
+      "sample": {"labels": ["rock", "jazz"], "n_files": 60}}, "not_testable"),
+    ({}, {"sample": {"labels": ["rock", "jazz"], "n_files": 60}}, "not_testable"),
+])
+def test_dataset_facts_require_independent_comparable_evidence(assertions, observed, expected):
+    from agent.claims import settle_dataset_claim
+    c = Claim("o/d", "dataset", "MIT, a thousand examples, rock and jazz", "https://example.org",
+              assertions=assertions, observed=observed)
+    settle_dataset_claim(c)
+    assert c.status == expected
+    assert c.assertions == assertions and c.observed == observed
+    if "selected_split" in observed:
+        assert "not whole dataset" in c.evidence
+
+
+def test_synthetic_fixture_confirms_only_with_explicit_fake_identity():
+    c = claim()
+    settle_specialist_claims([c], "fake-clap", [card(.9)], synthetic_subject=CLAP)
+    assert c.status == "confirmed" and "Synthetic" in c.evidence and "fake-clap" in c.evidence
+    live = claim()
+    settle_specialist_claims([live], "fake-clap", [card(.9)])
+    assert live.status == "not_testable"

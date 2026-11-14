@@ -9,9 +9,9 @@ Trace contract for the interface (all times use the same monotonic start):
   [data]     start then ok/fail/info for need, search, fetch, build and fallback;
              substep events carry action and relevant need/candidate/reason facts.
              Final ok: dataset, origin (user/fetched/prewired), source, licence,
-             labels, n_files, need, claims.
+             labels, n_files, need, claims, meta (authoritative built-set metadata).
   [inspect], [plan], [fit], [verify] delegate to agent.loop.run_fit; see its contract.
-  [claims]   start, ok after verification: claims; synthetic marks fake-mode evidence.
+  [claims]   start, ok after verification: claims, measured_specialist; synthetic marks fake-mode evidence.
   [decide], [install], [done] delegate to run_fit after claims are settled.
              Early done ok: installed=None and native=True or needs_user=True;
              unsupported/no-data refusals also include the accumulated claims.
@@ -28,7 +28,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from agent import data, discover, loop, research
-from agent.claims import Claim, settle_specialist_claims
+from agent.claims import Claim, citable, settle_dataset_claim, settle_specialist_claims
 from agent.detect import detect
 from sense import config, datasets
 from sense import models
@@ -57,7 +57,11 @@ def run_auto(model: str, file: Path, goal: str, emit: Callable[[TraceEvent], Non
 
     def metadata(name: str) -> dict:
         # Public catalogue includes the actual retained files after folder validation.
-        return next((entry for entry in datasets.available_sets() if entry['name'] == name), {})
+        entry = next((entry for entry in datasets.available_sets() if entry['name'] == name), None)
+        if (entry is None or not isinstance(entry.get('labels'), list) or len(entry['labels']) < 2
+                or not isinstance(entry.get('n'), int) or entry['n'] <= 0):
+            raise data.DataUnavailable(f'No authoritative usable-set metadata for {name}.')
+        return entry
 
     try:
         file = Path(file)
@@ -119,7 +123,7 @@ def run_auto(model: str, file: Path, goal: str, emit: Callable[[TraceEvent], Non
             attempts = 0
             for candidate in candidates:
                 matching = [claim for claim in dataset_claims if claim.subject == candidate.hub_id]
-                if any(claim.status == 'refuted' for claim in matching):
+                if any(claim.status == 'refuted' for claim in matching) and not candidate.observed.get('hub_exists'):
                     continue
                 if attempts == 2:
                     break
@@ -127,31 +131,47 @@ def run_auto(model: str, file: Path, goal: str, emit: Callable[[TraceEvent], Non
                 say('start', f'Fetching labelled examples from {candidate.hub_id}.', action='fetch',
                     candidate=candidate.to_dict())
                 try:
-                    report = data.fetch_sample(candidate, config.home() / 'fetched' / data.safe_label(candidate.hub_id, 0), need.scope)
+                    report = data.fetch_sample(candidate, config.home() / 'fetched' / data.safe_label(candidate.hub_id, 0), need.scope,
+                                               requested_labels=need.labels)
                     say('ok', f'Fetched {report.n_files} files across {len(report.labels)} labels.', action='fetch',
                         report=report.to_dict())
                     say('start', f'Building the labelled set {candidate.title}.', action='build')
                     name = data.build_set(report.folder, data.safe_label(candidate.hub_id, 0), title=candidate.title,
                                           question=f'Which of these is in the {modality} clip?', modality=modality,
                                           source=candidate.source_url, licence=report.licence or '')
+                    entry = metadata(name)
+                    data.require_coverage(need.labels, entry['labels'])
                 except (data.DataUnavailable, research.ResearchUnavailable) as exc:
+                    name = None
                     for claim in matching:
-                        claim.status, claim.evidence = 'not_testable', str(exc)
+                        if claim.status != 'refuted':
+                            claim.status, claim.evidence = 'not_testable', str(exc)
                     say('fail', f'Could not use {candidate.hub_id}: {exc}', action='candidate', reason=str(exc), claims=ledger())
                     continue
-                origin, source, licence = 'fetched', candidate.source_url, report.licence
-                labels, n_files = list(report.labels), report.n_files
-                evidence = (f'Fetched {n_files} files with labels {", ".join(labels)}; '
-                            f'Hub licence: {licence or "not stated"}; n_rows_total: {report.n_rows_total}.')
+                origin = 'fetched'
+                meta = entry.get('meta') or {}
+                source, licence = meta.get('source', ''), meta.get('licence', '')
+                labels, n_files = entry['labels'], entry['n']
                 for claim in matching:
-                    claim.status, claim.evidence = 'confirmed', evidence
+                    claim.observed.update(candidate.observed)
+                    claim.observed['sample'] = {'n_files': n_files, 'labels': list(labels),
+                                                'downloaded_files': report.n_files}
+                    claim.observed['selected_split'] = report.selected_split or {'n_rows': report.n_rows_total}
+                    settle_dataset_claim(claim)
                 break
             for claim in dataset_claims:
                 if claim.status == 'unverified':
                     claim.status, claim.evidence = 'not_testable', 'Not sampled: an earlier set succeeded or the two-candidate limit was reached.'
             if name is None:
                 say('start', 'Looking for a prewired set matching the goal.', action='fallback')
-                name = data.choose_prewired(goal, modality)
+                name = data.choose_prewired(goal, modality, requested_labels=need.labels)
+                if name is not None:
+                    try:
+                        entry = metadata(name)
+                        data.require_coverage(need.labels, entry['labels'])
+                    except data.DataUnavailable as exc:
+                        say('fail', str(exc), action='fallback', reason=str(exc))
+                        name = None
                 if name is None:
                     say('info', 'No matching prewired labelled set is available.', action='fallback')
                     step = 'done'
@@ -160,12 +180,12 @@ def run_auto(model: str, file: Path, goal: str, emit: Callable[[TraceEvent], Non
                         'and run again with that folder.', installed=None, needs_user=True, claims=ledger())
                     return [], None
                 origin = 'prewired'
-                entry = metadata(name)
                 meta = entry.get('meta') or {}
                 source, licence = meta.get('source', ''), meta.get('licence', '')
                 labels, n_files = entry.get('labels', []), entry.get('n', 0)
         say('ok', f'Using {name} ({origin}) to verify the goal.', dataset=name, origin=origin, source=source,
-            licence=licence, labels=labels, n_files=n_files, need=need.to_dict(), claims=ledger())
+            licence=licence, labels=labels, n_files=n_files, need=need.to_dict(), claims=ledger(),
+            meta=entry.get('meta') or {})
         request = FitRequest(model=model, dataset=name, modality=modality, scope=need.scope)
         if on_request is not None:
             on_request(request)
@@ -174,19 +194,28 @@ def run_auto(model: str, file: Path, goal: str, emit: Callable[[TraceEvent], Non
             nonlocal step
             step = 'claims'
             say('start', 'Checking research claims against the specialist-alone control.')
-            used = discovery.chosen or ('laion/clap-htsat-unfused' if discovery.fallback and modality == 'audio' else None)
             synthetic = config.fake()
-            # Fake controls can exercise canned claims, but cannot validate a live source's model.
-            settle_specialist_claims(claims, None if synthetic and discovery.origin != 'fake' else used, cards)
+            measured = (entry.get('meta') or {}).get('specialist')
+            if synthetic and (measured == 'fake' or entry.get('origin') == 'builtin'):
+                measured = 'fake-clap'
+            # Folder metadata identifies the actual cached embeddings. Built-in real sets
+            # carry no such provenance; the currently configured encoder cannot prove it.
+            used = measured if (isinstance(measured, str) and citable(measured, 'https://huggingface.co')
+                                and not Path(measured).exists()) else None
+            if synthetic:
+                used = 'fake-clap' if measured == 'fake-clap' else None
+            settle_specialist_claims(claims, used, cards,
+                                     synthetic_subject=discovery.chosen if synthetic and discovery.origin == 'fake' else None)
             if synthetic:
                 for claim in claims:
                     if claim.kind == 'specialist':
-                        claim.evidence = ('Synthetic fake-mode check; no live specialist was measured. ' + claim.evidence)
+                        claim.evidence = (f'Synthetic fake-mode check; measured identity {measured!r}; '
+                                          'no live specialist was measured. ' + claim.evidence)
             counts = {status: sum(claim.status == status for claim in claims)
                       for status in ('confirmed', 'refuted', 'not_testable')}
             say('ok', f'Claims: {counts["confirmed"]} confirmed, {counts["refuted"]} refuted, '
                 f'{counts["not_testable"]} not testable.' + (' Synthetic verification only.' if synthetic else ''),
-                claims=ledger(), synthetic=synthetic)
+                claims=ledger(), synthetic=synthetic, measured_specialist=measured)
 
         step = 'inspect'
         return loop.run_fit(request, forward, planner, on_cards=on_cards, t0=t0)

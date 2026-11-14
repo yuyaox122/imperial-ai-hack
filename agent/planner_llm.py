@@ -267,7 +267,8 @@ class LLMPlanner:
                 "claiming generalisation from closed categories. Weigh chance and all controls.",
                 {
                     "request": request.to_dict(),
-                    "cards": [card.to_dict() for card in cards],
+                    "cards": [{key: value for key, value in card.to_dict().items()
+                               if key not in {"created", "verdict", "reason"}} for card in cards],
                     "assessments": {
                         name: {"eligible": ok, "reason": why}
                         for name, (ok, why) in assessments.items()

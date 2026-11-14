@@ -8,7 +8,7 @@ import pytest
 from agent import data, jobs, llm, loop, research
 from agent.auto import run_auto
 from agent.claims import Claim
-from sense import models
+from sense import datasets, models
 from sense.contracts import FitRequest, ModelInfo, ReportCard, TraceEvent
 
 CAND = data.DatasetCandidate('o/d', 'Sounds', 'https://huggingface.co/datasets/o/d', 'cc-by', 120)
@@ -19,7 +19,9 @@ def world(monkeypatch, tmp_path):
     monkeypatch.setenv('SENSE_HOME', str(tmp_path / 'home'))
     w = SimpleNamespace(events=[], candidates=[], prewired='gtzan', research_error=None,
                         fetch_error=None, build_error=None, fetch_calls=[], build_calls=[], fit_calls=[],
-                        claim_status={}, origin='fake')
+                        claim_status={}, origin='fake', built_entries=[])
+    original_sets = datasets.available_sets
+    monkeypatch.setattr(datasets, 'available_sets', lambda: original_sets() + w.built_entries)
     def search(*args, **kwargs):
         if w.research_error:
             raise w.research_error
@@ -29,7 +31,7 @@ def world(monkeypatch, tmp_path):
     def find(*args):
         return w.candidates, [Claim(c.hub_id, 'dataset', 'labelled sounds', c.source_url,
                                    status=w.claim_status.get(c.hub_id, 'unverified')) for c in w.candidates], 'live'
-    def fetch(candidate, dest, scope):
+    def fetch(candidate, dest, scope, **kwargs):
         w.fetch_calls.append((candidate, dest, scope))
         if w.fetch_error:
             raise w.fetch_error
@@ -38,6 +40,8 @@ def world(monkeypatch, tmp_path):
         w.build_calls.append(dict(folder=folder, name=name, **kwargs))
         if w.build_error:
             raise w.build_error
+        w.built_entries.append({'name': name, 'labels': ['a', 'b', 'c', 'd'], 'n': 120,
+                                'meta': {'source': kwargs['source'], 'licence': kwargs['licence'], 'specialist': 'fake'}})
         return name
     def fit(request, emit, planner=None, *, on_cards=None, t0=None):
         w.fit_calls.append(request)
@@ -52,7 +56,7 @@ def world(monkeypatch, tmp_path):
     monkeypatch.setattr(data, 'find_datasets', find)
     monkeypatch.setattr(data, 'fetch_sample', fetch)
     monkeypatch.setattr(data, 'build_set', build)
-    monkeypatch.setattr(data, 'choose_prewired', lambda *args: w.prewired)
+    monkeypatch.setattr(data, 'choose_prewired', lambda *args, **kwargs: w.prewired)
     monkeypatch.setattr(llm, 'ask_json', lambda *args, **kwargs: None)
     monkeypatch.setattr(models, 'available_models', lambda: [ModelInfo('fake', 'Fake model', ['text', 'image'], True)])
     monkeypatch.setattr(loop, 'run_fit', fit)
@@ -105,7 +109,7 @@ def test_fetched_dataset(world):
     assert result['licence'] == 'cc-by' and result['n_files'] == 120
     assert world.fit_calls[0].dataset == 'o_d'
     claim = next(c for c in result['claims'] if c['kind'] == 'dataset')
-    assert claim['status'] == 'confirmed' and '1000' in claim['evidence']
+    assert claim['status'] == 'not_testable' and '1000' in claim['evidence']
     assert world.build_calls[0]['question'] == 'Which of these is in the audio clip?'
 
 
@@ -367,3 +371,110 @@ def test_cancel_from_terminal_listener_preserves_outcome(world, fresh_jobs, tmp_
     else:
         assert job.status == 'done' and job.error is None and job.installed == 'vector:x'
         assert not errors and finals[0][1] == job.cards
+
+
+
+def test_fetched_final_metadata_is_built_set_not_download(world, monkeypatch):
+    from sense import datasets
+    world.candidates = [CAND]
+    monkeypatch.setattr(datasets, "available_sets", lambda: [{
+        "name": "o_d", "labels": ["hip hop", "jazz"], "n": 45,
+        "meta": {"source": CAND.source_url, "licence": "observed", "specialist": "fake"},
+    }])
+    run(world)
+    result = last(world, "data", "ok").data
+    assert result["labels"] == ["hip hop", "jazz"] and result["n_files"] == 45
+    assert result["licence"] == "observed"
+
+
+def test_requested_category_missing_after_build_cannot_fit(world, monkeypatch):
+    from sense import datasets
+    world.candidates = [CAND]
+    world.prewired = None
+    monkeypatch.setattr(data, "decide_need", lambda *a: data.DataNeed("labelled", "closed", ["siren"], "named"))
+    monkeypatch.setattr(datasets, "available_sets", lambda: [{"name": "o_d", "labels": ["a", "b"], "n": 50}])
+    assert run(world) == ([], None)
+    assert not world.fit_calls
+
+
+@pytest.mark.parametrize("identity", ["other/checkpoint", "/tmp/local-clap", None])
+def test_actual_embedding_identity_controls_live_claims(world, monkeypatch, identity):
+    from sense import config, datasets
+    world.origin = "live"
+    monkeypatch.setattr(config, "fake", lambda: False)
+    monkeypatch.setenv("SENSE_CLAP", identity or "other/checkpoint")
+    monkeypatch.setattr(datasets, "available_sets", lambda: [{
+        "name": "gtzan", "labels": ["rock", "jazz"], "n": 60,
+        "meta": {"specialist": identity} if identity else {},
+    }])
+    run(world)
+    claim = last(world, "claims").data["claims"][0]
+    assert claim["status"] == "not_testable"
+    assert last(world, "claims").data["measured_specialist"] == identity
+
+
+
+def test_built_set_duplicate_removal_and_normalized_labels_are_final(world, monkeypatch, tmp_path):
+    from sense.specialists import FakeSpecialist, FAKE_CONCEPTS
+    world.candidates = [CAND]
+    # The acquisition boundary is controlled; the actual folder builder validates,
+    # embeds, deduplicates, persists and normalizes the set used by auto.
+    def fetch(candidate, dest, scope, **kwargs):
+        for label, concept in [("hip_hop", "hip hop"), ("jazz", "jazz")]:
+            folder = dest / label
+            folder.mkdir(parents=True)
+            for i in range(12):
+                FakeSpecialist.write_sample(FAKE_CONCEPTS.index(concept), folder / f"{i}.wav", seed=i + 20)
+            (folder / "duplicate.wav").write_bytes((folder / "0.wav").read_bytes())
+        return data.FetchReport(dest, candidate.hub_id, {"hip_hop": 13, "jazz": 13}, 26, 1000, "mit", 100)
+    monkeypatch.setattr(data, "fetch_sample", fetch)
+    monkeypatch.setattr(data, "build_set", lambda folder, name, **kw: datasets.from_folder(
+        folder, name, max_per_label=30, min_per_label=10, **kw).name)
+    monkeypatch.setattr(data, "decide_need", lambda *a: data.DataNeed("labelled", "closed", ["hip hop", "jazz"], "named"))
+    run(world)
+    result = last(world, "data", "ok").data
+    built = datasets.load_labelled_set(world.fit_calls[0].dataset)
+    assert result["labels"] == built.labels == ["hip hop", "jazz"]
+    assert result["n_files"] == len(built.y) == 24
+    assert result["meta"] == built.meta
+    assert result["claims"][-1]["observed"]["sample"]["downloaded_files"] == 26
+
+
+def test_prewired_missing_named_category_refuses(world, monkeypatch):
+    monkeypatch.setattr(data, "decide_need", lambda *a: data.DataNeed("labelled", "closed", ["siren"], "named"))
+    assert run(world) == ([], None)
+    assert not world.fit_calls and last(world, "done").data["needs_user"]
+
+
+def test_missing_built_metadata_refuses_candidate(world, monkeypatch):
+    world.candidates, world.prewired = [CAND], None
+    monkeypatch.setattr(datasets, "available_sets", lambda: [])
+    assert run(world) == ([], None)
+    assert not world.fit_calls
+    assert any("authoritative" in e.message for e in world.events if e.status == "fail")
+
+
+def test_source_contradiction_survives_successful_build(world, monkeypatch):
+    candidate = data.DatasetCandidate("o/d", "Sounds", CAND.source_url, "mit", 1000, ["a", "b"],
+                                      observed={"hub_exists": True, "licence": "apache-2.0"})
+    c = Claim(candidate.hub_id, "dataset", "MIT; 1000 examples", candidate.source_url,
+              status="refuted", assertions={"licence": "mit", "n_examples": 1000, "labels": ["a", "b"]},
+              observed=dict(candidate.observed))
+    monkeypatch.setattr(data, "find_datasets", lambda *a: ([candidate], [c], "live"))
+    run(world)
+    assert world.fit_calls
+    assert c.status == "refuted" and c.assertions["licence"] == "mit"
+    assert c.observed["licence"] == "apache-2.0" and "sample" in c.observed
+
+
+def test_matching_embedding_provenance_can_confirm_the_measured_model(world, monkeypatch):
+    from sense import config
+    world.origin = "live"
+    monkeypatch.setattr(config, "fake", lambda: False)
+    monkeypatch.setenv("SENSE_CLAP", "other/model")
+    monkeypatch.setattr(datasets, "available_sets", lambda: [{
+        "name": "gtzan", "labels": ["rock", "jazz"], "n": 60, "meta": {"specialist": "other/model"}}])
+    run(world)
+    claims = last(world, "claims").data["claims"]
+    assert claims[0]["status"] == "not_testable"
+    assert claims[1]["subject"] == "other/model" and claims[1]["status"] == "confirmed"

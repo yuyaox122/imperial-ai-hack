@@ -153,7 +153,8 @@ def test_decide_sends_complete_cards_and_returns_grounded_reason(api, request_da
     assert decision.install == "vector:sounds"
     assert planner.assess(request_data, cards[0])[1] in decision.reason
     sent = json.loads(api.client.chat.completions.create.call_args.kwargs["messages"][1]["content"])
-    assert sent["cards"] == [card.to_dict() for card in cards]
+    assert sent["cards"] == [{key: value for key, value in card.to_dict().items()
+                              if key not in {"created", "verdict", "reason"}} for card in cards]
     api.rules.decide.assert_not_called()
 
 
@@ -494,3 +495,61 @@ def test_invalid_live_answer_after_invalid_memo_is_not_retried_or_stored(
     assert api.client.chat.completions.create.call_count == 2
     assert json.loads(memo.read_text()) == {}
     getattr(api.rules, method).assert_called_once()
+
+
+
+def test_decision_cache_survives_fresh_loop_verifications(api, monkeypatch, tmp_path):
+    from datetime import datetime, timezone
+    from agent import loop
+    from sense import datasets, models, bridges, verify
+    request = FitRequest("fake", "gtzan")
+    # Real loop with fake base model/data and controlled verification cards/API.
+    monkeypatch.setenv("SENSE_FAKE", "1")
+    monkeypatch.setattr(config, "fake", lambda: True)
+    model = models.load_model("fake")
+    dataset = datasets.load_labelled_set("gtzan")
+    monkeypatch.setattr(config, "fake", lambda: False)
+    monkeypatch.setattr(models, "load_model", lambda _: model)
+    monkeypatch.setattr(datasets, "load_labelled_set", lambda _: dataset)
+    monkeypatch.setattr(bridges, "build", lambda kind, *a: SimpleNamespace(name=f"{kind}:gtzan", kind=kind))
+    seen = []
+    def measure(model, bridge, dataset, request, **kwargs):
+        card = ReportCard("fake", "audio", "gtzan", "closed", bridge.name, bridge.kind, 100, .2, .85,
+                          {"swapped": .2, "lookup": .84, "specialist_alone": .9})
+        seen.append(card)
+        return card
+    monkeypatch.setattr(verify, "verify", measure)
+    dates = iter([datetime(2026, 1, 1, tzinfo=timezone.utc), datetime(2026, 1, 1, tzinfo=timezone.utc),
+                  datetime(2026, 1, 2, tzinfo=timezone.utc), datetime(2026, 1, 2, tzinfo=timezone.utc)])
+    monkeypatch.setattr(loop, "datetime", SimpleNamespace(now=lambda *a: next(dates)))
+    monkeypatch.setattr(loop, "_earlier_sense", lambda _: None)
+    api.client.chat.completions.create.side_effect = lambda **kw: completion(
+        {"bridges": ["vector", "text"]} if 'bridges' in kw['response_format']['json_schema']['schema']['properties']
+        else {"install": None, "reason": "85% accuracy versus 20% swapped."})
+    loop.run_fit(request, lambda _: None, api.module.LLMPlanner())
+    loop.run_fit(request, lambda _: None, api.module.LLMPlanner())
+    assert seen[0] is not seen[2] and seen[0].created != seen[2].created
+    assert api.client.chat.completions.create.call_count == 2  # one plan and one decision
+
+
+
+def test_card_presentation_does_not_change_decision_identity(api, request_data, cards):
+    api.client.chat.completions.create.return_value = completion({"install": None, "reason": "85% vs 20%."})
+    api.module.LLMPlanner().decide(request_data, cards)
+    cards[0].verdict, cards[0].reason, cards[0].created = "installed", "old presentation", "tomorrow"
+    api.module.LLMPlanner().decide(request_data, cards)
+    assert api.client.chat.completions.create.call_count == 1
+
+
+@pytest.mark.parametrize("field", ["controls", "interval", "n"])
+def test_substantive_card_measurements_still_change_cache_key(api, request_data, cards, field):
+    api.client.chat.completions.create.return_value = completion({"install": None, "reason": "85% vs 20%."})
+    api.module.LLMPlanner().decide(request_data, cards)
+    if field == "controls":
+        cards[0].controls["specialist_alone"] = .91
+    elif field == "interval":
+        cards[0].interval = [.8, .9]
+    else:
+        cards[0].n = 101
+    api.module.LLMPlanner().decide(request_data, cards)
+    assert api.client.chat.completions.create.call_count == 2

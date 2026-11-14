@@ -8,8 +8,8 @@ Public surface (do not rename):
   NEED_SCHEMA, DATASET_SCHEMA             structured-output schemas (DATASET_SCHEMA's top-level property is "datasets")
   decide_need(goal, detection) -> DataNeed
   find_datasets(need, modality, goal) -> (candidates, claims, origin)
-  fetch_sample(candidate, dest, scope) -> FetchReport
-  choose_prewired(goal, modality) -> str | None
+  fetch_sample(candidate, dest, scope, *, requested_labels=None) -> FetchReport
+  choose_prewired(goal, modality, *, requested_labels=None) -> str | None
   safe_label(text, index) -> str
   build_set(folder, name, *, title, question, modality, source, licence) -> str
 
@@ -19,9 +19,12 @@ otherwise a word rule decides (any of "any ", "anything", "describe", "whatever"
 fetch_sample owns `dest`: it replaces whatever is there, and every file it writes is
 dest/<safe_label>/<row_idx>.<audio extension>, so no label text or URL can place a file outside dest. It lists up to
 MAX_PAGES pages of the dataset viewer spread evenly over the whole split (so a split sorted by label still shows
-several labels), keeps at most MAX_LABELS labels in the order they appear, and then downloads at most PER_LABEL
+several labels), reserves slots for requested labels before keeping optional labels up to MAX_LABELS, and downloads at most PER_LABEL
 files per label, label by label in turn, each label's rows picked evenly across the split. Colliding normalized
-labels are rejected. A failure before body bytes arrive skips that row; a partially transferred failure aborts
+labels are rejected. Every requested category must have enough rows and retained downloads, otherwise the
+sample fails. Named coverage only accepts ASCII letters/numbers and space, underscore or hyphen separators;
+unrepresentable requested or original source names fail before downloads. Fallback selection and the caller
+also validate named categories against the built catalogue. A failure before body bytes arrive skips that row; a partially transferred failure aborts
 and cleans up the sample so discarded bytes cannot fuel retries beyond the budget. Downloading stops when every
 label is full, at MAX_BYTES (plus at most one overflow probe byte) or at DEADLINE_S. Labels with fewer than
 MIN_PER_LABEL files are deleted; fewer than 2 labels left (3 for scope "open") deletes dest and raises
@@ -41,7 +44,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path, PurePosixPath
 
 from agent import llm, research
-from agent.claims import Claim, citable
+from agent.claims import Claim, citable, settle_dataset_claim
 from agent.detect import Detection
 from sense import datasets
 from sense.specialists import AUDIO_EXTENSIONS
@@ -123,9 +126,10 @@ class DatasetCandidate:
     hub_id: str
     title: str
     source_url: str
-    licence: str | None = None
+    licence: str | None = None  # source assertion, not the independent Hub observation
     n_examples: int | None = None
     labels: list[str] = field(default_factory=list)
+    observed: dict = field(default_factory=dict)  # independent Hub facts; fields above remain source assertions
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -137,9 +141,10 @@ class FetchReport:
     hub_id: str
     labels: dict[str, int]  # label -> files kept
     n_files: int
-    n_rows_total: int
-    licence: str | None
+    n_rows_total: int  # selected split only, not necessarily the entire dataset
+    licence: str | None  # independent Hub licence or None
     bytes: int
+    selected_split: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         return asdict(self) | {"folder": str(self.folder)}
@@ -192,13 +197,19 @@ def find_datasets(need: DataNeed, modality: str, goal: str) -> tuple[list[Datase
         try:
             info = research.hub_dataset(candidate.hub_id)
         except research.ResearchUnavailable as exc:
+            candidate.observed["hub_error"] = str(exc)
             claim.evidence = f"The dataset's Hub record could not be checked: {exc}"
         else:
             if info is None:
+                candidate.observed["hub_exists"] = False
                 claim.status, claim.evidence = "refuted", "no such dataset on the Hugging Face Hub"
             else:
-                candidate.licence = info.get("licence")
-                claim.evidence = f"The Hub has this dataset, with licence {candidate.licence or 'not stated'}."
+                candidate.observed.update(hub_exists=True, licence=_text(info.get("licence")) or None)
+                claim.evidence = f"The Hub has this dataset, with licence {candidate.observed['licence'] or 'not stated'}."
+        claim.observed = dict(candidate.observed)
+        # Contradictions can already be established before acquisition.
+        if candidate.observed.get("licence") and candidate.licence and candidate.licence.casefold() != candidate.observed["licence"].casefold():
+            settle_dataset_claim(claim)
         candidates.append(candidate)
         claims.append(claim)
     return candidates, claims, found.origin
@@ -218,7 +229,14 @@ def _candidate(item: dict, source_name: str) -> tuple[DatasetCandidate, Claim]:
         parts.append("labels " + ", ".join(labels[:10]) + more)
     statement = "; ".join(parts) or _text(item.get("statement")) or "the source states no licence, size or labels"
     candidate = DatasetCandidate(hub_id, _text(item.get("title")) or hub_id, url, licence, n, labels)
-    return candidate, Claim(hub_id, "dataset", statement, url, source_name=source_name)
+    assertions = {}
+    if licence:
+        assertions["licence"] = licence
+    if n is not None:
+        assertions["n_examples"] = n
+    if labels:
+        assertions["labels"] = list(labels)
+    return candidate, Claim(hub_id, "dataset", statement, url, source_name=source_name, assertions=assertions)
 
 
 def _text(value: object) -> str:
@@ -226,12 +244,16 @@ def _text(value: object) -> str:
 
 
 # ----------------------------------------------------------------------------- fetching a sample
-def fetch_sample(candidate: DatasetCandidate, dest: Path, scope: str) -> FetchReport:
+def fetch_sample(candidate: DatasetCandidate, dest: Path, scope: str, *,
+                 requested_labels: list[str] | None = None) -> FetchReport:
     dest = Path(dest)
     shutil.rmtree(dest, ignore_errors=True)  # dest belongs to this fetch: an older sample is replaced
     try:
         dest.mkdir(parents=True, exist_ok=True)
-        return _fetch(candidate, dest, scope)
+        requested = _label_keys(requested_labels or [])
+        if len(requested) > MAX_LABELS:
+            raise DataUnavailable(f"{len(requested)} requested labels exceed the {MAX_LABELS}-label sample cap")
+        return _fetch(candidate, dest, scope, requested)
     except research.ResearchUnavailable as exc:
         shutil.rmtree(dest, ignore_errors=True)
         raise DataUnavailable(str(exc)) from exc
@@ -243,7 +265,7 @@ def fetch_sample(candidate: DatasetCandidate, dest: Path, scope: str) -> FetchRe
         raise DataUnavailable(f"could not write the sample under {dest}: {exc}") from exc
 
 
-def _fetch(candidate: DatasetCandidate, dest: Path, scope: str) -> FetchReport:
+def _fetch(candidate: DatasetCandidate, dest: Path, scope: str, requested: list[str]) -> FetchReport:
     start, hub_id = _now(), candidate.hub_id
     split = _pick_split(research.viewer("splits", dataset=hub_id, timeout=min(25.0, _remaining(start))), hub_id)
     params = {"dataset": hub_id, "config": split["config"], "split": split["split"]}
@@ -251,18 +273,25 @@ def _fetch(candidate: DatasetCandidate, dest: Path, scope: str) -> FetchReport:
     audio_col, label_col, names = _columns(first.get("features"), hub_id)
     total = first.get("num_rows_total")
     total = total if isinstance(total, int) and total >= 0 else len(_row_entries(first))
-    rows: dict[str, list[tuple[int, str]]] = {}  # label -> [(row_idx, audio url)]
+    # Reserve capacity and download priority for named categories, even if they appear last.
+    rows: dict[str, list[tuple[int, str]]] = {label: [] for label in requested}
     seen: set[int] = set()
     texts: dict[str, object] = {}  # safe folder -> original label identity
-    _collect(first, audio_col, label_col, names, rows, seen, texts)
+    _collect(first, audio_col, label_col, names, rows, seen, texts, named=bool(requested))
     for offset in _offsets(total)[1:]:
         if _now() - start > DEADLINE_S:
             break
         page = research.viewer("rows", **params, offset=offset, length=PAGE_ROWS, timeout=min(25.0, _remaining(start)))
-        _collect(page, audio_col, label_col, names, rows, seen, texts)
+        _collect(page, audio_col, label_col, names, rows, seen, texts, named=bool(requested))
+    short = [label for label in requested if len(rows[label]) < MIN_PER_LABEL]
+    if short:
+        raise DataUnavailable(f"requested labels absent or too small in bounded viewer sample: {short}")
     queues = {label: _spread(sorted(found), PER_LABEL) for label, found in rows.items()}
     counts, sizes = _download_all(queues, dest, start)
-    return _finish(candidate, dest, scope, counts, sizes, total)
+    report = _finish(candidate, dest, scope, counts, sizes, total)
+    require_coverage(requested, list(report.labels))
+    report.selected_split = {"config": split["config"], "split": split["split"], "n_rows": total}
+    return report
 
 
 def _pick_split(answer: dict, hub_id: str) -> dict:
@@ -307,7 +336,7 @@ def _offsets(total: int) -> list[int]:
 
 
 def _collect(page: dict, audio_col: str, label_col: str, names: list[str] | None,
-             rows: dict[str, list[tuple[int, str]]], seen: set[int], texts: dict[str, object]) -> None:
+             rows: dict[str, list[tuple[int, str]]], seen: set[int], texts: dict[str, object], *, named: bool = False) -> None:
     for entry in _row_entries(page):
         if not isinstance(entry, dict):
             continue
@@ -315,7 +344,7 @@ def _collect(page: dict, audio_col: str, label_col: str, names: list[str] | None
         if not isinstance(idx, int) or isinstance(idx, bool) or idx < 0 or idx in seen or not isinstance(row, dict):
             continue
         seen.add(idx)
-        label, src = _label(row.get(label_col), names, texts), _src(row.get(audio_col))
+        label, src = _label(row.get(label_col), names, texts, named=named), _src(row.get(audio_col))
         if label is None or src is None:
             continue
         if label not in rows:
@@ -332,7 +361,7 @@ def _row_entries(page: dict) -> list:
     return entries
 
 
-def _label(cell: object, names: list[str] | None, texts: dict[str, object]) -> str | None:
+def _label(cell: object, names: list[str] | None, texts: dict[str, object], *, named: bool = False) -> str | None:
     if names is not None and isinstance(cell, int) and not isinstance(cell, bool):
         if not 0 <= cell < len(names):
             return None
@@ -343,6 +372,10 @@ def _label(cell: object, names: list[str] | None, texts: dict[str, object]) -> s
     else:
         return None
     label = safe_label(raw, index)
+    # A filesystem-safe name is not evidence of the original category. For named
+    # goals, reject source identities the folder representation would discard.
+    if named and _label_keys([raw])[0] != label:
+        raise DataUnavailable(f"requested coverage cannot represent source label {raw!r} without information loss")
     # Distinct source labels must never silently share a folder, including after truncation.
     identity = (cell if names is not None else raw)
     previous = texts.setdefault(label, identity)
@@ -431,7 +464,7 @@ def _finish(candidate: DatasetCandidate, dest: Path, scope: str, counts: dict, s
             f"only {_count(len(kept), 'label')} of {candidate.hub_id} had at least {MIN_PER_LABEL} files "
             f"({_count(fetched, 'file')} fetched in all), and scope {scope} needs {need}"
         )
-    return FetchReport(dest, candidate.hub_id, kept, sum(kept.values()), total, candidate.licence,
+    return FetchReport(dest, candidate.hub_id, kept, sum(kept.values()), total, candidate.observed.get("licence"),
                        sum(sizes[label] for label in kept))
 
 
@@ -446,11 +479,42 @@ def safe_label(text: str, index: int) -> str:
     return out or f"label_{index}"
 
 
-def choose_prewired(goal: str, modality: str) -> str | None:
+def _label_keys(labels: list[str]) -> list[str]:
+    keys, originals = [], {}
+    for label in labels:
+        # Only case and the documented word separators are interchangeable.
+        # Arbitrary punctuation and non-ASCII names cannot be safely compared
+        # through safe_label's lossy replacement or generated label_N fallback.
+        if (not isinstance(label, str) or not re.fullmatch(r"[a-zA-Z0-9_\s-]+", label)
+                or not re.search(r"[a-zA-Z0-9]", label)):
+            raise DataUnavailable(f"requested or available category is not representable without information loss: {label!r}")
+        # Coverage also must not collapse long names through the folder length cap.
+        key = re.sub(r"[_\s-]+", "_", label.lower()).strip("_")
+        previous = originals.setdefault(key, label)
+        if previous != label:
+            raise DataUnavailable(f"requested or available labels collide after normalization: {previous!r}, {label!r}")
+        if key not in keys:
+            keys.append(key)
+    return keys
+
+
+def require_coverage(requested: list[str], actual: list[str]) -> None:
+    if not requested:
+        return
+    missing = set(_label_keys(requested)) - set(_label_keys(actual))
+    if missing:
+        raise DataUnavailable(f"requested labels missing from usable set: {', '.join(sorted(missing))}")
+
+
+def choose_prewired(goal: str, modality: str, *, requested_labels: list[str] | None = None) -> str | None:
     wanted = _words(goal)
     best, best_score = None, 0
     for entry in datasets.available_sets():
         if entry.get("modality") != modality:
+            continue
+        try:
+            require_coverage(requested_labels or [], entry.get("labels") or [])
+        except DataUnavailable:
             continue
         text = " ".join([str(entry.get("title") or "")] + [str(label) for label in entry.get("labels") or []])
         score = len(wanted & _words(text))

@@ -192,7 +192,7 @@ def test_choose_prewired_prefers_the_higher_score_then_the_first(monkeypatch):
 # ----------------------------------------------------------------------------- fetch_sample
 def test_fetch_sample_spreads_pages_and_caps_each_label(monkeypatch, tmp_path, hub):
     viewer = cycling(["a", "b", "c", "d"]); hub(viewer)
-    r = fetch_sample(DatasetCandidate("o/d", "D", "https://huggingface.co/datasets/o/d", licence="mit"), tmp_path / "s", "closed")
+    r = fetch_sample(DatasetCandidate("o/d", "D", "https://huggingface.co/datasets/o/d", licence="mit", observed={"licence": "mit"}), tmp_path / "s", "closed")
     assert set(r.labels) == {"a", "b", "c", "d"} and all(v == 30 for v in r.labels.values()) and r.n_rows_total == 1000
     assert sorted(p.name for p in (tmp_path / "s").iterdir()) == ["a", "b", "c", "d"]
     rows_calls = viewer.rows_calls
@@ -371,7 +371,8 @@ def test_find_datasets_drops_bad_ids_and_refutes_missing_ones(monkeypatch):
     assert origin == "live" and [c.hub_id for c in candidates] == ["o/good", "o/missing"]
     assert [c.subject for c in claims] == ["o/good", "o/missing"] and all(c.kind == "dataset" for c in claims)
     good, missing = claims
-    assert good.status == "unverified" and candidates[0].licence == "apache-2.0"
+    assert good.status == "refuted" and candidates[0].licence == "mit"
+    assert candidates[0].observed["licence"] == "apache-2.0"
     assert "mit" in good.statement and "1000" in good.statement and "rock" in good.statement
     assert (missing.status, missing.evidence) == ("refuted", "no such dataset on the Hugging Face Hub")
     assert (candidates[0].n_examples, candidates[0].labels, candidates[0].title) == (1000, ["rock", "jazz"], "T")
@@ -579,3 +580,88 @@ def test_uncertain_transfer_without_returned_bytes_stops_sample(monkeypatch, tmp
         fetch_sample(CAND, tmp_path / "sample", "closed")
     assert len(transfers) == 1
     assert not (tmp_path / "sample").exists()
+
+
+# Final integration regressions: named goal categories and evidence provenance.
+def test_requested_eleventh_class_survives_cap(tmp_path, hub):
+    hub(cycling([f"class {i}" for i in range(11)]))
+    report = fetch_sample(CAND, tmp_path / "s", "closed", requested_labels=["class 10"])
+    assert "class_10" in report.labels
+    assert len(report.labels) == data.MAX_LABELS
+
+
+@pytest.mark.parametrize("requested", [["absent"], [f"class {i}" for i in range(11)], ["A+B", "A-B"]])
+def test_uncoverable_requested_labels_refuse_and_cleanup(tmp_path, hub, requested):
+    written = hub(cycling([f"class {i}" for i in range(11)]))
+    with pytest.raises(DataUnavailable, match="requested|collid"):
+        fetch_sample(CAND, tmp_path / "s", "closed", requested_labels=requested)
+    assert not written and not (tmp_path / "s").exists()
+
+
+def test_prewired_requires_named_categories(monkeypatch):
+    monkeypatch.setattr(datasets, "available_sets", lambda: SETS)
+    assert choose_prewired("recognise music genres and sirens", "audio", requested_labels=["siren"]) is None
+
+
+def test_source_licence_is_preserved_when_hub_contradicts(monkeypatch):
+    monkeypatch.setattr(research, "search_structured", lambda *a, **k: Research(
+        {"datasets": [dict(dataset_item("o/a"), licence="mit")]}, [], "live"))
+    monkeypatch.setattr(research, "hub_dataset", lambda _: {"licence": "apache-2.0"})
+    candidates, claims, _ = find_datasets(DataNeed("labelled", "closed", [], "r"), "audio", "g")
+    assert candidates[0].licence == "mit"
+    assert claims[0].assertions["licence"] == "mit"
+    assert claims[0].observed["licence"] == "apache-2.0"
+    assert claims[0].status == "refuted"
+
+
+def test_source_licence_is_not_hub_evidence_without_hub(tmp_path, hub):
+    hub(cycling(["a", "b"]))
+    candidate = DatasetCandidate("o/d", "D", "https://example.org", licence="mit")
+    report = fetch_sample(candidate, tmp_path / "s", "closed")
+    assert report.licence is None
+
+
+
+def test_requested_label_lost_to_download_failures_is_rejected(tmp_path, hub):
+    hub(cycling(["a", "b", "wanted"]), fail=lambda url: int(url.split("/")[3]) % 3 == 2)
+    with pytest.raises(DataUnavailable, match="requested labels missing"):
+        fetch_sample(CAND, tmp_path / "s", "closed", requested_labels=["wanted"])
+    assert not (tmp_path / "s").exists()
+
+
+
+def test_coverage_does_not_merge_names_through_folder_truncation():
+    with pytest.raises(DataUnavailable, match="requested labels missing"):
+        data.require_coverage(["x" * 40 + " first"], ["x" * 40 + " second"])
+
+
+@pytest.mark.parametrize('requested,actual', [
+    (['猫'], ['犬', 'rain']),
+    (['A+B'], ['A-B', 'rain']),
+    (['A B'], ['A+B', 'rain']),
+    (['label 0'], ['犬', 'rain']),
+])
+def test_coverage_rejects_lossy_semantic_names(requested, actual):
+    with pytest.raises(DataUnavailable):
+        data.require_coverage(requested, actual)
+
+
+@pytest.mark.parametrize('requested,source', [
+    ('猫', '犬'), ('A+B', 'A-B'), ('A B', 'A+B'), ('label 0', '犬'),
+])
+@pytest.mark.parametrize('string_labels', [False, True])
+def test_fetch_cannot_use_lossy_folder_name_as_requested_identity(tmp_path, hub, requested, source, string_labels):
+    names = [source, 'rain']
+    viewer = FakeViewer(60, lambda i: names[i % 2] if string_labels else i % 2,
+                        [AUDIO_FEATURE, string_column('label') if string_labels else class_label(names)])
+    written = hub(viewer)
+    with pytest.raises(DataUnavailable):
+        fetch_sample(CAND, tmp_path / 's', 'closed', requested_labels=[requested])
+    assert not written and not (tmp_path / 's').exists()
+
+
+def test_supported_separator_normalization_preserves_coverage(tmp_path, hub):
+    data.require_coverage(['hip hop'], ['hip_hop', 'jazz'])
+    hub(cycling(['hip_hop', 'jazz']))
+    result = fetch_sample(CAND, tmp_path / 's', 'closed', requested_labels=['hip hop'])
+    assert result.labels['hip_hop'] == data.PER_LABEL
