@@ -6,9 +6,9 @@ All JSON. Errors: {"detail": "<what went wrong and what to do>"} with a 4xx or 5
        -> [ModelInfo dict]                          name, label, native, open_weights, available, note
   GET  /api/datasets
        -> [{"name", "title", "modality", "labels", "n", "origin", "meta"}]
-          origin "builtin" (gtzan, esc50; meta {}) or "folder" (built with POST /api/datasets; meta says how:
-          source, licence, folder, counts of files used, duplicates, conflicts, skipped files and near duplicates,
-          embedding time; see sense.datasets.from_folder)
+          origin "builtin" (gtzan, esc50; meta {}, except that real gtzan notes its duplicate recordings) or
+          "folder" (built with POST /api/datasets; meta says how: source, licence, folder, counts of files used,
+          duplicates, conflicts, skipped files and near duplicates, embedding time; see sense.datasets.from_folder)
   POST /api/datasets                                body: {"path": str, "name": str|null, "question": str|null,
                                                           "title": str|null, "max_per_label": int|null}
        -> the new set's GET /api/datasets item      builds a labelled set from a folder on the server's disk with one
