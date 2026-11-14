@@ -83,7 +83,10 @@ const state = {
   usedBridges: new Set(), // bridges a chat reply has used; their top-bar chip stops being "new"
   reportBridge: null, // which card the report panel shows
   reportCard: null, // the card it shows, for Export report
-  showLog: false,
+  tab: "report", // which inspector tab is open: report, run, graph or log
+  runs: [], // the last /api/runs answer, newest first
+  replaySpeed: 1,
+  replayDismissed: null, // job id whose finished replay bar the user closed
   server: "loading", // loading, ok or error: whether /api/models answered, for the status line
 };
 
@@ -115,6 +118,8 @@ function h(tag, attrs, ...children) {
 const ICONS = {
   "plus": "M19,13H13V19H11V13H5V11H11V5H13V11H19V13Z", // mdi:plus
   "x": "M19,6.41L17.59,5L12,10.59L6.41,5L5,6.41L10.59,12L5,17.59L6.41,19L12,13.41L17.59,19L19,17.59L13.41,12L19,6.41Z", // mdi:close
+  "refresh": "M17.65,6.35C16.2,4.9 14.21,4 12,4A8,8 0 0,0 4,12A8,8 0 0,0 12,20C15.73,20 18.84,17.45 19.73,14H17.65C16.83,16.33 14.61,18 12,18A6,6 0 0,1 6,12A6,6 0 0,1 12,6C13.66,6 15.14,6.69 16.22,7.78L13,11H20V4L17.65,6.35Z", // mdi:refresh
+  "copy": "M19,21H8V7H19M19,5H8A2,2 0 0,0 6,7V21A2,2 0 0,0 8,23H19A2,2 0 0,0 21,21V7A2,2 0 0,0 19,5M16,1H4A2,2 0 0,0 2,3V17H4V3H16V1Z", // mdi:content-copy
   "chevron-down": "M7.41,8.58L12,13.17L16.59,8.58L18,10L12,16L6,10L7.41,8.58Z", // mdi:chevron-down
   "check": "M21,7L9,19L3.5,13.5L4.91,12.09L9,16.17L19.59,5.59L21,7Z", // mdi:check
   "check-circle": "M12 2C6.5 2 2 6.5 2 12S6.5 22 12 22 22 17.5 22 12 17.5 2 12 2M12 20C7.59 20 4 16.41 4 12S7.59 4 12 4 20 7.59 20 12 16.41 20 12 20M16.59 7.58L10 14.17L7.41 11.59L6 13L10 17L18 9L16.59 7.58Z", // mdi:check-circle-outline
@@ -794,6 +799,7 @@ function reportCards() {
 function selectReport(bridge) {
   if (!bridge) return;
   state.reportBridge = bridge;
+  setTab("report");
   renderReport();
   renderGraph();
   const heading = $("report-heading");
@@ -1415,6 +1421,13 @@ async function sendMessage(event) {
   const errorEl = $("chat-error");
   const message = box.value.trim();
   showError(errorEl, null);
+  if (message.startsWith("/")) {
+    runCommand(message);
+    box.value = "";
+    autosize(box);
+    $("cmd-hints").hidden = true;
+    return;
+  }
   if (state.chatting) return;
   const model = currentModel();
   if (!model || !model.available) {
@@ -1516,7 +1529,12 @@ function fillReply(turn, result) {
     ...kinds.map((k) => tag(`Heard via ${kindLabel(k).toLowerCase()} bridge`, "info")),
     ...(missing ? [tag("File not received", "danger")] : []),
   );
-  const parts = [h("p", { class: "msg-text", text: result.reply || "The model returned an empty reply." })];
+  const replyText = result.reply || "The model returned an empty reply.";
+  const copy = h("button", { type: "button", class: "icon-button msg-copy", title: "Copy the reply", "aria-label": "Copy the reply" }, icon("copy", 13));
+  copy.addEventListener("click", () => {
+    if (navigator.clipboard) navigator.clipboard.writeText(replyText).then(() => copy.replaceChildren(icon("check", 13)), () => {});
+  });
+  const parts = [h("p", { class: "msg-text", text: replyText }), copy];
   if (used.length) parts.push(h("ul", { class: "used-list", "aria-label": "How each file reached the model" }, used.map(usedItem)));
   turn.reply.replaceChildren(...parts);
   let changed = false;
@@ -1693,11 +1711,13 @@ function startJob(id, request, resumed) {
   $("log-button").disabled = false;
   $("trace-outcome").replaceChildren();
   showError($("trace-error"), null);
+  if (!resumed) setTab("run");
   renderTraceHead();
   renderSteps();
   renderGraph();
   renderReport();
   renderChips();
+  renderRuns();
   syncControls();
   poll(state.job);
 }
@@ -1738,6 +1758,7 @@ async function poll(job) {
 
 function applyJob(job, data) {
   if (data.request) job.request = data.request;
+  if (data.replay) job.replay = data.replay;
   job.status = typeof data.status === "string" ? data.status : "running";
   const events = Array.isArray(data.events) ? data.events : [];
   if (events.length < job.seen) {
@@ -1842,8 +1863,11 @@ function finishJob(job, data) {
   renderReport();
   renderGraph();
   postAgentResult(job, data);
+  if (state.tab === "run") setTab("report");
   syncControls();
   loadSenses();
+  renderRuns();
+  if (!job.replay) setTimeout(loadRuns, 800); // the server records a finished run
 }
 
 function stepStatus(key, s, job) {
@@ -1942,6 +1966,10 @@ function renderTraceHead() {
   const pill = $("trace-status");
   renderProgress();
   renderStatus();
+  renderReplayBar();
+  const led = $("run-tab-led");
+  led.hidden = !(job && job.status === "running");
+  led.className = "led led--run";
   if (!job) {
     pill.hidden = true;
     $("trace-request").textContent = "Not run yet. Press New sense to start the agent.";
@@ -1959,9 +1987,10 @@ function renderTraceHead() {
   const reached = [...job.steps.keys()].filter((k) => STEP_INDEX[k]).length;
   $("trace-request").textContent = req
     ? [
+        job.replay ? "Recorded run" : null,
         `${modelLabel(req.model)} · ${datasetTitle(req.dataset)} · ${(SCOPE_LABELS[req.scope] || req.scope || "").toLowerCase()}`,
         job.status === "running" ? `step ${Math.max(1, reached)} of ${STEPS.length}` : `${reached} steps`,
-      ].join(" · ")
+      ].filter(Boolean).join(" · ")
     : "Resuming the last run…";
   $("trace-elapsed").textContent = job.elapsed !== null ? seconds(job.elapsed) : "";
 }
@@ -1973,7 +2002,7 @@ function resetTrace() {
   $("timeline").replaceChildren();
   $("log-count").textContent = "";
   $("log-button").disabled = true;
-  setLogVisible(false);
+  if (state.tab === "log") setTab("run");
   $("trace-outcome").replaceChildren();
   renderTraceHead();
   renderSteps();
@@ -1983,14 +2012,179 @@ function resetTrace() {
 }
 
 /** Event log tab: swaps the sense graph for every event of the run, as the server sent them. */
-function setLogVisible(show) {
-  state.showLog = show;
-  $("log-view").hidden = !show;
-  $("graph-canvas").hidden = show;
-  $("log-button").setAttribute("aria-selected", String(show));
-  $("graph-tab").setAttribute("aria-selected", String(!show));
-  if (show) scrollToEnd($("log-view"));
-  else drawWires();
+/** The inspector's tabs. The graph needs more room than the others, so its tab widens the inspector. */
+function setTab(name) {
+  state.tab = name;
+  const views = { report: "report-view", run: "run-view", graph: "graph-view", log: "log-view" };
+  for (const [key, id] of Object.entries(views)) $(id).hidden = key !== name;
+  for (const tab of document.querySelectorAll(".insp-tabs .tab")) tab.setAttribute("aria-selected", String(tab.dataset.tab === name));
+  $("workspace").classList.toggle("is-wide", name === "graph");
+  if (name === "log") scrollToEnd($("log-view"));
+  if (name === "graph") requestAnimationFrame(drawWires);
+}
+
+// ---------------------------------------------------------------- runs and replay
+
+async function loadRuns() {
+  showError($("runs-error"), null);
+  try {
+    const runs = await api("/api/runs");
+    state.runs = Array.isArray(runs) ? runs : [];
+  } catch (err) {
+    showError($("runs-error"), err, loadRuns);
+  }
+  renderRuns();
+}
+
+const clock = (iso) => {
+  const d = iso ? new Date(iso) : null;
+  return d && !Number.isNaN(d.getTime()) ? d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "";
+};
+
+/** One row per recorded run (newest first), each with its outcome and a Replay button. */
+function renderRuns() {
+  const list = $("runs-list");
+  const job = state.job;
+  const busy = jobRunning();
+  const replayOf = job && job.replay ? job.replay.of : null;
+  const rows = [];
+  if (busy && !job.replay) {
+    rows.push(h("li", { class: "run-item run-item--live" },
+      h("span", { class: "run-item-main" },
+        h("span", { class: "run-item-title" }, h("span", { class: "led led--run" }), " Live run"),
+        h("span", { class: "run-item-meta", text: job.request ? `${modelLabel(job.request.model)} · ${datasetTitle(job.request.dataset)}` : "" }))));
+  }
+  for (const run of state.runs) {
+    const r = run.request || {};
+    const active = replayOf === run.id;
+    const outcome = run.status === "failed" ? "failed" : run.installed ? `installed · ${run.installed}` : "nothing installed";
+    const meta = [modelLabel(r.model), (SCOPE_LABELS[r.scope] || r.scope || "").toLowerCase(), toNumber(run.seconds) !== null ? seconds(run.seconds) : "", clock(run.recorded), run.origin]
+      .filter(Boolean).join(" · ");
+    rows.push(h("li", { class: `run-item${active ? " is-active" : ""}` },
+      h("span", { class: "run-item-main" },
+        h("span", { class: "run-item-title", text: `${capitalise(r.modality || "sense")} · ${datasetTitle(r.dataset) || "?"}` }),
+        h("span", { class: "run-item-meta", text: meta }),
+        h("span", { class: `run-item-outcome run-item-outcome--${run.installed ? "ok" : run.status === "failed" ? "fail" : "none"}`, text: outcome })),
+      h("button", {
+        type: "button",
+        class: "btn btn--small",
+        disabled: busy,
+        title: busy ? "Wait for the current run to finish" : `Replay at ${state.replaySpeed}×`,
+        onclick: () => startReplay(run),
+      }, icon("play", 12), active && busy ? "Playing" : "Replay")));
+  }
+  if (!rows.length) rows.push(h("li", { class: "runs-empty", text: "No recorded runs yet. Every finished agent run lands here, ready to replay." }));
+  list.replaceChildren(...rows);
+}
+
+async function startReplay(run) {
+  showError($("runs-error"), null);
+  if (jobRunning()) return;
+  try {
+    const result = await api("/api/replay", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ run: run.id, speed: state.replaySpeed }),
+    });
+    if (!result || !result.job_id) throw new Error("The server started no replay.");
+    state.replayDismissed = null;
+    startJob(result.job_id, run.request || null, false);
+    state.job.replay = { of: run.id, recorded: run.recorded, speed: state.replaySpeed };
+    renderTraceHead();
+    renderRuns();
+  } catch (err) {
+    showError($("runs-error"), err, () => startReplay(run));
+  }
+}
+
+/** The bar above the chat while a recorded run plays. Chat stays live under it. */
+function renderReplayBar() {
+  const bar = $("replay-bar");
+  const job = state.job;
+  if (!job || !job.replay || state.replayDismissed === job.id) {
+    bar.hidden = true;
+    return;
+  }
+  const run = state.runs.find((r) => r.id === job.replay.of);
+  const total = run ? toNumber(run.seconds) : null;
+  const done = job.status !== "running";
+  const frac = done ? 1 : total && job.elapsed !== null ? Math.min(1, job.elapsed / total) : 0;
+  const last = [...job.steps.keys()].pop();
+  bar.hidden = false;
+  bar.replaceChildren(
+    h("span", { class: "replay-mark", text: done ? "■" : "▶" }),
+    h("span", { class: "replay-text", text: `${done ? "Replay finished" : "Replaying a recorded run"} · ${job.replay.speed || 1}×${job.replay.recorded ? ` · recorded ${clock(job.replay.recorded)}` : ""}` }),
+    h("span", { class: "replay-track" }, h("span", { class: "replay-fill", style: `width:${(frac * 100).toFixed(1)}%` })),
+    h("span", { class: "replay-step num", text: [last || "", job.elapsed !== null ? seconds(job.elapsed) : "", total !== null ? `/ ${seconds(total)}` : ""].filter(Boolean).join(" ") }),
+    h("span", { class: "replay-note", text: "chat stays live" }),
+    done ? h("button", { type: "button", class: "icon-button", "aria-label": "Close the replay bar", onclick: () => { state.replayDismissed = job.id; renderReplayBar(); } }, icon("x", 13)) : null,
+  );
+}
+
+// ---------------------------------------------------------------- slash commands
+
+const COMMANDS = [
+  { cmd: "fit", help: "Give the model a new sense (opens New sense)" },
+  { cmd: "replay", args: "[n]", help: "Replay the n-th most recent run (default 1)" },
+  { cmd: "runs", help: "Reload the runs list" },
+  { cmd: "report", help: "Show the report card" },
+  { cmd: "run", help: "Show the agent run" },
+  { cmd: "graph", help: "Show the sense graph" },
+  { cmd: "log", help: "Show the event log" },
+  { cmd: "clear", help: "Clear the conversation on screen" },
+  { cmd: "help", help: "List these commands" },
+];
+
+function renderCommandHints() {
+  const box = $("message");
+  const list = $("cmd-hints");
+  const text = box.value;
+  if (!text.startsWith("/") || text.includes(" ")) {
+    list.hidden = true;
+    return;
+  }
+  const typed = text.slice(1).toLowerCase();
+  const matches = COMMANDS.filter((c) => c.cmd.startsWith(typed));
+  list.replaceChildren(...matches.map((c) =>
+    h("li", {
+      class: "cmd-hint",
+      role: "option",
+      "data-cmd": c.cmd,
+      onmousedown: (e) => {
+        e.preventDefault();
+        box.value = `/${c.cmd} `;
+        box.focus();
+        renderCommandHints();
+      },
+    },
+      h("span", { class: "cmd-name", text: `/${c.cmd}${c.args ? ` ${c.args}` : ""}` }),
+      h("span", { class: "cmd-help", text: c.help }))));
+  list.hidden = matches.length === 0;
+}
+
+function runCommand(text) {
+  const [name, ...args] = text.slice(1).trim().split(/\s+/);
+  const cmd = (name || "").toLowerCase();
+  const note = (t) => {
+    $("thread").append(h("p", { class: "thread-note turn", text: t }));
+    updateThreadEmpty();
+    scrollToEnd($("thread"));
+  };
+  if (cmd === "fit" || cmd === "sense") openFit($("new-sense-button"));
+  else if (cmd === "runs") loadRuns();
+  else if (["report", "run", "graph", "log"].includes(cmd)) setTab(cmd);
+  else if (cmd === "replay") {
+    const n = Math.max(1, parseInt(args[0], 10) || 1);
+    const run = state.runs[n - 1];
+    if (!run) note(state.runs.length ? `There are only ${state.runs.length} recorded runs.` : "No recorded runs yet.");
+    else if (jobRunning()) note("A run is in progress. Wait for it to finish, then replay.");
+    else startReplay(run);
+  } else if (cmd === "clear") {
+    for (const el of [...$("thread").children]) if (el.id !== "thread-empty") el.remove();
+    updateThreadEmpty();
+  } else if (cmd === "help" || cmd === "") {
+    note(COMMANDS.map((c) => `/${c.cmd}${c.args ? ` ${c.args}` : ""}  ${c.help}`).join("\n"));
+  } else note(`Unknown command /${cmd}. Type /help for the list.`);
 }
 
 // ---------------------------------------------------------------- start
@@ -2026,13 +2220,42 @@ function bindEvents() {
     closeFit(false);
   });
 
-  $("graph-tab").addEventListener("click", () => setLogVisible(false));
-  $("log-button").addEventListener("click", () => setLogVisible(true));
+  for (const tab of document.querySelectorAll(".insp-tabs .tab")) tab.addEventListener("click", () => setTab(tab.dataset.tab));
+  $("runs-refresh").addEventListener("click", loadRuns);
+  for (const b of document.querySelectorAll(".speed")) {
+    b.addEventListener("click", () => {
+      state.replaySpeed = Number(b.dataset.speed) || 1;
+      for (const other of document.querySelectorAll(".speed")) other.setAttribute("aria-pressed", String(other === b));
+      renderRuns();
+    });
+  }
+  // As in other chat harnesses, Ctrl/Cmd+K focuses the composer from anywhere.
+  document.addEventListener("keydown", (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
+      e.preventDefault();
+      $("message").focus();
+    }
+  });
   $("export-button").addEventListener("click", exportReport);
 
   const box = $("message");
-  box.addEventListener("input", () => autosize(box));
+  box.addEventListener("input", () => {
+    autosize(box);
+    renderCommandHints();
+  });
+  box.addEventListener("blur", () => setTimeout(() => ($("cmd-hints").hidden = true), 150));
   box.addEventListener("keydown", (e) => {
+    const hints = $("cmd-hints");
+    if (e.key === "Tab" && !hints.hidden && hints.firstChild) {
+      e.preventDefault();
+      box.value = `/${hints.firstChild.dataset.cmd} `;
+      renderCommandHints();
+      return;
+    }
+    if (e.key === "Escape" && !hints.hidden) {
+      hints.hidden = true;
+      return;
+    }
     if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
       e.preventDefault();
       $("chat-form").requestSubmit();
@@ -2079,6 +2302,7 @@ function init() {
   syncControls();
   loadModels();
   loadDatasets();
+  loadRuns();
   const savedJob = store.get("sessionStorage", "sense.job");
   if (savedJob) startJob(savedJob, null, true);
 }

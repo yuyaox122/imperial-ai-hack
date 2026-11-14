@@ -92,13 +92,32 @@
     </form>
   </div>
 
-  <main class="workspace">
-    <!-- 01 Chat -->
+  <main id="workspace" class="workspace">
+    <!-- 01 Runs: every recorded run, each one replayable -->
+    <aside class="pane pane--runs" aria-labelledby="runs-heading">
+      <div class="pane-head">
+        <h2 id="runs-heading" class="pane-title"><span class="idx" aria-hidden="true">01</span>Runs</h2>
+        <button id="runs-refresh" class="icon-button" type="button" title="Reload the runs" aria-label="Reload the runs"><span data-icon="refresh"></span></button>
+      </div>
+      <div class="runs-speed">
+        <span class="label">Replay speed</span>
+        <div class="speed-seg" role="radiogroup" aria-label="Replay speed">
+          <button type="button" class="speed" data-speed="1" aria-pressed="true">1×</button>
+          <button type="button" class="speed" data-speed="2" aria-pressed="false">2×</button>
+          <button type="button" class="speed" data-speed="4" aria-pressed="false">4×</button>
+        </div>
+      </div>
+      <ul id="runs-list" class="runs-list" aria-label="Recorded runs"></ul>
+      <div id="runs-error" class="error" role="alert" hidden></div>
+    </aside>
+
+    <!-- 02 Chat -->
     <section class="pane pane--chat" id="chat-panel" aria-labelledby="chat-heading">
       <div class="pane-head">
-        <h2 id="chat-heading" class="pane-title"><span class="idx" aria-hidden="true">01</span>Chat</h2>
+        <h2 id="chat-heading" class="pane-title"><span class="idx" aria-hidden="true">02</span>Chat</h2>
         <span id="chat-model" class="pane-sub"></span>
       </div>
+      <div id="replay-bar" class="replay-bar" role="status" hidden></div>
       <div id="thread" class="thread" aria-live="polite">
         <div id="thread-empty" class="thread-empty">
           <div class="drop-zone brackets">
@@ -119,11 +138,12 @@
           <div id="samples-error" class="error" role="alert" hidden></div>
         </div>
         <form id="chat-form" class="composer-form" novalidate>
+          <ul id="cmd-hints" class="cmd-hints" role="listbox" aria-label="Commands" hidden></ul>
           <ul id="attachments" class="attachments" aria-label="Files attached to the next message" hidden></ul>
           <div class="composer">
             <span class="prompt" aria-hidden="true">&gt;</span>
             <label class="sr-only" for="message">Message</label>
-            <textarea id="message" rows="1" placeholder="Ask about the attached clip"></textarea>
+            <textarea id="message" rows="1" placeholder="Ask about the attached clip, or type / for commands"></textarea>
             <label class="icon-button file-button" title="Attach audio">
               <span data-icon="paperclip"></span>
               <span class="sr-only">Attach audio</span>
@@ -136,51 +156,9 @@
       </div>
     </section>
 
-    <!-- 02 Sense graph and 03 Agent run -->
-    <section class="center" aria-label="Agent">
-      <div class="pane-head graph-head">
-        <h2 id="graph-heading" class="pane-title"><span class="idx" aria-hidden="true">02</span>Sense graph</h2>
-        <span id="graph-sub" class="pane-sub"></span>
-        <div class="tabs" role="tablist" aria-label="Centre view">
-          <button id="graph-tab" class="tab" type="button" role="tab" aria-selected="true" aria-controls="graph-canvas">Graph</button>
-          <button id="log-button" class="tab" type="button" role="tab" aria-selected="false" aria-controls="log-view" disabled>Event log <span id="log-count" class="num"></span></button>
-        </div>
-      </div>
-      <section class="graph" aria-labelledby="graph-heading">
-        <div id="model-error" class="error graph-error" role="alert" hidden></div>
-        <div id="graph-canvas" class="graph-canvas" role="tabpanel" aria-labelledby="graph-tab"></div>
-        <ul class="legend" aria-label="Wire colours">
-          <li><span class="swatch" style="--swatch: var(--wire-audio)"></span>Audio</li>
-          <li><span class="swatch" style="--swatch: var(--wire-embedding)"></span>Embedding</li>
-          <li><span class="swatch" style="--swatch: var(--wire-text)"></span>Text</li>
-          <li><span class="swatch" style="--swatch: var(--wire-data)"></span>Labelled data</li>
-        </ul>
-        <div id="log-view" class="log-view" role="tabpanel" aria-labelledby="log-button" hidden>
-          <ol id="timeline" class="timeline" aria-label="Every event of the run"></ol>
-        </div>
-      </section>
-
-      <section id="trace-panel" class="run" aria-labelledby="trace-heading">
-        <div class="run-head">
-          <h2 id="trace-heading" class="pane-title"><span class="idx" aria-hidden="true">03</span>Agent run</h2>
-          <span id="trace-status" class="tag" hidden></span>
-          <span id="trace-request" class="run-meta">Not run yet.</span>
-          <span id="trace-elapsed" class="run-elapsed num"></span>
-        </div>
-        <ol id="steps" class="steps" aria-label="Steps of the agent run"></ol>
-        <div id="trace-outcome" aria-live="polite"></div>
-        <div id="trace-error" class="error" role="alert" hidden></div>
-      </section>
-    </section>
-
-    <!-- 04 Report card and 05 Senses -->
-    <aside class="pane pane--report" id="report-panel" aria-labelledby="report-heading">
-      <div class="pane-head">
-        <h2 id="report-heading" class="pane-title" tabindex="-1"><span class="idx" aria-hidden="true">04</span>Report card</h2>
-        <span id="report-verdict" class="tag" hidden></span>
-      </div>
-      <div class="panel-scroll">
-        <div class="brain-block">
+    <!-- 03 Inspector: the brain, then Report / Run / Graph / Log -->
+    <aside class="pane pane--report pane--inspector" id="report-panel" aria-label="Inspector">
+      <div class="brain-block">
           <div class="section-head">
             <h3 class="pane-title">Brain</h3>
             <span id="brain-meta" class="section-meta"></span>
@@ -189,6 +167,17 @@
             <canvas id="brain" aria-label="Which senses the model has, drawn as regions of a brain"></canvas>
             <div id="brain-tip" class="brain-tip" hidden></div>
           </div>
+        </div>
+      <div class="tabs insp-tabs" role="tablist" aria-label="Inspector">
+        <button id="report-tab" class="tab" type="button" role="tab" aria-selected="true" aria-controls="report-view" data-tab="report">Report</button>
+        <button id="run-tab" class="tab" type="button" role="tab" aria-selected="false" aria-controls="run-view" data-tab="run">Run <span id="run-tab-led" class="led" hidden></span></button>
+        <button id="graph-tab" class="tab" type="button" role="tab" aria-selected="false" aria-controls="graph-view" data-tab="graph">Graph</button>
+        <button id="log-button" class="tab" type="button" role="tab" aria-selected="false" aria-controls="log-view" data-tab="log" disabled>Log <span id="log-count" class="num"></span></button>
+      </div>
+      <div id="report-view" class="insp-view panel-scroll" role="tabpanel" aria-labelledby="report-tab">
+        <div class="pane-head report-head">
+          <h2 id="report-heading" class="pane-title" tabindex="-1"><span class="idx" aria-hidden="true">04</span>Report card</h2>
+          <span id="report-verdict" class="tag" hidden></span>
         </div>
         <div id="report" class="report-body" aria-live="polite"></div>
         <div class="senses-block">
@@ -200,6 +189,39 @@
           <div id="senses-error" class="error" role="alert" hidden></div>
         </div>
       </div>
+      <div id="run-view" class="insp-view panel-scroll" role="tabpanel" aria-labelledby="run-tab" hidden>
+      <section id="trace-panel" class="run" aria-labelledby="trace-heading">
+        <div class="run-head">
+          <h2 id="trace-heading" class="pane-title"><span class="idx" aria-hidden="true">03</span>Agent run</h2>
+          <span id="trace-status" class="tag" hidden></span>
+          <span id="trace-request" class="run-meta">Not run yet.</span>
+          <span id="trace-elapsed" class="run-elapsed num"></span>
+        </div>
+        <ol id="steps" class="steps" aria-label="Steps of the agent run"></ol>
+        <div id="trace-outcome" aria-live="polite"></div>
+        <div id="trace-error" class="error" role="alert" hidden></div>
+      </section>
+      </div>
+      <div id="graph-view" class="insp-view" role="tabpanel" aria-labelledby="graph-tab" hidden>
+        <div class="pane-head graph-head">
+          <h2 id="graph-heading" class="pane-title"><span class="idx" aria-hidden="true">05</span>Sense graph</h2>
+          <span id="graph-sub" class="pane-sub"></span>
+        </div>
+      <section class="graph" aria-labelledby="graph-heading">
+        <div id="model-error" class="error graph-error" role="alert" hidden></div>
+        <div id="graph-canvas" class="graph-canvas"></div>
+        <ul class="legend" aria-label="Wire colours">
+          <li><span class="swatch" style="--swatch: var(--wire-audio)"></span>Audio</li>
+          <li><span class="swatch" style="--swatch: var(--wire-embedding)"></span>Embedding</li>
+          <li><span class="swatch" style="--swatch: var(--wire-text)"></span>Text</li>
+          <li><span class="swatch" style="--swatch: var(--wire-data)"></span>Labelled data</li>
+        </ul>
+
+      </section>
+      </div>
+        <div id="log-view" class="log-view insp-view" role="tabpanel" aria-labelledby="log-button" hidden>
+          <ol id="timeline" class="timeline" aria-label="Every event of the run"></ol>
+        </div>
       <div class="report-footer">
         <button id="export-button" class="btn" type="button" disabled><span data-icon="download"></span>Export report</button>
         <button id="add-sense-button" class="btn btn--primary" type="button" aria-haspopup="dialog" aria-controls="fit-popover"><span data-icon="plus"></span>Add a sense</button>

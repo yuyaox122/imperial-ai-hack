@@ -314,7 +314,8 @@ ul, ol { margin: 0; padding: 0; list-style: none; }
 
 /* ================================================================ workspace and panes */
 
-.workspace { display: grid; grid-template-columns: 320px minmax(0, 1fr) 344px; min-height: 0; }
+.workspace { display: grid; grid-template-columns: 264px minmax(0, 1fr) 420px; min-height: 0; transition: grid-template-columns 0.18s; }
+.workspace.is-wide { grid-template-columns: 264px minmax(0, 1fr) 712px; }
 .pane { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--page); }
 .pane--chat { border-right: var(--rule) solid var(--rule-light); }
 .pane--report { border-left: var(--rule) solid var(--rule-light); }
@@ -613,7 +614,7 @@ button.node:hover { border-color: var(--app-widget-hover-stroke); }
 /* ================================================================ brain card */
 
 .brain-block { padding: 10px 14px 12px; border-bottom: var(--rule) solid var(--rule-light); }
-.brain-stage { position: relative; height: 220px; border: var(--rule) solid var(--rule-light); background: var(--field-grid) center / 32px 32px; }
+.brain-stage { position: relative; height: 128px; border: var(--rule) solid var(--rule-light); background: var(--field-grid) center / 32px 32px; }
 .brain-stage canvas { display: block; width: 100%; height: 100%; }
 .brain-tip {
   position: absolute; z-index: 5; min-width: 180px; max-width: 240px; padding: 8px 10px; pointer-events: none;
@@ -687,7 +688,70 @@ button.sense-text:hover .sense-title { color: var(--accent-ink-hover); }
   .graph-canvas { column-gap: 32px; padding: 24px 20px 40px; }
 }
 @media (max-width: 1280px) {
-  .workspace { grid-template-columns: 288px minmax(0, 1fr) 312px; }
+  .workspace { grid-template-columns: 232px minmax(0, 1fr) 380px; }
+  .workspace.is-wide { grid-template-columns: 232px minmax(0, 1fr) 620px; }
   .graph-canvas { grid-template-columns: minmax(156px, 180px) minmax(208px, 240px) minmax(172px, 210px); }
   .brand-topic { display: none; }
 }
+
+/* ================================================================ layout F: runs | chat | inspector */
+
+.pane--runs { border-right: var(--rule) solid var(--rule-light); }
+.pane--runs .pane-head .icon-button { margin-left: auto; }
+.runs-speed { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 14px; border-bottom: var(--rule) solid var(--rule-light); }
+.speed-seg { display: flex; border: var(--rule) solid var(--app-widget-stroke); }
+.speed { padding: 2px 9px; font: 11px/1.4 var(--font-mono); color: var(--text-secondary); background: var(--app-widget); border: 0; border-right: var(--rule) solid var(--app-widget-stroke); cursor: pointer; }
+.speed:last-child { border-right: 0; }
+.speed[aria-pressed="true"] { color: var(--heading); background: var(--tab-tint); box-shadow: inset 0 -2px 0 var(--accent); }
+.runs-list { flex: 1; min-height: 0; overflow: auto; list-style: none; margin: 0; padding: 0; }
+.run-item { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: 8px; padding: 9px 14px; border-bottom: var(--rule) solid var(--rule-light); }
+.run-item:hover { background: var(--app-widget); }
+.run-item.is-active { background: var(--app-widget); box-shadow: inset 2px 0 0 var(--accent); }
+.run-item--live { box-shadow: inset 2px 0 0 var(--mcs-blue-500); }
+.run-item-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.run-item-title { display: flex; align-items: center; gap: 6px; color: var(--text-strong); font-weight: 500; overflow-wrap: anywhere; line-height: 1.35; }
+.run-item-meta { color: var(--text-faint); font: 10.5px/1.45 var(--font-mono); overflow-wrap: anywhere; }
+.run-item-outcome { font: 10.5px/1.4 var(--font-mono); color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.run-item-outcome--ok { color: var(--mcs-green-300); }
+.run-item-outcome--fail { color: var(--app-error); }
+.runs-empty { padding: 14px; color: var(--text-faint); font-size: 12px; }
+
+.replay-bar {
+  display: flex; align-items: center; gap: 10px; flex: none; padding: 6px 14px;
+  border-bottom: var(--rule) solid var(--mcs-orange-800); background: var(--accent-tint);
+  font: 11px/1.4 var(--font-mono); color: var(--mcs-orange-200);
+}
+.replay-mark { color: var(--accent); }
+.replay-text { flex: none; }
+.replay-track { position: relative; flex: 1; min-width: 60px; height: 2px; background: var(--mcs-orange-900); }
+.replay-fill { position: absolute; left: 0; top: 0; bottom: 0; background: var(--accent); transition: width 0.3s linear; }
+.replay-step { flex: none; color: var(--text-secondary); }
+.replay-note { flex: none; color: var(--text-faint); }
+
+.composer-form { position: relative; }
+.cmd-hints {
+  position: absolute; left: 14px; right: 14px; bottom: calc(100% - 6px); z-index: 6; list-style: none; margin: 0; padding: 4px 0;
+  background: var(--app-window); border: var(--rule) solid var(--app-widget-hover-stroke);
+}
+.cmd-hint { display: grid; grid-template-columns: 120px minmax(0, 1fr); gap: 10px; padding: 4px 10px; cursor: pointer; font: 12px/1.5 var(--font-mono); }
+.cmd-hint:first-child, .cmd-hint:hover { background: var(--app-selection); }
+.cmd-name { color: var(--heading); }
+.cmd-help { color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.thread-note { white-space: pre-wrap; text-align: left; }
+
+.msg-copy { opacity: 0; justify-self: start; margin-top: 2px; }
+.turn:hover .msg-copy, .msg-copy:focus-visible { opacity: 1; }
+
+.pane--inspector { display: flex; flex-direction: column; min-height: 0; }
+.pane--inspector .brain-block { flex: none; padding: 8px 14px 10px; }
+.insp-tabs { margin-left: 0; border-left: 0; border-bottom: var(--rule) solid var(--rule-light); flex: none; height: 34px; }
+.insp-tabs .tab { flex: 1; }
+.insp-tabs .led { margin-left: 6px; }
+.insp-view { flex: 1; min-height: 0; }
+.insp-view[hidden] { display: none !important; }
+#graph-view { display: flex; flex-direction: column; }
+#graph-view .graph { flex: 1; }
+.report-head { border-top: 0; }
+.pane--inspector .run { border-top: 0; }
+.pane--inspector .steps { grid-template-columns: minmax(0, 1fr); }
+.pane--inspector .step { border-right: 0; border-bottom: var(--rule) solid var(--rule-light); }
