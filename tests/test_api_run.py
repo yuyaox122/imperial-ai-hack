@@ -208,7 +208,7 @@ def test_openai_chat_repeat_run_is_reproducible_and_makes_no_requests(env, monke
         """Pick the option the caption names, else A: a model that reads the text bridge."""
         question, _, clip = kwargs["messages"][1]["content"].partition("\n\nAudio clip: ")
         heard = set(re.findall(r"[a-z]+", clip.lower()))
-        options = [line.split(". ", 1)[1] for line in question.splitlines()[1:]]
+        options = re.findall(r"^[A-Z]\. (.+)$", question, flags=re.MULTILINE)
         letter = next((string.ascii_uppercase[k] for k, o in enumerate(options) if set(o.split()) <= heard), "A")
         return SimpleNamespace(
             choices=[SimpleNamespace(finish_reason="stop", message=SimpleNamespace(content=letter, refusal=None))],
@@ -229,11 +229,11 @@ def test_openai_chat_repeat_run_is_reproducible_and_makes_no_requests(env, monke
 
     (first, installed_first, usage_first), (second, installed_second, usage_second) = runs
     assert installed_first == installed_second == "text:captions"
-    assert [c.n for c in first] == [12]
+    assert [(c.kind, c.n) for c in first] == [("text", 12), ("tool", 12)]
     assert first[0].accuracy > first[0].controls["swapped"] + 0.10  # the mocked model reads the captions
-    assert usage_first["calls"] + usage_first["cache_hits"] == 36
+    assert usage_first["calls"] + usage_first["cache_hits"] == 72
     assert usage_first["prompt_tokens"] == 40 * usage_first["calls"]
-    assert usage_second == {"calls": 0, "cache_hits": 36, "prompt_tokens": 0, "completion_tokens": 0}
+    assert usage_second == {"calls": 0, "cache_hits": 72, "prompt_tokens": 0, "completion_tokens": 0}
     assert client.chat.completions.create.call_count == usage_first["calls"]
     for a, b in zip(first, second):
         assert (a.accuracy, a.controls, a.interval, a.verdict) == (b.accuracy, b.controls, b.interval, b.verdict)
