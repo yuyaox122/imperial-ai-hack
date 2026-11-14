@@ -1,1 +1,7 @@
 .board/
+.env
+.env.local
+.venv/
+.sense/
+__pycache__/
+.pytest_cache/
