@@ -32,13 +32,13 @@ Humans over agents. The team lead is `@yuyaox122` (Yuyao). Only the team lead re
 ## 4. Who owns what
 
 Four workloads, approved by the lead on 14 November; details in [docs/workstreams.md](docs/workstreams.md).
-Workload 4 has no owner yet; the lead will decide.
+Yuyao (the lead) took workload 4 at 19:00.
 
 | Area | Owner (GitHub login) | Folders |
 |---|---|---|
 | 1. Agent autonomy and research | `JLiu1206` (Jayden) | `agent/` |
 | 2. Harness core and verification | `micfong-z` (Michael) | `sense/`, `server/`, `scripts/`, `socket_pilot/` |
 | 3. Interface and design | `advcode118` (Alex) | `web/`, `design/` |
-| 4. Data platform, real task, demo and submission | unclaimed | `integrations/`, `eval/`, `demo/`, `docs/`, `README.md` |
+| 4. Data platform, real task, demo and submission | `yuyaox122` (Yuyao) | `integrations/`, `eval/`, `demo/`, `docs/`, `README.md` |
 
 Tests live in `tests/`; each owner keeps the tests for their own folders.
