@@ -11,7 +11,8 @@ appended when the time since the replay started reaches event.t / speed: speed 1
 at once; it must be from 0.1 to 1000, else ValueError. Just before the recorded [install] "ok" event, the sense
 the run installed is reinstalled from the record (sense.runs.restore_sense), so chat answers through it after
 the replay as it did after the run. When the record holds no copy of the sense, an extra [install] "info" event
-says so instead of implying the sense is back. At the end the recorded cards, installed and error are set, and
+is added just before the recorded [install] "ok" event, saying the sense was not reinstalled; the recorded events
+themselves are replayed unchanged. At the end the recorded cards, installed and error are set, and
 then the status flips to the recorded one (as agent/jobs.py does, so a poller that sees the end sees the
 results). If the replay itself fails, it ends "failed" with an [error] event saying why.
 

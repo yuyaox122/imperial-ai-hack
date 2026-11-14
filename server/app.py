@@ -14,6 +14,8 @@ All JSON. Errors: {"detail": "<what went wrong and what to do>"} with a 4xx or 5
        -> {"job_id": str}                           409 if a run is already in progress
                                                     409 while a replay is in progress; a finished run is recorded
                                                     under <SENSE_HOME>/runs for replay
+                                                    a fit or replay started just after a run ends first waits
+                                                    until that run is recorded (409 if that takes over 10 s)
   GET  /api/jobs/<job_id>
        -> JobState dict                             id, request, status, events[], cards[], installed, error
                                                     a replayed job (id "replay-...") also has
@@ -76,6 +78,8 @@ _sample_paths: dict[str, Path] = {}  # opaque id -> path, filled only from datas
 _chat_lock = threading.Lock()  # one model call at a time: the model objects are not thread safe
 _start_lock = threading.Lock()  # an agent run and a replay never start together
 WATCH_SECONDS = 0.5  # how often a finished agent run is looked for, to record it
+RECORD_WAIT_SECONDS = 10.0  # how long a fit or replay waits for the last finished agent run to be recorded
+_recorder: tuple[str, threading.Thread] | None = None  # (job id, watcher) of the last agent run started here
 log = logging.getLogger(__name__)
 
 
@@ -189,12 +193,13 @@ def api_fit(body: FitBody) -> dict:
     with _start_lock:
         if replay.running():
             raise HTTPException(status_code=409, detail="A replay is in progress. Wait for it to finish, then start again.")
+        _await_recording()
         try:
             job_id = jobs.start(request)
         except RuntimeError as exc:
             text = str(exc)
             raise HTTPException(status_code=409, detail=f"{text[:1].upper()}{text[1:]}. Wait for it to finish, then start again.")
-    _record_when_finished(job_id)
+        _record_when_finished(job_id)
     return {"job_id": job_id}
 
 
@@ -303,7 +308,9 @@ def api_chat(
 
 # ----------------------------------------------------------------------------- replay
 def _record_when_finished(job_id: str) -> None:
-    """Record the agent run with sense.runs once it has finished, from a daemon thread. Never raises."""
+    """Record the agent run with sense.runs once it has finished, from a daemon thread. Never raises.
+    Call with _start_lock held, so that a fit or replay started next finds this watcher in _recorder."""
+    global _recorder
     home = config.home()
 
     def watch() -> None:
@@ -322,7 +329,24 @@ def _record_when_finished(job_id: str) -> None:
         except Exception:
             log.exception("Agent run %s could not be recorded for replay.", job_id)
 
-    threading.Thread(target=watch, name=f"record-run-{job_id}", daemon=True).start()
+    watcher = threading.Thread(target=watch, name=f"record-run-{job_id}", daemon=True)
+    watcher.start()
+    _recorder = (job_id, watcher)
+
+
+def _await_recording() -> None:
+    """With _start_lock held: wait until the last agent run, if it has finished, has been recorded. A fit or a
+    replay started in the gap could otherwise change the registry first, and the run would be recorded without
+    the sense it installed. Raises a 409 if the recording takes longer than RECORD_WAIT_SECONDS."""
+    if _recorder is None:
+        return
+    job_id, recorder = _recorder
+    state = jobs.get(job_id)
+    if not recorder.is_alive() or state is None or state.status == "running":
+        return  # recorded already, nothing left to record, or still running (the caller then refuses to start)
+    recorder.join(RECORD_WAIT_SECONDS)
+    if recorder.is_alive():
+        raise HTTPException(status_code=409, detail="The last agent run is still being recorded. Try again in a moment.")
 
 
 @app.get("/api/runs")
@@ -339,6 +363,7 @@ def api_replay(body: ReplayBody) -> dict:
                 status_code=409,
                 detail=f"An agent run on {live.request.model} is in progress. Wait for it to finish, then start the replay.",
             )
+        _await_recording()
         try:
             return {"job_id": replay.start(body.run, body.speed)}
         except ValueError as exc:

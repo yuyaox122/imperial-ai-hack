@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 import time
 
 import pytest
@@ -29,6 +30,7 @@ def client(monkeypatch, tmp_path):
     monkeypatch.setattr(planner_mod, "_preferred", None)  # the rule planner, even if an LLM planner is registered
     monkeypatch.setattr(replay, "_replays", {})
     monkeypatch.setattr(replay, "_current_id", None)
+    monkeypatch.setattr(server_app, "_recorder", None)  # no watcher left over from another test
     server_app._sample_paths.clear()
     assert config.fake()
     return TestClient(server_app.app)
@@ -174,6 +176,100 @@ def test_a_fit_and_a_second_replay_are_refused_while_a_replay_plays(client):
     state = run_job(client)  # a live run may start again
     assert state["status"] == "done"
     recorded_listing(client, state["id"])  # let the watcher finish before the test's home goes away
+
+
+def test_a_finished_run_is_recorded_before_the_next_fit_or_replay_starts(client):
+    """The watcher records a run up to WATCH_SECONDS after it ends. A fit or a replay started in that gap must wait
+    for the record, or it could change the registry first and the run would be recorded without its sense."""
+    first = run_job(client)
+    r = client.post("/api/fit", json={"model": "fake", "dataset": "gtzan"})  # as soon as `first` reports done
+    assert r.status_code == 200, r.text
+    assert [(x["id"], x["has_sense"]) for x in client.get("/api/runs").json()] == [(first["id"], True)]
+    second = finished(client, r.json()["job_id"])
+    assert second["installed"] == "vector:gtzan"
+    r = client.post("/api/replay", json={"run": first["id"], "speed": 1000})  # as soon as `second` reports done
+    assert r.status_code == 200, r.text
+    assert {x["id"]: x["has_sense"] for x in client.get("/api/runs").json()} == {first["id"]: True, second["id"]: True}
+    assert finished(client, r.json()["job_id"])["status"] == "done"
+
+
+def test_a_fit_or_replay_is_refused_while_the_last_run_is_still_being_recorded(client, monkeypatch):
+    runs.save_run(synthetic("r1"))
+    release = threading.Event()
+    save_run = runs.save_run
+
+    def slow_save(state, **kwargs):
+        release.wait(10)
+        return save_run(state, **kwargs)
+
+    monkeypatch.setattr(runs, "save_run", slow_save)
+    monkeypatch.setattr(server_app, "RECORD_WAIT_SECONDS", 0.2)
+    state = run_job(client)
+    busy = "The last agent run is still being recorded. Try again in a moment."
+    r = client.post("/api/replay", json={"run": "r1", "speed": 1000})
+    assert r.status_code == 409 and r.json()["detail"] == busy
+    r = client.post("/api/fit", json={"model": "fake", "dataset": "gtzan"})
+    assert r.status_code == 409 and r.json()["detail"] == busy
+    assert not replay.running()
+
+    release.set()
+    r = client.post("/api/replay", json={"run": "r1", "speed": 1000})
+    assert r.status_code == 200, r.text
+    assert next(x for x in client.get("/api/runs").json() if x["id"] == state["id"])["has_sense"] is True
+    assert finished(client, r.json()["job_id"])["status"] == "done"
+
+
+def test_a_replay_that_fails_ends_failed_and_does_not_block_the_server(client):
+    state = run_job(client)
+    assert recorded_listing(client, state["id"])["has_sense"] is True
+    (runs.runs_dir() / state["id"] / "sense" / "bridge.json").write_text(json.dumps({"kind": "bogus"}))
+    r = client.post("/api/replay", json={"run": state["id"], "speed": 1000})
+    assert r.status_code == 200, r.text
+    replayed = finished(client, r.json()["job_id"])
+    assert replayed["status"] == "failed" and replayed["error"].startswith("Replay stopped:")
+    assert (replayed["events"][-1]["step"], replayed["events"][-1]["status"]) == ("error", "fail")
+    assert not replay.running()
+    state = run_job(client)  # a live run may start again
+    assert state["status"] == "done"
+    recorded_listing(client, state["id"])  # let the watcher finish before the test's home goes away
+
+
+def test_a_faster_replay_takes_less_time(client):
+    runs.save_run(synthetic("slow", last_t=3.0))
+    began = time.monotonic()
+    r = client.post("/api/replay", json={"run": "slow", "speed": 1000})
+    assert finished(client, r.json()["job_id"])["status"] == "done"
+    assert time.monotonic() - began < 1.0  # 3 s / 1000, with room for a slow machine
+    began = time.monotonic()
+    r = client.post("/api/replay", json={"run": "slow", "speed": 10})
+    assert finished(client, r.json()["job_id"])["status"] == "done"
+    assert time.monotonic() - began >= 0.3  # 3 s / 10
+
+
+def test_the_sense_is_back_when_the_install_event_shows(client):
+    state = run_job(client)
+    recorded_listing(client, state["id"])
+    path = runs.runs_dir() / state["id"] / "run.json"
+    record = json.loads(path.read_text())
+    at = next(i for i, e in enumerate(record["events"]) if (e["step"], e["status"]) == ("install", "ok"))
+    assert at < len(record["events"]) - 1
+    for event in record["events"][at + 1:]:  # [done] a second after [install]
+        event["t"] = record["events"][at]["t"] + 1.0
+    path.write_text(json.dumps(record))
+    assert client.delete("/api/senses", params={"model": "fake", "modality": "audio"}).json() == {"removed": True}
+
+    r = client.post("/api/replay", json={"run": state["id"], "speed": 1})
+    assert r.status_code == 200, r.text
+    job_id = r.json()["job_id"]
+
+    def installed():
+        playing = client.get(f"/api/jobs/{job_id}").json()
+        return playing if ("install", "ok") in [(e["step"], e["status"]) for e in playing["events"]] else None
+
+    playing = wait_for(installed)
+    assert playing["status"] == "running" and playing["events"][-1]["step"] == "install"
+    assert [s["bridge"] for s in client.get("/api/senses", params={"model": "fake"}).json()] == ["vector:gtzan"]
+    assert finished(client, job_id)["status"] == "done"
 
 
 def test_a_failed_run_replays_as_failed_with_its_error(client):
