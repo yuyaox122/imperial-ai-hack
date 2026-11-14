@@ -53,22 +53,60 @@ Accuracy in percent on the held-out fold, with 95% bootstrap intervals.
 The socket layer chosen on the dev fold was block 1 on the 0.8B model and block 2 on the 2B. On both, the
 host reads the slots up to about block 4 and stops reading them from block 5.
 
-### Text-only plug (no paired audio, so every class is unseen), Qwen3.5-0.8B
+On Qwen3.5-4B only the dev sweep ran (200 clips) before the run was stopped to free memory: the plug
+scored 98.0 to 99.5 at blocks 0 to 4, against 20.0 to 23.0 for swapped audio. There is no test-fold number
+for the 4B.
+
+### Text-only plug (no paired audio, so every class is unseen)
 
 The plug is fitted on 12,000 AudioCaps captions as text only: CLAP's text embedding of a caption is mapped
 to the host's representation of that caption, then applied to audio embeddings.
 
-| Condition | Identify | Category |
+| Condition | 0.8B identify | 0.8B category | 2B identify | 2B category |
+|---|---|---|---|---|
+| Text-only plug | 53.2 [48.0, 58.0] | 31.8 [27.3, 36.2] | 52.0 [47.0, 57.0] | 45.0 [40.0, 50.0] |
+| Swapped audio | 19.8 [16.0, 23.8] | 20.0 [16.5, 24.0] | 20.0 [16.2, 24.0] | 25.0 [21.0, 29.2] |
+| Nearest caption written into the socket | 76.5 [72.2, 80.5] | 52.8 [47.8, 57.8] | 75.8 [71.2, 79.8] | 57.5 [52.5, 62.3] |
+| Nearest caption pasted into the prompt as text (no socket) | 83.2 [79.5, 86.8] | 66.0 [61.5, 70.5] | not run | not run |
+
+On the 80 test clips from ten classes held out of the paired plug's fit:
+
+| Plug | 0.8B | 2B |
 |---|---|---|
-| Text-only plug | 53.2 [48.0, 58.0] | 31.8 [27.3, 36.2] |
-| Swapped audio | 19.8 [16.0, 23.8] | 20.0 [16.5, 24.0] |
-| Nearest caption written into the socket | 76.5 [72.2, 80.5] | 52.8 [47.8, 57.8] |
-| Nearest caption pasted into the prompt as text (no socket) | 83.2 [79.5, 86.8] | 66.0 [61.5, 70.5] |
+| Paired plug, fitted on the other 40 classes | 37.5 [27.5, 48.8] | 43.8 [32.5, 55.0] |
+| Text-only plug | 62.5 [52.5, 72.5] | 70.0 [60.0, 80.0] |
 
-On the 80 test clips from ten classes held out of the paired plug's fit, the paired plug scores
-37.5 [27.5, 48.8] and the text-only plug 62.5 [52.5, 72.5].
+Free-text answers through the text-only plug are generic on the 0.8B model, for example "A low, continuous
+hum." for a dog. On the 2B model about a third of twelve samples name the sound (dog, church bells, rain)
+and the rest are wrong or vague.
 
-Free-text answers through the text-only plug are generic, for example "A low, continuous hum." for a dog.
+### Music (GTZAN, 10 genres), Qwen3.5-0.8B
+
+Per genre, 60 tracks fit the plug, 20 pick the layer and 20 are scored. Each track is its middle 10 seconds.
+
+| Genre, five options, 199 held-out tracks of seen genres | Accuracy |
+|---|---|
+| Plug | 84.9 [79.4, 89.9] |
+| Swapped audio | 11.1 [7.0, 15.6] |
+| Nearest fitting track (lookup) | 79.9 [73.9, 85.4] |
+| Own text (ceiling) | 100.0 |
+| No write | 22.6 [17.1, 28.6] |
+| CLAP zero-shot, no language model | 49.2 [42.2, 56.3] |
+
+| Rock or classical, two options (chance 50) | Tracks | Accuracy |
+|---|---|---|
+| Plug fitted on all ten genres, held-out tracks | 40 | 100.0 |
+| Same, audio swapped | 40 | 0.0 |
+| Plug fitted with rock and classical held out | 200 | 53.5 [46.5, 60.5] |
+| Text-only plug | 200 | 53.5 [46.5, 60.0] |
+| Plug fitted on environmental sounds only (ESC-50) | 200 | 52.0 [45.0, 59.0] |
+| No write | 200 | 52.0 [45.5, 59.0] |
+| Nearest caption pasted into the prompt as text | 200 | 66.5 [60.0, 72.5] |
+| CLAP zero-shot, no language model | 200 | 98.5 [96.5, 100.0] |
+
+An unseen track of a seen genre is classified reliably; an unseen genre is at chance, although CLAP's own
+vector separates the two genres at 98.5%. GTZAN is known to repeat artists across tracks, so "held-out
+track" is weaker than "held-out artist".
 
 ## What it shows
 
@@ -79,6 +117,9 @@ Free-text answers through the text-only plug are generic, for example "A low, co
   the plug reaches the host's own text ceiling.
 - **Open vocabulary is not there.** With no paired audio the plug beats chance and beats the paired plug
   on unseen classes, but it loses to retrieval, and retrieval pasted as plain text beats both.
+- **The limit is the map, not the vector's size.** The plug can only output blends of the targets it was
+  fitted on. CLAP's 512 numbers hold the rock-or-classical distinction; the plug does not carry it across
+  unless those genres were in the fitting set.
 
 ## Run it
 
@@ -103,4 +144,5 @@ takes about 5 minutes on the 0.8B model and 12 minutes on the 2B.
 - Host: `Qwen/Qwen3.5-0.8B`, `Qwen/Qwen3.5-2B` (frozen).
 - Encoder: `laion/clap-htsat-unfused` (frozen).
 - Data: [ESC-50](https://github.com/karolpiczak/ESC-50) audio and labels; caption text from
-  [AudioCaps](https://github.com/cdjkim/audiocaps) (`train.csv`, text only).
+  [AudioCaps](https://github.com/cdjkim/audiocaps) (`train.csv`, text only);
+  [GTZAN](https://huggingface.co/datasets/marsyas/gtzan) music clips and genre labels.
