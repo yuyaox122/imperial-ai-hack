@@ -24,7 +24,7 @@ Rule from the plan: **lead with the agent run and its report card, not the chat.
 **0:00 – 0:15 · The gap.** Pick Qwen3.5 0.8B. Drop the rock track and ask "What genre is this?"
 > "This model reads text and images. It has no hearing. We're going to ask an agent to give it a new sense, and to prove that the sense works before installing it."
 
-**0:15 – 1:10 · Scenario 1: seen categories.** Ask for music genres (GTZAN, closed scope). Let the trace run:
+**0:15 – 1:10 · Scenario 1: seen categories.** Ask for music genres (GTZAN, closed scope). In **New sense**, pick **Choose a labelled set** (the UI now defaults to file + goal, PR #48). Let the trace run:
 inspect, plan, fit, verify, decide, install. The fit takes about 25 s, so talk over it, or replay at 2x.
 > "It reads the model: open weights, so it can try a vector bridge that writes CLAP's embedding straight into the model's early layers, and a text bridge. It fits both, then scores each one on 200 held-out questions against controls."
 
