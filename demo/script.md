@@ -65,7 +65,7 @@ Point at the report card:
 
 ## Backup
 
-1. **Replay:** Alex's replay toggle (PR #48) plays a recorded run at 1x, 2x or 4x and reinstalls its sense, so chat still works afterwards.
+1. **Replay:** open the **Runs** button (or `/runs`, PR #48) and pick a recorded run; it plays a recorded run at 1x, 2x or 4x and reinstalls its sense, so chat still works afterwards.
 2. **Screen recording:** a full rehearsal recorded on the demo laptop by Sun 10:30, also used for Devpost.
 3. **Static:** screenshots of the three report cards and the Databricks tables in the slides.
 
