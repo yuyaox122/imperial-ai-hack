@@ -177,7 +177,10 @@ def test_cancelling_a_finished_or_unknown_replay_returns_false(client):
     assert replay.cancel("nope") is False
 
 
-def test_a_cancel_as_the_replay_ends_is_applied_or_refused_never_both(client):
+def test_cancels_spread_around_a_replay_s_end_agree_with_how_it_ended(client):
+    """A smoke test: the window around the end is too narrow to hit on purpose, so the tests that hold the worker
+    there (test_a_cancel_during_the_last_reinstall_is_applied_at_the_end and
+    test_a_cancel_after_the_replay_ended_but_before_its_worker_exits_is_refused) are what guard it."""
     runs.save_run(synthetic("quick", last_t=0.05))
     for i in range(20):  # cancels from just after the start to well after the end, around the last event at 0.05 s
         job_id = client.post("/api/replay", json={"run": "quick", "speed": 1}).json()["job_id"]
@@ -191,6 +194,44 @@ def test_a_cancel_as_the_replay_ends_is_applied_or_refused_never_both(client):
             assert state["status"] == "done" and state["error"] is None
             assert CANCELLED not in [e["message"] for e in state["events"]]
         assert not replay.running()
+
+
+class HeldPop(dict):
+    """A stand-in for replay._workers whose pop, the worker's very last step, blocks until `gate` is set."""
+
+    def __init__(self):
+        super().__init__()
+        self.entered = threading.Event()
+        self.gate = threading.Event()
+
+    def pop(self, *args):
+        self.entered.set()
+        assert self.gate.wait(10)
+        return super().pop(*args)
+
+
+def test_a_cancel_after_the_replay_ended_but_before_its_worker_exits_is_refused(client, monkeypatch):
+    """The worker sets the end status, then drops itself from _workers. A cancel in between still finds the worker,
+    so only the status check in cancel refuses it: cancel must not answer True for a replay that ends "done"."""
+    workers = HeldPop()
+    monkeypatch.setattr(replay, "_workers", workers)
+    runs.save_run(synthetic("r1"))
+    job_id = replay.start("r1", speed=1000)
+    answer: dict = {}
+    try:
+        assert workers.entered.wait(10)
+        assert job_id in workers and replay.get(job_id)[0].status == "done"
+        canceller = threading.Thread(target=lambda: answer.update(cancelled=replay.cancel(job_id)))
+        canceller.start()
+        canceller.join(2.0)  # a refused cancel returns at once; an accepted one would wait for the held worker
+    finally:
+        workers.gate.set()
+    canceller.join(10)
+    assert answer == {"cancelled": False}
+    wait_for(lambda: job_id not in workers)
+    state = client.get(f"/api/jobs/{job_id}").json()
+    assert state["status"] == "done" and state["error"] is None
+    assert CANCELLED not in [e["message"] for e in state["events"]]
 
 
 def test_cancel_returns_once_the_replay_has_stopped(client):
@@ -291,6 +332,40 @@ def test_a_replay_that_fails_after_a_cancel_still_ends_cancelled(client, monkeyp
     state = finished(client, job_id)
     assert state["status"] == "failed" and state["error"] == "Replay stopped: OSError: No space left on device"
     assert CANCELLED not in [e["message"] for e in state["events"]]
+
+
+def test_a_reinstall_that_hangs_does_not_hang_the_cancel(client, monkeypatch):
+    """cancel waits for the worker only up to CANCEL_WAIT_SECONDS: then DELETE answers true while the replay still
+    runs, and the replay ends cancelled once the reinstall returns."""
+    monkeypatch.setattr(replay, "CANCEL_WAIT_SECONDS", 0.2)
+    ends_with_install("inst")
+    restore = BlockedRestore()
+    monkeypatch.setattr(runs, "restore_sense", restore)
+    job_id = replay.start("inst", speed=1000)
+    answer: dict = {}
+
+    def call():
+        began = time.monotonic()
+        answer["response"] = client.delete(f"/api/jobs/{job_id}").json()
+        answer["took"] = time.monotonic() - began
+
+    try:
+        assert restore.entered.wait(10)
+        canceller = threading.Thread(target=call)
+        canceller.start()
+        canceller.join(2.0)
+        assert not canceller.is_alive(), "DELETE kept waiting for a reinstall that does not return"
+        assert answer["response"] == {"cancelled": True} and 0.1 <= answer["took"] < 2.0
+        assert replay.running()  # still reinstalling, so a fit must wait
+        assert client.post("/api/fit", json={"model": "fake", "dataset": "gtzan"}).status_code == 409
+    finally:
+        restore.gate.set()
+    canceller.join(10)
+
+    state = finished(client, job_id)
+    assert state["status"] == "failed" and state["error"] == "Cancelled."
+    assert state["events"][-1]["message"] == CANCELLED
+    assert not replay.running()
 
 
 # ----------------------------------------------------------------------------- the endpoint

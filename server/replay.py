@@ -24,7 +24,9 @@ event's time. It then appends a last [error] "fail" event, "The replay was cance
 were, empty and None, since they are only set at the end. A sense already reinstalled at the install step stays
 installed. cancel waits up to CANCEL_WAIT_SECONDS for the worker to stop, which it does at once unless the
 cancel comes while a sense is being reinstalled, so running() is normally False when cancel returns and a new
-replay or agent run can start. A cancel that comes as the replay reaches its end is either applied or reported False.
+replay or agent run can start. If the reinstall outlasts that wait, cancel still returns True while running() is
+True, and the replay ends cancelled once the reinstall returns. A cancel that comes as the replay reaches its end
+is either applied or reported False.
 So is one that comes as the replay fails: if the replay fails after a cancel was accepted (say the reinstall in
 progress raises), its [error] event about the failure comes just before the cancel event and it still ends
 "Cancelled.".
