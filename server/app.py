@@ -33,6 +33,16 @@ All JSON. Errors: {"detail": "<what went wrong and what to do>"} with a 4xx or 5
        -> JobState dict                             id, request, status, events[], cards[], installed, error
                                                     a replayed job (id "replay-...") also has
                                                     "replay": {"of": run id, "recorded", "speed"}
+  DELETE /api/jobs/<job_id>
+       -> {"cancelled": bool}                       stops a replay or a live agent run: true when it was running
+                                                    and is now asked to stop, false when it had already finished.
+                                                    A cancelled replay stops at once and ends "failed" with error
+                                                    "Cancelled." and a last [error] event (data "cancelled": true);
+                                                    a sense it already reinstalled stays installed. A live agent
+                                                    run stops at its next trace event (agent.jobs.cancel) and is
+                                                    still recorded under <SENSE_HOME>/runs when it ends.
+                                                    400 for an unknown job; 409 for a running agent run while
+                                                    agent.jobs cannot cancel one yet
   GET  /api/runs
        -> [{"id", "request", "status", "installed", "recorded", "origin", "seconds", "has_sense"}]
                                                     recorded runs, newest first; origin "server" or "cli";
@@ -262,6 +272,27 @@ def api_job(job_id: str) -> dict:
     if state is None:
         raise _bad_request(f"Unknown job '{job_id}'. Start a run with POST /api/fit first.")
     return state.to_dict()
+
+
+@app.delete("/api/jobs/{job_id}")
+def api_cancel_job(job_id: str) -> dict:
+    if replay.get(job_id) is not None:
+        return {"cancelled": replay.cancel(job_id)}
+    state = jobs.get(job_id)
+    if state is None:
+        raise _bad_request(
+            f"Unknown job '{job_id}': there is nothing to cancel. Use the job id that POST /api/fit or "
+            "POST /api/replay returned."
+        )
+    if state.status != "running":
+        return {"cancelled": False}
+    cancel = getattr(jobs, "cancel", None)  # agent.jobs.cancel(job_id) -> bool, once agent.jobs has it
+    if not callable(cancel):
+        raise HTTPException(
+            status_code=409,
+            detail="Cancelling a running agent run is not supported yet: wait for it to finish.",
+        )
+    return {"cancelled": bool(cancel(job_id))}
 
 
 @app.get("/api/samples")
