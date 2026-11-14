@@ -58,13 +58,33 @@ All JSON. Errors: {"detail": "<what went wrong and what to do>"} with a 4xx or 5
   GET  /api/samples/<id>
        -> the audio file
   POST /api/chat                                    multipart form: model, message, files (0..n uploads), sample_ids (0..n)
+                                                    and, optionally, history
        -> {"reply": str, "used": [{"bridge", "kind", "source", "detail"}]}
           `used` lists how each file reached the model; a file whose modality has no installed sense, or that
           cannot be read, is reported with kind "none" and is not shown to the model. For kind "tool" (the model
           could call the listen tool, which asks CLAP about the file) the detail says whether the model called it
           and what the last call returned: "the model called listen 1 time: Similarity ... Best match: rock." or
           "the model could call listen but did not".
+          history: a JSON string of the earlier turns, oldest first, [{"role": "user"|"assistant", "content": str}],
+          text only (the files of earlier turns are not sent again). Only the last MAX_HISTORY_TURNS (8) are kept,
+          each cut to HISTORY_CHARS (4000) characters. Missing, empty or [] starts a new conversation; anything
+          else that is not such a list is a 400 that says what form it takes.
           400 for an empty message; 409 while an agent run holds a different local model.
+  POST /api/chat/stream                             the same form as POST /api/chat
+       -> text/event-stream: Server-Sent Events ("event: <name>\\ndata: <JSON>\\n\\n"), in this order
+            used    the `used` list, as POST /api/chat gives it but sent before the reply, so a tool input's
+                    detail still only says that the model can call the tool
+            token   {"text": str}, one for each piece of the reply, in order; the pieces join to the reply
+            done    {"reply": str, "used": [...]}: the whole reply, and `used` with each tool input's detail
+                    saying what the model did with the tool; reply and used are what POST /api/chat would return
+          or, if the model fails once the stream has begun, instead of done
+            error   {"detail": "The model failed to answer: ..."}, and the stream ends
+          The reply streams when the model has chat_stream (contracts.BaseModel); otherwise chat()'s reply comes
+          as one token event. Everything found wrong before the stream begins is an ordinary JSON error, as for
+          POST /api/chat: 400 for an empty message, a bad history or an unknown model or sample, 409 while an
+          agent run holds a different local model, 500 if the model or the installed sense cannot be loaded.
+          One model call runs at a time, here as in POST /api/chat: the stream holds the chat lock until the reply
+          ends. Uploads are deleted when the stream ends, also when the client goes away first.
   GET  /                                            web/index.html; other files under web/ are served at /static/
 
 The server holds no model itself: it calls sense.models, sense.registry, sense.datasets and agent.jobs.
@@ -74,18 +94,24 @@ Finished agent runs are recorded with sense.runs and played back by server.repla
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import os
 import tempfile
 import threading
 import time
+from collections.abc import AsyncIterator, Iterator
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import anyio
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel as RequestBody
+from starlette.concurrency import iterate_in_threadpool
 
 from agent import jobs
 from sense import datasets, models, registry
@@ -98,6 +124,12 @@ from server import replay
 WEB = REPO / "web"
 SCOPES = ("closed", "open")
 CHAT_TOKENS = 256  # the default 96 cut Qwen3.5-0.8B's replies off mid-sentence
+MAX_HISTORY_TURNS = 8  # earlier chat turns passed to the model: the last 8 messages, user and assistant together
+HISTORY_CHARS = 4000  # each earlier turn is cut to this many characters
+HISTORY_FORM = (
+    'a JSON list of the earlier turns, oldest first, such as [{"role": "user", "content": "What is this?"}, '
+    '{"role": "assistant", "content": "A dog barking."}]'
+)
 
 app = FastAPI(title="Sense harness")
 _sample_paths: dict[str, Path] = {}  # opaque id -> path, filled only from datasets.sample_files
@@ -309,86 +341,214 @@ def api_sample(sample_id: str) -> FileResponse:
     return FileResponse(path)
 
 
+@dataclass
+class _ChatTurn:
+    """A chat request, checked, with its files bridged: everything the model needs to answer it."""
+
+    base: Any  # the loaded model
+    message: str
+    inputs: list[SenseInput]
+    used: list[dict]  # how each file reached the model, as the response reports it
+    tool_used: list[tuple[dict, SenseInput]]  # entries of `used` whose detail is only known after the reply
+    history: list[dict]  # the earlier turns, checked and bounded
+
+    def options(self) -> dict:
+        """Keyword arguments for chat: history only when there is some, so a model without it still works."""
+        return {"history": self.history} if self.history else {}
+
+    def finish_tool_details(self) -> None:
+        """After the reply: say in `used` what the model did with each tool input."""
+        for entry, item in self.tool_used:
+            entry["detail"] = _tool_detail(item)
+
+
+def _parse_history(raw: str) -> list[dict]:
+    """The form field `history` as earlier turns: checked, the last MAX_HISTORY_TURNS kept, each cut to
+    HISTORY_CHARS characters. Empty means none. Raises a 400 that says what form the field takes."""
+    if not raw.strip():
+        return []
+    try:
+        turns = json.loads(raw)
+    except ValueError:
+        raise _bad_request(f"The history is not valid JSON. Send it as {HISTORY_FORM}.")
+    if not isinstance(turns, list):
+        raise _bad_request(f"The history must be a list, not {type(turns).__name__}. Send it as {HISTORY_FORM}.")
+    try:
+        turns = models.chat_history(turns)
+    except ValueError as exc:
+        raise _bad_request(f"{exc} Send the history as {HISTORY_FORM}.")
+    return [{"role": t["role"], "content": t["content"][:HISTORY_CHARS]} for t in turns[-MAX_HISTORY_TURNS:]]
+
+
+def _prepare_chat(
+    model: str, message: str, history: str, files: list[UploadFile], sample_ids: list[str], temp_paths: list[Path],
+) -> _ChatTurn:
+    """What POST /api/chat and POST /api/chat/stream do before the model answers: check the request, save the
+    uploads to temporary files (appended to `temp_paths`, which the caller deletes), load the model and bridge each
+    file. Raises HTTPException."""
+    _check_model(model)
+    if not message.strip():
+        raise _bad_request("The message is empty. Type a question for the model, then send it.")
+    earlier = _parse_history(history)
+    _check_no_competing_run(model)
+    # (display name, path on disk) for every file the user attached
+    attached: list[tuple[str, Path]] = []
+    for upload in files:
+        if not upload.filename:
+            continue
+        fd, tmp = tempfile.mkstemp(suffix=Path(upload.filename).suffix.lower())
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(upload.file.read())
+        temp_paths.append(Path(tmp))
+        attached.append((upload.filename, Path(tmp)))
+    for sid in sample_ids:
+        path = _sample_path(sid)
+        if path is None or not path.is_file():
+            raise _bad_request(f"Unknown sample '{sid}'. List samples with GET /api/samples.")
+        attached.append((path.name, path))
+
+    try:
+        base = models.load_model(model)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Could not load model '{model}': {exc}")
+    bridges = {}
+    if any(_modality_of(name) for name, _ in attached):  # plain text chat must not depend on the senses
+        try:
+            bridges = {b.modality: b for b in registry.get_bridges(model)}
+        except RuntimeError as exc:
+            raise HTTPException(status_code=500, detail=str(exc))
+
+    inputs: list[SenseInput] = []
+    used: list[dict] = []
+    tool_used: list[tuple[dict, SenseInput]] = []  # entries whose detail is only known after the reply
+    for name, path in attached:
+        modality = _modality_of(name)
+        bridge = bridges.get(modality) if modality else None
+        if bridge is None:
+            if modality is None:
+                why = f"only audio files in these formats can be given to it: {' '.join(sorted(AUDIO_EXTENSIONS))}."
+            else:
+                why = f"{base.info.label} has no installed {modality} sense. Run the agent for this model first."
+            used.append({"bridge": "", "kind": "none", "source": name,
+                         "detail": f"'{name}' was not shown to the model: {why}"})
+            continue
+        try:
+            item = bridge.prepare(path)
+        except (ValueError, FileNotFoundError) as exc:  # this file is unreadable; answer with the others
+            why = str(exc).replace(str(path), name).replace(path.name, name)
+            used.append({"bridge": "", "kind": "none", "source": name,
+                         "detail": f"'{name}' was not shown to the model: {why}"})
+            continue
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"Could not read '{name}' with bridge '{bridge.name}': {exc}")
+        item.source = name  # uploads sit under temporary names; show the name the user gave
+        inputs.append(item)
+        used.append({"bridge": bridge.name, "kind": bridge.kind, "source": item.source, "detail": item.detail})
+        if item.kind == "tool" and item.tool is not None:
+            tool_used.append((used[-1], item))
+    return _ChatTurn(base=base, message=message, inputs=inputs, used=used, tool_used=tool_used, history=earlier)
+
+
+def _delete(paths: list[Path]) -> None:
+    for path in paths:
+        path.unlink(missing_ok=True)
+
+
 @app.post("/api/chat")
 def api_chat(
     model: str = Form(...),
     message: str = Form(""),
     files: list[UploadFile] = File(default=[]),
     sample_ids: list[str] = Form(default=[]),
+    history: str = Form(""),
 ) -> dict:
-    _check_model(model)
-    if not message.strip():
-        raise _bad_request("The message is empty. Type a question for the model, then send it.")
-    _check_no_competing_run(model)
-    # (display name, path on disk) for every file the user attached
-    attached: list[tuple[str, Path]] = []
     temp_paths: list[Path] = []
     try:
-        for upload in files:
-            if not upload.filename:
-                continue
-            fd, tmp = tempfile.mkstemp(suffix=Path(upload.filename).suffix.lower())
-            with os.fdopen(fd, "wb") as handle:
-                handle.write(upload.file.read())
-            temp_paths.append(Path(tmp))
-            attached.append((upload.filename, Path(tmp)))
-        for sid in sample_ids:
-            path = _sample_path(sid)
-            if path is None or not path.is_file():
-                raise _bad_request(f"Unknown sample '{sid}'. List samples with GET /api/samples.")
-            attached.append((path.name, path))
-
-        try:
-            base = models.load_model(model)
-        except Exception as exc:
-            raise HTTPException(status_code=500, detail=f"Could not load model '{model}': {exc}")
-        bridges = {}
-        if any(_modality_of(name) for name, _ in attached):  # plain text chat must not depend on the senses
-            try:
-                bridges = {b.modality: b for b in registry.get_bridges(model)}
-            except RuntimeError as exc:
-                raise HTTPException(status_code=500, detail=str(exc))
-
-        inputs: list[SenseInput] = []
-        used: list[dict] = []
-        tool_used: list[tuple[dict, SenseInput]] = []  # entries whose detail is only known after the reply
-        for name, path in attached:
-            modality = _modality_of(name)
-            bridge = bridges.get(modality) if modality else None
-            if bridge is None:
-                if modality is None:
-                    why = f"only audio files in these formats can be given to it: {' '.join(sorted(AUDIO_EXTENSIONS))}."
-                else:
-                    why = f"{base.info.label} has no installed {modality} sense. Run the agent for this model first."
-                used.append({"bridge": "", "kind": "none", "source": name,
-                             "detail": f"'{name}' was not shown to the model: {why}"})
-                continue
-            try:
-                item = bridge.prepare(path)
-            except (ValueError, FileNotFoundError) as exc:  # this file is unreadable; answer with the others
-                why = str(exc).replace(str(path), name).replace(path.name, name)
-                used.append({"bridge": "", "kind": "none", "source": name,
-                             "detail": f"'{name}' was not shown to the model: {why}"})
-                continue
-            except Exception as exc:
-                raise HTTPException(status_code=500, detail=f"Could not read '{name}' with bridge '{bridge.name}': {exc}")
-            item.source = name  # uploads sit under temporary names; show the name the user gave
-            inputs.append(item)
-            used.append({"bridge": bridge.name, "kind": bridge.kind, "source": item.source, "detail": item.detail})
-            if item.kind == "tool" and item.tool is not None:
-                tool_used.append((used[-1], item))
-
+        turn = _prepare_chat(model, message, history, files, sample_ids, temp_paths)
         try:
             with _chat_lock:
-                reply = base.chat(message, inputs, max_new_tokens=CHAT_TOKENS)
+                reply = turn.base.chat(message, turn.inputs, max_new_tokens=CHAT_TOKENS, **turn.options())
         except Exception as exc:
             raise HTTPException(status_code=500, detail=f"The model failed to answer: {exc}")
-        for entry, item in tool_used:
-            entry["detail"] = _tool_detail(item)
-        return {"reply": reply, "used": used}
+        turn.finish_tool_details()
+        return {"reply": reply, "used": turn.used}
     finally:
-        for tmp in temp_paths:
-            tmp.unlink(missing_ok=True)
+        _delete(temp_paths)
+
+
+@app.post("/api/chat/stream")
+def api_chat_stream(
+    model: str = Form(...),
+    message: str = Form(""),
+    files: list[UploadFile] = File(default=[]),
+    sample_ids: list[str] = Form(default=[]),
+    history: str = Form(""),
+) -> StreamingResponse:
+    temp_paths: list[Path] = []
+    try:
+        turn = _prepare_chat(model, message, history, files, sample_ids, temp_paths)
+    except BaseException:
+        _delete(temp_paths)
+        raise
+    events = _chat_events(turn, temp_paths)
+    first = next(events)  # starts the generator, so that its finally deletes the uploads however the response ends
+    return StreamingResponse(
+        _stream_events(first, events),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},  # no buffering by a proxy in between
+    )
+
+
+def _event(name: str, data: Any) -> str:
+    """One Server-Sent Event; json.dumps keeps the data on one line."""
+    return f"event: {name}\ndata: {json.dumps(data)}\n\n"
+
+
+def _reply_pieces(turn: _ChatTurn) -> Iterator[str]:
+    """The model's reply in pieces: its chat_stream if it has one, else chat()'s reply as one piece."""
+    stream = getattr(turn.base, "chat_stream", None)
+    if callable(stream):
+        return iter(stream(turn.message, turn.inputs, max_new_tokens=CHAT_TOKENS, **turn.options()))
+    return iter([turn.base.chat(turn.message, turn.inputs, max_new_tokens=CHAT_TOKENS, **turn.options())])
+
+
+def _chat_events(turn: _ChatTurn, temp_paths: list[Path]) -> Iterator[str]:
+    """The events of POST /api/chat/stream: used, a token per piece, then done (or error). The chat lock is held
+    while the model answers; the uploads are deleted when this ends or is closed."""
+    try:
+        yield _event("used", turn.used)
+        pieces: list[str] = []
+        try:
+            with _chat_lock:
+                stream = _reply_pieces(turn)
+                try:
+                    for piece in stream:
+                        if piece:
+                            pieces.append(piece)
+                            yield _event("token", {"text": piece})
+                finally:
+                    close = getattr(stream, "close", None)  # lets the model free its worker or HTTP response
+                    if callable(close):
+                        close()
+        except Exception as exc:
+            yield _event("error", {"detail": f"The model failed to answer: {exc}"})
+            return
+        turn.finish_tool_details()
+        yield _event("done", {"reply": "".join(pieces), "used": turn.used})
+    finally:
+        _delete(temp_paths)
+
+
+async def _stream_events(first: str, events: Iterator[str]) -> AsyncIterator[str]:
+    """`first`, then the rest of `events`, each read in the thread pool (a model call blocks). `events` is closed
+    however the response ends, also when the client goes away, so that it frees the chat lock and the uploads."""
+    try:
+        yield first
+        async for chunk in iterate_in_threadpool(events):
+            yield chunk
+    finally:
+        with anyio.CancelScope(shield=True):
+            await anyio.to_thread.run_sync(events.close)
 
 
 def _tool_detail(item: SenseInput) -> str:

@@ -5,6 +5,8 @@ Public surface (do not rename):
                                     text and tool bridges, not the vector bridge
   OpenAIChatModel                   contracts.BaseModel over the OpenAI chat API
   OpenAIChatModel.usage() -> dict   {"calls", "cache_hits", "prompt_tokens", "completion_tokens"} since it was loaded
+  OpenAIChatModel.chat_stream(message, inputs, max_new_tokens=96, history=None) -> Iterator[str]
+                                    the reply in pieces, as it arrives (see "History and streaming" below)
 
 Choice answers are single letters at temperature zero, returned as option indices
 in input order. A malformed answer fails verification rather than inventing a score.
@@ -41,6 +43,15 @@ cached.
 usage() counts requests sent to the API by chat() and choose() (including any that failed, every round of a
 question with tool calls, and a request sent again because the reply was too long), answers served from the
 cache, and the prompt and completion tokens the API reported.
+
+History and streaming. chat(history=...) sends the earlier turns (contracts.BaseModel.chat) as user and assistant
+messages between the system message and the final user message, text only. Nothing with a history is cached:
+only choose() answers are, and choose() has no history. chat_stream() takes the same arguments as chat(). Without
+tool inputs it sends one request with stream=True and stream_options {"include_usage": True}, with
+max_completion_tokens max_new_tokens, and yields the text as it arrives, stripped like chat()'s reply; usage()
+counts it as one call, plus the tokens if the stream reports them. A refused, empty or unfinished stream raises
+ValueError after the pieces already yielded, as chat() would. With tool inputs it runs chat(), tool loop and all,
+and yields the whole reply once.
 """
 
 from __future__ import annotations
@@ -57,12 +68,13 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Iterator
 
 from openai import OpenAI
 
 from sense import config
 from sense.contracts import ChoiceItem, ModelInfo, SenseInput, ToolHandle
-from sense.models import register_model
+from sense.models import chat_history, register_model, stripped_pieces
 
 _log = logging.getLogger(__name__)
 
@@ -82,6 +94,7 @@ TOOL_CALL_TOKENS = 256  # completion tokens for a request that offers tools: roo
 TOOL_INSTRUCTION = (
     " An audio clip you cannot hear directly can be heard by calling the listen tool; call it before you answer."
 )
+CHAT_INSTRUCTION = "Answer the user's question using the supplied inputs. Audio clip text is a specialist's caption."
 
 
 class OpenAIChatModel:
@@ -137,16 +150,23 @@ class OpenAIChatModel:
         self._count(prompt_tokens=_tokens(usage, "prompt_tokens"), completion_tokens=_tokens(usage, "completion_tokens"))
         return response
 
+    def _messages(
+        self, instruction: str, message: str, inputs: list[SenseInput], history: list[dict] | None = None,
+    ) -> list[dict]:
+        """The system message, the earlier turns (oldest first, text only), then the user message with the inputs."""
+        return [
+            {"role": "system", "content": instruction},
+            *chat_history(history),
+            {"role": "user", "content": self._content(message, inputs)},
+        ]
+
     def _complete(
         self, instruction: str, message: str, inputs: list[SenseInput], limit: int,
-        *, allow_truncated: bool = False,
+        *, allow_truncated: bool = False, history: list[dict] | None = None,
     ) -> str:
         handles = _tool_handles(inputs)
         request = {"model": self.model, "temperature": 0, "reasoning_effort": "none"}
-        messages = [
-            {"role": "system", "content": instruction},
-            {"role": "user", "content": self._content(message, inputs)},
-        ]
+        messages = self._messages(instruction, message, inputs, history)
         if not handles:
             return _answer(self._send(**request, max_completion_tokens=limit, messages=messages), allow_truncated)
         tools = [_listen_function(handles)]
@@ -175,11 +195,58 @@ class OpenAIChatModel:
             rounds += 1
         return _answer(response, allow_truncated)
 
-    def chat(self, message: str, inputs: list[SenseInput], max_new_tokens: int = 96) -> str:
-        instruction = "Answer the user's question using the supplied inputs. Audio clip text is a specialist's caption."
+    def chat(
+        self, message: str, inputs: list[SenseInput], max_new_tokens: int = 96, history: list[dict] | None = None,
+    ) -> str:
+        instruction = CHAT_INSTRUCTION
         if _tool_handles(inputs):
             instruction += TOOL_INSTRUCTION
-        return self._complete(instruction, message, inputs, max_new_tokens, allow_truncated=True)
+        return self._complete(instruction, message, inputs, max_new_tokens, allow_truncated=True, history=history)
+
+    def chat_stream(
+        self, message: str, inputs: list[SenseInput], max_new_tokens: int = 96, history: list[dict] | None = None,
+    ) -> Iterator[str]:
+        """chat(), streamed. Without tool inputs: one request with stream=True, its text yielded as it arrives.
+        With tool inputs: chat() runs (with its tool loop) and its reply is yielded once."""
+        if _tool_handles(inputs):
+            yield self.chat(message, inputs, max_new_tokens, history)
+            return
+        messages = self._messages(CHAT_INSTRUCTION, message, inputs, history)
+        self._count(calls=1)  # counted whether or not the request succeeds, as _send does
+        stream = self._client.chat.completions.create(
+            model=self.model, temperature=0, reasoning_effort="none", max_completion_tokens=max_new_tokens,
+            messages=messages, stream=True, stream_options={"include_usage": True},
+        )
+        seen = {"finish": None, "refused": False, "text": False}
+
+        def deltas() -> Iterator[str]:
+            for chunk in stream:
+                usage = getattr(chunk, "usage", None)
+                if usage is not None:  # the last chunk, when the API reports usage
+                    self._count(
+                        prompt_tokens=_tokens(usage, "prompt_tokens"),
+                        completion_tokens=_tokens(usage, "completion_tokens"),
+                    )
+                for choice in getattr(chunk, "choices", None) or []:
+                    delta = getattr(choice, "delta", None)
+                    if getattr(delta, "refusal", None):
+                        seen["refused"] = True
+                    text = getattr(delta, "content", None)
+                    if isinstance(text, str) and text:
+                        yield text
+                    if getattr(choice, "finish_reason", None):
+                        seen["finish"] = choice.finish_reason
+
+        try:
+            for piece in stripped_pieces(deltas()):
+                seen["text"] = True
+                yield piece
+        finally:
+            close = getattr(stream, "close", None)  # frees the HTTP response, also when the reader stops early
+            if callable(close):
+                close()
+        if seen["refused"] or not seen["text"] or seen["finish"] not in ("stop", "length"):
+            raise ValueError("The API model returned no complete answer")
 
     def _choose(self, item: ChoiceItem) -> int:
         options = "\n".join(f"{letter}. {text}" for letter, text in zip(string.ascii_uppercase, item.options))
