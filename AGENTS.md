@@ -31,8 +31,8 @@ Humans over agents. The team lead is `@yuyaox122` (Yuyao). Only the team lead re
 
 ## 4. Who owns what
 
-Four workloads, proposed on 14 November while the lead was away; details in [docs/workstreams.md](docs/workstreams.md).
-Pick one on the board, then put your login here. The lead can change the split.
+Four workloads, approved by the lead on 14 November; details in [docs/workstreams.md](docs/workstreams.md).
+Workload 4 has no owner yet; the lead will decide.
 
 | Area | Owner (GitHub login) | Folders |
 |---|---|---|
