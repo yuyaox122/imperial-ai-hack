@@ -2185,6 +2185,15 @@ function renderChats() {
   $("chats-count").textContent = String(state.chats.length);
 }
 
+/** Terminal view: one look switch (CSS does the rest), remembered in this browser. */
+function setMode(term) {
+  document.body.classList.toggle("mode-term", term);
+  $("mode-button").setAttribute("aria-pressed", String(term));
+  $("mode-label").textContent = term ? "Normal view" : "Terminal";
+  store.set("localStorage", "sense.mode", term ? "term" : null);
+  requestAnimationFrame(drawWires);
+}
+
 function toggleSamples(show) {
   const pop = $("samples-pop");
   const open = show === undefined ? pop.hidden : show;
@@ -2196,6 +2205,7 @@ function toggleSamples(show) {
 
 const COMMANDS = [
   { cmd: "new", help: "Start a new chat" },
+  { cmd: "term", help: "Switch between the terminal and the normal view" },
   { cmd: "fit", help: "Give the model a new sense (opens New sense)" },
   { cmd: "samples", help: "Pick a sample clip to attach" },
   { cmd: "replay", args: "[n]", help: "Replay the n-th most recent run (default 1)" },
@@ -2244,6 +2254,7 @@ function runCommand(text) {
     scrollToEnd($("thread"));
   };
   if (cmd === "new") newChat();
+  else if (cmd === "term") setMode(!document.body.classList.contains("mode-term"));
   else if (cmd === "samples") toggleSamples(true);
   else if (cmd === "fit" || cmd === "sense") openFit($("new-sense-button"));
   else if (cmd === "runs") loadRuns();
@@ -2299,6 +2310,7 @@ function bindEvents() {
   for (const tab of document.querySelectorAll(".insp-tabs .tab")) tab.addEventListener("click", () => setTab(tab.dataset.tab));
   $("runs-refresh").addEventListener("click", loadRuns);
   $("new-chat-button").addEventListener("click", newChat);
+  $("mode-button").addEventListener("click", () => setMode(!document.body.classList.contains("mode-term")));
   $("chat-new").addEventListener("click", newChat);
   $("samples-button").addEventListener("click", () => toggleSamples());
   document.addEventListener("mousedown", (e) => {
@@ -2391,6 +2403,7 @@ function init() {
   loadDatasets();
   loadRuns();
   renderChats();
+  if (store.get("localStorage", "sense.mode") === "term") setMode(true);
   const savedJob = store.get("sessionStorage", "sense.job");
   if (savedJob) startJob(savedJob, null, true);
 }

@@ -780,3 +780,21 @@ button.sense-text:hover .sense-title { color: var(--accent-ink-hover); }
 }
 .samples-pop .samples { padding: 0; border: 0; }
 .samples-button { flex: none; }
+
+/* ================================================================ terminal view (opencode-style) */
+
+.mode-glyph { font: 600 11px/1 var(--font-mono); }
+body.mode-term { --font-sans: var(--font-mono); }
+body.mode-term .workspace, body.mode-term .workspace.is-wide { grid-template-columns: 220px minmax(0, 1fr) 380px; }
+body.mode-term .brain-block, body.mode-term .runs-speed, body.mode-term .run-item-meta { display: none; }
+body.mode-term .thread { padding: 8px 20px 12px; font-size: 13px; }
+body.mode-term .turn { padding: 6px 0; border-bottom: 0; }
+body.mode-term .name-line { font-size: 11px; letter-spacing: 0; text-transform: lowercase; color: var(--text-faint); }
+body.mode-term .name-line .icon { display: none; }
+body.mode-term .msg--user .bubble::before { content: "❯ "; color: var(--accent); }
+body.mode-term .msg--user .bubble { color: var(--heading); }
+body.mode-term .msg--model .msg-text { color: var(--mcs-green-200); }
+body.mode-term .msg--agent { border-left: 2px solid var(--rule-dark); padding-left: 12px; }
+body.mode-term .composer { background: var(--band); }
+body.mode-term .composer .prompt { color: var(--accent); }
+body.mode-term #mode-button { border-color: var(--accent); color: var(--heading); }
