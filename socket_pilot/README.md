@@ -108,6 +108,36 @@ An unseen track of a seen genre is classified reliably; an unseen genre is at ch
 vector separates the two genres at 98.5%. GTZAN is known to repeat artists across tracks, so "held-out
 track" is weaker than "held-out artist".
 
+### Vision transplant (Qwen3.5-2B into SmolLM2-1.7B, no image training)
+
+`transplant.py` gives a text-only model another model's reading of an image. The donor, Qwen3.5-2B, looks
+at the image with its own vision. Its hidden states at the image positions, about 138 vectors per image,
+go through a ridge map into the recipient's input embeddings. The map is fitted on 8,000 words that both
+tokenizers hold as a single token, and on no image.
+
+The test is COCO val2017 images with one dominant object (at least 15% of the image area). Each question
+offers that object's category and four categories absent from the image. 100 images pick the layers and
+400 are scored once.
+
+| Condition | Accuracy |
+|---|---|
+| SmolLM2 with transplanted vision | 62.5 [57.8, 67.2] |
+| SmolLM2, image swapped | 27.8 [23.5, 32.0] |
+| SmolLM2, no image | 24.0 [19.8, 28.2] |
+| Qwen3.5-2B's own answer (native vision) | 97.8 [96.2, 99.0] |
+
+The setting chosen on the dev images takes the donor's states after block 19 of 24 and writes them as the
+recipient's input embeddings, norm-matched. The vision tower's raw output (the donor's input layer)
+transfers nothing: 17% to 27% on dev. Writing after the recipient's blocks 1 to 3 is worse than writing at
+its input.
+
+Free-text answers land near the subject but read as lists of related things: "a variety of animals,
+including a bear, a whale, and a deer" for a bear, "buses, trains, and bicycles" for a bus.
+
+Two limits. By block 19 the donor's language model has already read the image, so this passes on the
+donor's reading, not raw vision. And the donor could simply write a caption for the recipient to read; we
+did not measure that baseline here, and the donor's own 97.8% suggests it would score higher.
+
 ## What it shows
 
 - **The mechanism works on Qwen3.5.** A closed-form map, fitted in about a second or less, makes the model
@@ -120,6 +150,9 @@ track" is weaker than "held-out artist".
 - **The limit is the map, not the vector's size.** The plug can only output blends of the targets it was
   fitted on. CLAP's 512 numbers hold the rock-or-classical distinction; the plug does not carry it across
   unless those genres were in the fitting set.
+- **A map fitted on words alone can carry a whole token sequence between models.** A text-only model
+  reached 62.5% on image questions through another model's late-layer states, against 24.0% with no
+  image, with no image used in fitting. It conveys the subject's neighbourhood, not detail.
 
 ## Run it
 
@@ -133,6 +166,10 @@ uv sync
 .venv/bin/python -I clap_text.py --captions <audiocaps train.csv> --out artifacts/audiocaps_text_clap.npz
 .venv/bin/python run_textplug.py --host <qwen3.5 snapshot> --out artifacts/textplug.json
 .venv/bin/python run_cascade.py --host <qwen3.5 snapshot> --out artifacts/cascade.json
+# vision transplant: build the COCO question set, then run donor -> recipient
+.venv/bin/python -I coco_prep.py --ann <dir with COCO val2017 annotation json> --out <set dir>
+.venv/bin/python transplant.py --donor <qwen3.5 snapshot> --recipient <smollm2 snapshot> --set <set dir> \
+    --out artifacts/transplant.json --n-dev 100 --n-test 400
 ```
 
 Timings on an M4 Pro with 24 GB: fitting the plug, penalty search included, takes 0.5 to 1.0 seconds;
@@ -141,8 +178,10 @@ takes about 5 minutes on the 0.8B model and 12 minutes on the 2B.
 
 ## Models and data used
 
-- Host: `Qwen/Qwen3.5-0.8B`, `Qwen/Qwen3.5-2B` (frozen).
+- Host: `Qwen/Qwen3.5-0.8B`, `Qwen/Qwen3.5-2B` (frozen). Transplant recipient:
+  `HuggingFaceTB/SmolLM2-1.7B-Instruct` (frozen).
 - Encoder: `laion/clap-htsat-unfused` (frozen).
 - Data: [ESC-50](https://github.com/karolpiczak/ESC-50) audio and labels; caption text from
   [AudioCaps](https://github.com/cdjkim/audiocaps) (`train.csv`, text only);
-  [GTZAN](https://huggingface.co/datasets/marsyas/gtzan) music clips and genre labels.
+  [GTZAN](https://huggingface.co/datasets/marsyas/gtzan) music clips and genre labels;
+  [COCO](https://cocodataset.org) val2017 images, object annotations and captions.

@@ -47,6 +47,7 @@ chance is 20% unless stated. Full tables are in `socket_pilot/README.md`.
 | Text bridge, sounds never fitted on (nearest caption pasted into the prompt), Qwen3.5-0.8B | 83.2% |
 | Vector bridge fitted on caption text only, same unseen sounds | 53.2% |
 | Text bridge, rock or classical | 66.5%, where chance is 50% |
+| Model-to-model: text-only SmolLM2-1.7B reading Qwen3.5-2B's states for an image, map fitted on words only (COCO) | 62.5%, against 24.0% with no image; Qwen3.5-2B itself scores 97.8% |
 
 What this means for the product:
 
