@@ -5,13 +5,23 @@ All JSON. Errors: {"detail": "<what went wrong and what to do>"} with a 4xx or 5
   GET  /api/models
        -> [ModelInfo dict]                          name, label, native, open_weights, available, note
   GET  /api/datasets
-       -> [{"name", "title", "modality", "labels", "n"}]
+       -> [{"name", "title", "modality", "labels", "n", "origin", "meta"}]
+          origin "builtin" (gtzan, esc50; meta {}) or "folder" (built with POST /api/datasets; meta says how:
+          source, licence, folder, counts of files used, duplicates, conflicts, skipped files and near duplicates,
+          embedding time; see sense.datasets.from_folder)
+  POST /api/datasets                                body: {"path": str, "name": str|null, "question": str|null,
+                                                          "title": str|null, "max_per_label": int|null}
+       -> the new set's GET /api/datasets item      builds a labelled set from a folder on the server's disk with one
+                                                    sub-folder of audio files per label, or reuses the saved one if
+                                                    the files are unchanged; 400 with the reason if the folder
+                                                    cannot make a usable set
   GET  /api/senses?model=<name>
        -> [{"bridge", "kind", "modality", "dataset", "card": ReportCard dict}]
   DELETE /api/senses?model=<name>&modality=<modality>
        -> {"removed": bool}
   POST /api/fit                                     body: {"model", "dataset", "modality": "audio", "scope": "closed"|"open"}
-       -> {"job_id": str}                           409 if a run is already in progress
+       -> {"job_id": str}                           409 if a run is already in progress; 400 for scope "open" on
+                                                    a set with fewer than 3 labels
                                                     409 while a replay is in progress; a finished run is recorded
                                                     under <SENSE_HOME>/runs for replay
                                                     a fit or replay started just after a run ends first waits
@@ -66,10 +76,10 @@ from sense import datasets, models, registry
 from sense.config import REPO
 from sense.contracts import FitRequest, SenseInput
 from sense import config, runs
+from sense.specialists import AUDIO_EXTENSIONS  # what soundfile reads; not .m4a
 from server import replay
 
 WEB = REPO / "web"
-AUDIO_EXTENSIONS = {".wav", ".mp3", ".flac", ".ogg", ".opus", ".aif", ".aiff", ".au"}  # what soundfile reads; not .m4a
 SCOPES = ("closed", "open")
 CHAT_TOKENS = 256  # the default 96 cut Qwen3.5-0.8B's replies off mid-sentence
 
@@ -93,6 +103,14 @@ class FitBody(RequestBody):
 class ReplayBody(RequestBody):
     run: str
     speed: Any = 1.0  # checked by server.replay, so that any bad speed is a 400
+
+
+class FolderBody(RequestBody):
+    path: str
+    name: str | None = None
+    question: str | None = None
+    title: str | None = None
+    max_per_label: int | None = None
 
 
 # ----------------------------------------------------------------------------- helpers
@@ -163,6 +181,24 @@ def api_datasets() -> list[dict]:
     return datasets.available_sets()
 
 
+@app.post("/api/datasets")
+def api_add_dataset(body: FolderBody) -> dict:
+    options = {} if body.max_per_label is None else {"max_per_label": body.max_per_label}
+    try:
+        ds = datasets.from_folder(body.path, body.name, title=body.title, question=body.question, **options)
+    except (ValueError, FileNotFoundError) as exc:
+        raise _bad_request(str(exc))
+    except RuntimeError as exc:  # e.g. the specialist could not be loaded
+        raise HTTPException(status_code=500, detail=str(exc))
+    entry = next((d for d in datasets.available_sets() if d["name"] == ds.name), None)
+    if entry is None:
+        raise HTTPException(
+            status_code=500,
+            detail=f"The set {ds.name} was built but cannot be listed; see the server log, then build it again.",
+        )
+    return entry
+
+
 @app.get("/api/senses")
 def api_senses(model: str) -> list[dict]:
     _check_model(model)
@@ -184,6 +220,12 @@ def api_fit(body: FitBody) -> dict:
     dataset = _check_dataset(body.dataset)
     if body.scope not in SCOPES:
         raise _bad_request(f"Unknown scope '{body.scope}'. Use 'closed' or 'open'.")
+    if body.scope == "open" and len(dataset["labels"]) < 3:
+        raise _bad_request(
+            f"Scope 'open' needs a set with at least 3 labels, because its unseen-classes check refits the bridge "
+            f"with some labels left out; {body.dataset} has {len(dataset['labels'])}. Use scope 'closed', or add "
+            "label folders and build the set again."
+        )
     if body.modality != dataset["modality"]:
         raise _bad_request(
             f"The set {body.dataset} holds {dataset['modality']} examples, but the request is for "

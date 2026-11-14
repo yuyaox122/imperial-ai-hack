@@ -99,6 +99,9 @@ class LabelledSet:
     dev_idx: np.ndarray  # examples for choosing settings
     test_idx: np.ndarray  # held-out examples, scored once
     files: list[str] | None = None  # absolute paths when the raw files are on disk
+    # Where the set came from and how it was built, for the agent and the interface. Empty for the built-in sets;
+    # for a set built by sense.datasets.from_folder: source, licence, folder, counts of duplicates, skipped files...
+    meta: dict[str, Any] = field(default_factory=dict)
 
 
 # ----------------------------------------------------------------------------- bridges

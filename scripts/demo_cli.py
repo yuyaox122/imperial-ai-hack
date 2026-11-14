@@ -4,10 +4,15 @@
   .venv/bin/python scripts/demo_cli.py --model qwen3.5-0.8b --dataset gtzan --scope closed \\
       --ask /path/to/clip.wav "Which genre of music is this?"
   SENSE_FAKE=1 .venv/bin/python scripts/demo_cli.py --model fake --dataset gtzan --scope open
+  .venv/bin/python scripts/demo_cli.py --model qwen3.5-0.8b --folder ~/sounds --name my-sounds --scope closed
+
+Give either --dataset (a built-in set, or a folder set built earlier) or --folder, a folder with one sub-folder of
+audio files per label: the labelled set is built from it with sense.datasets.from_folder (or the saved one is
+reused if the files are unchanged), a one-line summary of it is printed, and the run uses it.
 
 Prints each trace event as it happens, then every report card. With --ask, the file goes through the sense the
 run installed (or the one already installed, if the run installed nothing) and the model's reply is printed.
-Exit status: 0 when the run finished (installed or refused), 1 when it failed.
+Exit status: 0 when the run finished (installed or refused), 1 when it failed or the folder could not make a set.
 """
 
 from __future__ import annotations
@@ -21,13 +26,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # run from anyw
 
 from agent.loop import run_fit  # noqa: E402
 from agent.planner import pct  # noqa: E402
-from sense import config, models, registry  # noqa: E402
-from sense.contracts import FitRequest, ReportCard, TraceEvent  # noqa: E402
+from sense import config, datasets, models, registry  # noqa: E402
+from sense.contracts import FitRequest, LabelledSet, ReportCard, TraceEvent  # noqa: E402
 
 CONTROL_NAMES = {
     "swapped": "swapped input",
     "no_input": "no input",
     "lookup": "nearest-example lookup",
+    "specialist_alone": "specialist alone",
     "text_bridge": "text bridge",
     "unseen_classes": "unseen classes",
 }
@@ -44,6 +50,27 @@ def print_card(card: ReportCard) -> None:
     for key, value in card.controls.items():
         print(f"  {CONTROL_NAMES.get(key, key):<24}{pct(value):>7}")
     print(f"  reason: {card.reason}")
+
+
+def folder_summary(ds: LabelledSet) -> str:
+    """One line from a folder set's meta: what was used, what was left out and why, and the embedding time."""
+    m = ds.meta
+    left_out = [
+        f"{n} {why}"
+        for n, why in (
+            (m.get("duplicates", 0), "exact duplicates"),
+            (len(m.get("conflicts", [])), "files whose bytes sit under two labels"),
+            (m.get("n_skipped", 0), "unreadable"),
+            (m.get("n_capped", 0), f"over the cap of {m.get('max_per_label')} per label"),
+        )
+        if n
+    ]
+    return (
+        f"Folder set {ds.name}: {len(ds.labels)} labels, {m.get('n_used', len(ds.y))} of {m.get('n_found', '?')} "
+        f"audio files used ({len(ds.fit_idx)} fit, {len(ds.dev_idx)} dev, {len(ds.test_idx)} test); "
+        f"left out: {', '.join(left_out) or 'none'}; {m.get('near_duplicate_groups', 0)} near-duplicate groups "
+        f"kept within one split; embedded in {m.get('embed_seconds', 0):.1f} s at {m.get('created', '?')}."
+    )
 
 
 def ask(model_name: str, path: Path, question: str) -> int:
@@ -71,19 +98,42 @@ def ask(model_name: str, path: Path, question: str) -> int:
 def main() -> int:
     ap = argparse.ArgumentParser(description="Give a base model an audio sense, verify it, and install it or refuse.")
     ap.add_argument("--model", required=True, help="qwen3.5-0.8b or qwen3.5-2b; 'fake' with SENSE_FAKE=1")
-    ap.add_argument("--dataset", required=True, help="gtzan (music genres) or esc50 (environmental sounds)")
+    data = ap.add_mutually_exclusive_group(required=True)
+    data.add_argument("--dataset", help="gtzan (music genres), esc50 (environmental sounds), or the name of a "
+                                        "folder set built earlier")
+    data.add_argument("--folder", metavar="PATH", help="a folder with one sub-folder of audio files per label: build "
+                                                       "a labelled set from it, then run on it")
+    ap.add_argument("--name", help="with --folder: the set's name (default: from the folder's name)")
+    ap.add_argument("--question", help="with --folder: the question asked about each clip "
+                                       "(default: 'Which sound is in the audio clip?')")
     ap.add_argument("--scope", choices=["closed", "open"], default="closed",
-                    help="closed: only the labelled categories matter; open: any sound")
+                    help="closed: only the labelled categories matter; open: any sound (needs 3 labels or more)")
     ap.add_argument("--ask", nargs=2, metavar=("FILE", "QUESTION"), help="afterwards, ask about one audio file")
     args = ap.parse_args()
     if args.ask and not Path(args.ask[0]).expanduser().is_file():
         ap.error(f"--ask: {args.ask[0]} does not exist. Give the path of an audio file.")
+    if (args.name or args.question) and not args.folder:
+        ap.error("--name and --question go with --folder; a set given with --dataset already has both.")
+
+    dataset = args.dataset
+    if args.folder:
+        try:
+            ds = datasets.from_folder(args.folder, args.name, question=args.question)
+        except (ValueError, FileNotFoundError) as exc:
+            print(f"Could not build a labelled set from {args.folder}: {exc}", file=sys.stderr)
+            return 1
+        print(folder_summary(ds), flush=True)
+        if args.scope == "open" and len(ds.labels) < 3:
+            print(f"Scope open needs a set with at least 3 labels; {ds.name} has {len(ds.labels)}. "
+                  "Use --scope closed, or add label folders.", file=sys.stderr)
+            return 1
+        dataset = ds.name
 
     mode ="fake mode (SENSE_FAKE=1)" if config.fake() else "real models"
-    print(f"Agent run: {args.model}, {args.dataset}, scope {args.scope}, {mode}\n", flush=True)
+    print(f"Agent run: {args.model}, {dataset}, scope {args.scope}, {mode}\n", flush=True)
     started = time.monotonic()
     try:
-        cards, installed = run_fit(FitRequest(model=args.model, dataset=args.dataset, scope=args.scope), print_event)
+        cards, installed = run_fit(FitRequest(model=args.model, dataset=dataset, scope=args.scope), print_event)
     except Exception:  # run_fit has already printed the [error] event with the reason
         return 1
     for card in cards:

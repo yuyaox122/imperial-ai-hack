@@ -5,6 +5,7 @@ Public surface (do not rename):
   Specialist.dim                              embedding size
   Specialist.embed_files(paths) -> [n, dim]   one embedding per file
   Specialist.embed_texts(texts) -> [n, dim]   text embeddings in the same space
+  AUDIO_EXTENSIONS                            file suffixes the audio specialist reads (what soundfile reads; not .m4a)
 
 The audio specialist is CLAP (config.model_source("clap")); it takes 48 kHz mono and uses the middle
 10 seconds of longer files. Reference implementation: socket_pilot/clap_embed_gtzan.py.
@@ -27,6 +28,8 @@ from typing import Protocol
 import numpy as np
 
 from sense import config
+
+AUDIO_EXTENSIONS = {".wav", ".mp3", ".flac", ".ogg", ".opus", ".aif", ".aiff", ".au"}  # what soundfile reads; not .m4a
 
 
 class Specialist(Protocol):
