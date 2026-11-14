@@ -7,7 +7,7 @@ match a card in Databricks or a record in `socket_pilot/artifacts/`.
 - **Name:** Sensorium
 - **Tagline:** An agent that gives a model a sense it doesn't have, proves the sense works, and installs it. If the proof fails, it refuses.
 - **Track:** Autonomous Agents. **Sponsor prizes:** Databricks, Figma[, Linkup: only if the discovery step lands].
-- **Links:** GitHub `yuyaox122/imperial-ai-hack` (public by 10:30), demo video [TODO], Figma file [TODO: link and view access].
+- **Links:** GitHub `yuyaox122/imperial-ai-hack` (public by 10:30), demo video [TODO], Figma file https://www.figma.com/design/9DxXU1h0aHjw8Mc8vUwl8O [TODO: the owner (Michael) sets "anyone with the link can view" before submitting].
 
 ## Inspiration
 
