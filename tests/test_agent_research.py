@@ -11,6 +11,7 @@ from __future__ import annotations
 import io
 import json
 import urllib.error
+import urllib.request
 from pathlib import Path
 
 import pytest
@@ -298,3 +299,110 @@ def test_download_only_fetches_http_urls(monkeypatch, live_mode, tmp_path, url):
     monkeypatch.setattr(research, "_http", boom)
     with pytest.raises(research.ResearchUnavailable):
         research.download(url, tmp_path / "x.wav")
+
+
+# ----------------------------------------------------------------------------- fix round 1
+def redirect(from_url: str, to_url: str, headers: dict | None = None):
+    req = urllib.request.Request(from_url, headers=headers or {"Authorization": "Bearer test-key"}, method="GET")
+    return research._RedirectGuard().redirect_request(req, io.BytesIO(), 302, "Found", {}, to_url)
+
+
+def test_a_redirect_to_ftp_is_refused():
+    with pytest.raises(research.ResearchUnavailable, match="ftp"):
+        redirect("https://huggingface.co/a", "ftp://example.org/a")
+
+
+def test_a_redirect_to_another_host_drops_authorization_and_the_same_host_keeps_it():
+    assert redirect("https://api.linkup.so/v1/a", "https://api.linkup.so/v1/b").get_header("Authorization") == (
+        "Bearer test-key"
+    )
+    assert not redirect("https://api.linkup.so/v1/a", "https://evil.example/b").has_header("Authorization")
+    assert not redirect("https://api.linkup.so/v1/a", "https://api.linkup.so:8443/b").has_header("Authorization")
+    assert not redirect("https://api.linkup.so/v1/a", "http://api.linkup.so/v1/b").has_header("Authorization")
+    assert redirect("https://api.linkup.so/v1/a", "https://evil.example/b").get_header("User-agent") is None
+
+
+def test_http_uses_the_redirect_guard(monkeypatch):
+    seen = []
+
+    class Opener:
+        def open(self, request, timeout):
+            raise urllib.error.URLError("stop here")
+
+    def build_opener(*handlers):
+        seen.extend(handlers)
+        return Opener()
+
+    monkeypatch.setattr(research.urllib.request, "build_opener", build_opener)
+    with pytest.raises(urllib.error.URLError):
+        research._http("GET", "https://huggingface.co/api/models/a/b", timeout=1)
+    assert seen == [research._RedirectGuard]
+
+
+@pytest.mark.parametrize("url", ["https://example.org/café.wav", "http://[::1/a.wav", "https:///a.wav"])
+def test_download_of_an_invalid_url_is_unavailable(monkeypatch, live_mode, tmp_path, url):
+    monkeypatch.setattr(research, "_http", boom)
+    dest = tmp_path / "x.wav"
+    with pytest.raises(research.ResearchUnavailable):
+        research.download(url, dest)
+    assert not dest.exists()
+
+
+def test_download_turns_a_value_error_from_http_into_unavailable(monkeypatch, live_mode, tmp_path):
+    monkeypatch.setattr(research, "_http", raising(UnicodeEncodeError("ascii", "é", 0, 1, "no")))
+    with pytest.raises(research.ResearchUnavailable):
+        research.download("https://example.org/a.wav", tmp_path / "x.wav")
+    assert not (tmp_path / "x.wav").exists()
+
+
+@pytest.mark.parametrize("key", ["test key", "test-key\n", "test\x07key", "\ttest-key"])
+def test_a_malformed_key_is_refused_without_showing_it(monkeypatch, live_mode, key):
+    monkeypatch.setenv("LINKUP_API_KEY", key)
+    monkeypatch.setattr(research, "_http", boom)
+    with pytest.raises(research.ResearchUnavailable, match="LINKUP_API_KEY is malformed") as info:
+        research.search_structured("q", SPECIALIST_SCHEMA_LIKE)
+    assert "test" not in str(info.value)
+
+
+def test_a_200_without_data_is_not_cached_and_names_the_keys(monkeypatch, live_mode):
+    answer = {"answer": "x", "sources": [], **{f"k{i:02d}": i for i in range(12)}}
+    monkeypatch.setattr(research, "_http", returning(json.dumps(answer).encode()))
+    with pytest.raises(research.ResearchUnavailable, match="answer, k00, k01") as info:
+        research.search_structured("q", SPECIALIST_SCHEMA_LIKE)
+    assert "k09" not in str(info.value)  # at most 10 keys, sorted: answer, k00..k08
+    assert not (live_mode / "research").exists() or not list((live_mode / "research").glob("*.json"))
+
+
+def test_linkup_error_details_are_named_and_the_key_is_masked(monkeypatch, live_mode):
+    body = {
+        "statusCode": 400,
+        "error": {
+            "code": "VALIDATION_ERROR",
+            "message": "Validation failed",
+            "details": [{"field": "depth", "message": "depth must be standard or deep, not test-key"}],
+        },
+    }
+    monkeypatch.setattr(research, "_http", raising(http_error(400, json.dumps(body).encode())))
+    with pytest.raises(research.ResearchUnavailable, match="Validation failed.*depth must be") as info:
+        research.search_structured("q", SPECIALIST_SCHEMA_LIKE)
+    assert "test-key" not in str(info.value)
+
+
+def test_an_error_body_is_read_at_most_4096_bytes(monkeypatch, live_mode):
+    sizes = []
+
+    class Body(io.BytesIO):
+        def read(self, size=-1):
+            sizes.append(size)
+            return super().read(size)
+
+    exc = urllib.error.HTTPError("https://x", 500, "error", {}, Body(b"y" * 100_000))
+    monkeypatch.setattr(research, "_http", raising(exc))
+    with pytest.raises(research.ResearchUnavailable):
+        research.viewer("rows", dataset="a/b")
+    assert sizes and all(0 <= s <= 4096 for s in sizes)
+
+
+def test_fake_clap_has_the_live_pipeline_tag(monkeypatch):
+    monkeypatch.setenv("SENSE_FAKE", "1")
+    assert research.hub_model("laion/clap-htsat-unfused")["pipeline_tag"] == "feature-extraction"

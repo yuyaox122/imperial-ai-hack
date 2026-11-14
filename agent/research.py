@@ -13,6 +13,10 @@ Public surface (do not rename):
 Every request goes through _http, the only function that opens a connection (tests patch it).
 Linkup: POST https://api.linkup.so/v1/search with "Authorization: Bearer $LINKUP_API_KEY" (read at call time,
 after sense.config has loaded .env), structured output and sources; HTTP 429 means rate limit or no credit.
+A key with whitespace or control characters is refused ("LINKUP_API_KEY is malformed", never the value). A
+200 answer without a "data" object is not cached and the error names the top-level keys that did arrive.
+Redirects are followed only to http and https URLs, and Authorization is dropped when one changes host or
+port or downgrades https to http.
 "licence" is the Hub's cardData.license, else its "license:<id>" tag, else None.
 
 Cache: each successful live JSON answer is saved as <SENSE_HOME>/research/<sha256(method, url, body)[:16]>.json
@@ -41,6 +45,7 @@ import urllib.request
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 from sense import config
 
@@ -117,7 +122,7 @@ _FAKE_SEARCH = {
 _FAKE_MODELS = {
     "laion/clap-htsat-unfused": {
         "id": "laion/clap-htsat-unfused",
-        "pipeline_tag": "zero-shot-audio-classification",
+        "pipeline_tag": "feature-extraction",  # as the live Hub reports it
         "licence": "apache-2.0",
         "downloads": 1000,
     },
@@ -160,11 +165,16 @@ def search_structured(
     if not key:
         answer, origin = _cached_or_raise("POST", LINKUP_URL, body, "LINKUP_API_KEY is not set")
     else:
+        if any(c.isspace() or not c.isprintable() for c in key):
+            raise ResearchUnavailable("LINKUP_API_KEY is malformed")
         headers = {"Authorization": f"Bearer {key}"}
-        answer, origin = _fetch_json("POST", LINKUP_URL, body=body, headers=headers, timeout=timeout)
-    data = answer.get("data") if isinstance(answer, dict) else None
-    if not isinstance(data, dict):
-        raise ResearchUnavailable("Linkup answered without a structured data object")
+        answer, origin = _fetch_json(
+            "POST", LINKUP_URL, body=body, headers=headers, timeout=timeout, check=_linkup_problem
+        )
+    problem = _linkup_problem(answer)
+    if problem:
+        raise ResearchUnavailable(problem)
+    data = answer["data"]
     sources = [
         {
             "name": str(s.get("name") or ""),
@@ -175,6 +185,16 @@ def search_structured(
         if isinstance(s, dict)
     ]
     return Research(data, sources, origin)
+
+
+def _linkup_problem(answer: object) -> str | None:
+    """Why a Linkup answer is unusable (no "data" object), naming at most 10 top-level keys; None if usable."""
+    if isinstance(answer, dict) and isinstance(answer.get("data"), dict):
+        return None
+    if isinstance(answer, dict):
+        keys = ", ".join(sorted(str(k) for k in answer)[:10]) or "none"
+        return f"Linkup answered without a data object; top-level keys were: {keys}"
+    return f"Linkup answered with a JSON {type(answer).__name__}, not an object with a data field"
 
 
 def hub_model(hub_id: str) -> dict | None:
@@ -217,11 +237,10 @@ def viewer(endpoint: str, **params) -> dict:
 def download(url: str, dest: Path, *, timeout: float = 20.0, max_bytes: int = 20_000_000) -> int:
     if config.fake():
         raise ResearchUnavailable("fake mode has no network")
-    if urllib.parse.urlsplit(url).scheme not in ("http", "https"):
-        raise ResearchUnavailable(f"only http and https downloads are allowed, not {url[:80]!r}")
+    _check_download_url(url)
     try:
         data = _http("GET", url, timeout=timeout)
-    except _NETWORK_ERRORS as exc:
+    except _NETWORK_ERRORS + (ValueError,) as exc:  # ValueError includes UnicodeError
         raise ResearchUnavailable(f"download from {_host(url)} failed: {_describe(exc, url)}") from exc
     if len(data) > max_bytes:
         raise ResearchUnavailable(f"download from {_host(url)} is {len(data):,} bytes, over the {max_bytes:,} limit")
@@ -236,7 +255,38 @@ def download(url: str, dest: Path, *, timeout: float = 20.0, max_bytes: int = 20
     return len(data)
 
 
+def _check_download_url(url: str) -> None:
+    """ResearchUnavailable unless `url` is an ASCII http or https URL with a host."""
+    try:
+        url.encode("ascii")
+        parts = urllib.parse.urlsplit(url)
+        ok = parts.scheme in ("http", "https") and bool(parts.hostname)
+    except (UnicodeError, ValueError, AttributeError):
+        ok = False
+    if not ok:
+        raise ResearchUnavailable(f"only ASCII http and https URLs with a host can be downloaded, not {url[:80]!r}")
+
+
 # ----------------------------------------------------------------------------- network and cache
+class _RedirectGuard(urllib.request.HTTPRedirectHandler):
+    """Follows a redirect only to http or https, and drops Authorization when it leaves the original host and
+    port or downgrades https to http."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        try:
+            old, new = urllib.parse.urlsplit(req.full_url), urllib.parse.urlsplit(newurl)
+            same_place = (old.hostname, old.port) == (new.hostname, new.port)
+        except ValueError:
+            raise ResearchUnavailable(f"refused a redirect from {_host(req.full_url)} to an invalid URL") from None
+        if new.scheme not in ("http", "https"):
+            scheme = new.scheme or "schemeless"
+            raise ResearchUnavailable(f"refused a redirect from {_host(req.full_url)} to a {scheme} URL")
+        redirected = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if redirected is not None and (not same_place or (old.scheme, new.scheme) == ("https", "http")):
+            redirected.remove_header("Authorization")
+        return redirected
+
+
 def _http(method: str, url: str, *, body: dict | None = None, headers: dict | None = None, timeout: float) -> bytes:
     """The only function that opens a connection. Raises urllib/OS errors as they come."""
     data = json.dumps(body).encode() if body is not None else None
@@ -245,7 +295,8 @@ def _http(method: str, url: str, *, body: dict | None = None, headers: dict | No
         all_headers["Content-Type"] = "application/json"
     all_headers.update(headers or {})
     request = urllib.request.Request(url, data=data, headers=all_headers, method=method)
-    with urllib.request.urlopen(request, timeout=timeout) as response:
+    opener = urllib.request.build_opener(_RedirectGuard)
+    with opener.open(request, timeout=timeout) as response:
         payload = response.read(MAX_RESPONSE_BYTES + 1)
     if len(payload) > MAX_RESPONSE_BYTES:
         raise ResearchUnavailable(f"the answer from {_host(url)} is over {MAX_RESPONSE_BYTES:,} bytes")
@@ -263,9 +314,11 @@ def _fetch_json(
     headers: dict | None = None,
     timeout: float,
     absent: tuple[int, ...] = (),
+    check: Callable[[object], str | None] | None = None,
 ) -> tuple[object, str]:
     """(parsed answer, "live") and the answer cached; on failure (cached answer, "cache") or ResearchUnavailable.
-    An HTTP status in `absent` is a definite "not there": (None, "live"), and the cache is not read."""
+    An HTTP status in `absent` is a definite "not there": (None, "live"), and the cache is not read.
+    `check` returns why a live answer is unusable; such an answer raises ResearchUnavailable and is not cached."""
     try:
         answer = json.loads(_http(method, url, body=body, headers=headers, timeout=timeout))
     except urllib.error.HTTPError as exc:
@@ -275,6 +328,9 @@ def _fetch_json(
     except _NETWORK_ERRORS + (ValueError,) as exc:
         cause = _describe(exc, url)
         return _cached_or_raise(method, url, body, f"{_host(url)} could not be reached: {cause}", exc)
+    problem = check(answer) if check else None
+    if problem:
+        raise ResearchUnavailable(problem)
     _write_cache(method, url, body, answer)
     return answer, "live"
 
@@ -333,7 +389,10 @@ def _licence(info: dict) -> str | None:
 
 
 def _host(url: str) -> str:
-    return urllib.parse.urlsplit(url).hostname or "the server"
+    try:
+        return urllib.parse.urlsplit(url).hostname or "the server"
+    except ValueError:
+        return "the server"
 
 
 def _describe(exc: Exception, url: str) -> str:
@@ -354,9 +413,10 @@ def _describe(exc: Exception, url: str) -> str:
 
 
 def _error_body(exc: urllib.error.HTTPError) -> str:
-    """The "error" or "message" field of a JSON error body, else its first characters."""
+    """The "error" or "message" field of a JSON error body (and Linkup's "details", when given), else the
+    body's first characters. Reads at most 4,096 bytes."""
     try:
-        raw = exc.read()[:4096].decode("utf-8", "replace")
+        raw = (exc.read(4096) or b"").decode("utf-8", "replace")
     except Exception:
         return ""
     try:
@@ -365,7 +425,16 @@ def _error_body(exc: urllib.error.HTTPError) -> str:
         parsed = None
     if isinstance(parsed, dict):
         field = parsed.get("error") or parsed.get("message") or ""
+        details = parsed.get("details")
         if isinstance(field, dict):
-            field = field.get("message") or ""
+            details = field.get("details", details)
+            field = field.get("message") or field.get("code") or ""
         raw = str(field)
-    return " ".join(raw.split())[:_ERROR_BODY_CHARS]
+        if details:
+            raw += f" (details: {_squash(json.dumps(details, ensure_ascii=False))[:_ERROR_BODY_CHARS]})"
+        return _squash(raw)[: 2 * _ERROR_BODY_CHARS]
+    return _squash(raw)[:_ERROR_BODY_CHARS]
+
+
+def _squash(text: str) -> str:
+    return " ".join(text.split())
