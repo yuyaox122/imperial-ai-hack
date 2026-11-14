@@ -67,24 +67,43 @@
       </div>
       <div class="popover-body">
         <p id="model-info" class="hint"></p>
-        <div class="field">
-          <label class="label" for="dataset-select">Labelled examples</label>
-          <select id="dataset-select" class="select" disabled>
-            <option value="">Loading labelled sets…</option>
-          </select>
-          <p id="dataset-info" class="hint"></p>
-          <div id="dataset-error" class="error" role="alert" hidden></div>
-        </div>
         <fieldset class="field">
-          <legend class="label">Scope</legend>
+          <legend class="label">Examples</legend>
           <div class="segmented">
-            <input type="radio" id="scope-closed" name="scope" value="closed" checked>
-            <label for="scope-closed">These categories only</label>
-            <input type="radio" id="scope-open" name="scope" value="open">
-            <label for="scope-open">Any sound</label>
+            <input type="radio" id="fit-auto" name="fit-mode" value="auto" checked>
+            <label for="fit-auto">Let the agent find them</label>
+            <input type="radio" id="fit-manual" name="fit-mode" value="manual">
+            <label for="fit-manual">Choose a labelled set</label>
           </div>
-          <p id="scope-hint" class="hint"></p>
         </fieldset>
+        <div id="auto-fields" class="field">
+          <label class="label" for="fit-goal">What should the model understand?</label>
+          <textarea id="fit-goal" class="goal-input" rows="3" placeholder="For example: recognise the sound in this clip"></textarea>
+          <label id="fit-drop" class="fit-drop" for="fit-file">Drop a file here, or choose one
+            <input id="fit-file" type="file">
+          </label>
+          <p id="fit-file-name" class="hint">The agent will choose examples and verify a bridge for your goal.</p>
+        </div>
+        <div id="manual-fields" class="field" hidden>
+          <div class="field">
+            <label class="label" for="dataset-select">Labelled examples</label>
+            <select id="dataset-select" class="select" disabled>
+              <option value="">Loading labelled sets…</option>
+            </select>
+            <p id="dataset-info" class="hint"></p>
+            <div id="dataset-error" class="error" role="alert" hidden></div>
+          </div>
+          <fieldset class="field">
+            <legend class="label">Scope</legend>
+            <div class="segmented">
+              <input type="radio" id="scope-closed" name="scope" value="closed" checked>
+              <label for="scope-closed">These categories only</label>
+              <input type="radio" id="scope-open" name="scope" value="open">
+              <label for="scope-open">Any sound</label>
+            </div>
+            <p id="scope-hint" class="hint"></p>
+          </fieldset>
+        </div>
         <div id="fit-error" class="error" role="alert" hidden></div>
       </div>
       <div class="popover-actions">
@@ -139,6 +158,7 @@
         </div>
       </div>
       <div class="chat-footer">
+        <p id="chat-storage" class="chat-storage-note">Chats saved in this browser · uploads are not saved</p>
         <form id="chat-form" class="composer-form" novalidate>
           <div id="samples-pop" class="samples-pop" hidden>
             <div class="samples">
@@ -163,6 +183,7 @@
               <input id="file-input" class="sr-only" type="file" accept=".wav,.mp3,.flac,.ogg,.opus,.aif,.aiff,.au" multiple>
             </label>
             <button id="send-button" class="send" type="submit" disabled aria-label="Send"><span data-icon="arrow-up"></span></button>
+            <button id="chat-stop" class="btn btn--small" type="button" hidden>Stop receiving</button>
           </div>
           <div id="chat-error" class="error" role="alert" hidden></div>
         </form>
@@ -209,6 +230,7 @@
           <span id="trace-status" class="tag" hidden></span>
           <span id="trace-request" class="run-meta">Not run yet.</span>
           <span id="trace-elapsed" class="run-elapsed num"></span>
+          <button id="job-stop" class="btn btn--small" type="button" hidden>Stop</button>
         </div>
         <ol id="steps" class="steps" aria-label="Steps of the agent run"></ol>
         <div id="trace-outcome" aria-live="polite"></div>
@@ -217,7 +239,7 @@
       </div>
       <div id="graph-view" class="insp-view" role="tabpanel" aria-labelledby="graph-tab" hidden>
         <div class="pane-head graph-head">
-          <h2 id="graph-heading" class="pane-title"><span class="idx" aria-hidden="true">05</span>Sense graph</h2>
+          <h2 id="graph-heading" class="pane-title"><span class="idx" aria-hidden="true">06</span>Sense graph</h2>
           <span id="graph-sub" class="pane-sub"></span>
         </div>
       <section class="graph" aria-labelledby="graph-heading">
