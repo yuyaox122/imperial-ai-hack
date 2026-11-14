@@ -710,3 +710,50 @@ def test_the_cli_checks_open_scope_for_folder_and_dataset_alike(cli, tmp_path, c
     assert run("--model", "fake", "--dataset", "two", "--scope", "open") == 1
     captured = capsys.readouterr()
     assert "at least 3 labels" in captured.err and "two has 2" in captured.err and "Agent run" not in captured.out
+
+
+# ----------------------------------------------------------------------------- built-in gtzan duplicates (#41)
+def test_split_without_duplicates_matches_the_plain_split_when_there_are_none():
+    ds = datasets._fake_set("gtzan")  # no two fake clips are near-identical
+    fit, dev, test, info = datasets._split_without_duplicates(ds.emb, ds.y, len(ds.labels), seed=0)
+    plain = datasets._split_per_label(ds.y, len(ds.labels), seed=0)
+    for got, want in zip((fit, dev, test), plain):
+        assert got.tolist() == want.tolist()
+    assert info == {"duplicate_groups_kept_in_one_split": 0, "left_out_idx": []}
+
+
+def test_split_without_duplicates_keeps_copies_together_and_drops_cross_label_copies():
+    rng = np.random.default_rng(3)
+    n_labels, per_label = 3, 20
+    y = np.repeat(np.arange(n_labels), per_label)
+    emb = rng.normal(size=(len(y), 16)).astype(np.float32)
+    copies = [(0, 1), (0, 2), (25, 33), (41, 59)]  # within labels 0, 1 and 2; 0-1-2 is one group of three
+    for a, b in copies:
+        emb[b] = emb[a]
+    emb[45] = emb[5]  # clip 5 (label 0) and clip 45 (label 2) are one recording under two labels
+    for seed in range(10):
+        fit, dev, test, info = datasets._split_without_duplicates(emb, y, n_labels, seed=seed)
+        where = {int(i): k for k, split in enumerate((fit, dev, test)) for i in split}
+        for a, b in copies:
+            assert where[a] == where[b], (seed, a, b)
+        assert 5 not in where and 45 not in where
+        assert info["left_out_idx"] == [5, 45]
+        assert info["duplicate_groups_kept_in_one_split"] == 3
+        assert len(where) == len(y) - 2 and len(fit) + len(dev) + len(test) == len(where)
+
+
+def test_real_gtzan_split_has_no_duplicate_across_splits():
+    path = config.data_dir() / "gtzan_clap.npz"
+    if not path.is_file():
+        pytest.skip("the real gtzan_clap.npz is not on this machine")
+    ds = datasets._real_set("gtzan", str(config.data_dir()), ())
+    unit = ds.emb / np.linalg.norm(ds.emb, axis=1, keepdims=True)
+    split = np.full(len(ds.y), -1)
+    for k, idx in enumerate((ds.fit_idx, ds.dev_idx, ds.test_idx)):
+        split[idx] = k
+    near = np.triu(unit @ unit.T >= 0.999, k=1)
+    for i, j in zip(*np.nonzero(near)):
+        assert split[i] == split[j] or -1 in (split[i], split[j])
+    assert ds.meta["left_out"] == ["metal.00058.wav", "rock.00016.wav"]
+    assert ds.meta["duplicate_groups_kept_in_one_split"] == 13
+    assert len(ds.fit_idx) + len(ds.dev_idx) + len(ds.test_idx) == len(ds.y) - 2
