@@ -9,7 +9,7 @@ RulePlanner.plan: ["vector", "text"] for an open-weight model, ["text"] otherwis
 RulePlanner.decide, over the verified candidate cards:
   - a vector card is acceptable when accuracy >= swapped + 0.25 and accuracy >= chance + 0.25, and, for
     scope "open", when controls["unseen_classes"] >= chance + 0.25 and is within 0.20 of the accuracy
-  - a text card is acceptable when accuracy >= chance + 0.15 and accuracy >= swapped + 0.10
+  - a text or tool card is acceptable when accuracy >= chance + 0.15 and accuracy >= swapped + 0.10
   - install the acceptable card with the highest accuracy, preferring vector when within 0.03 of the best;
     if none is acceptable install nothing
   - the reason names the numbers that decided it, in one or two plain sentences
@@ -55,7 +55,7 @@ class RulePlanner:
         """Acceptability and a clause (no subject, no full stop) with the deciding numbers."""
         if card.kind == "vector":
             return self._check_vector(request, card)
-        if card.kind == "text":
+        if card.kind in ("text", "tool"):
             bar = card.chance + TEXT_MARGIN
             swapped = card.controls.get("swapped")
             if swapped is not None and card.accuracy + _EPS < swapped + TEXT_SWAPPED_MARGIN:
@@ -65,13 +65,13 @@ class RulePlanner:
             if card.accuracy + _EPS >= bar:
                 return True, (
                     f"it scored {pct(card.accuracy)} against {pct(card.chance)} chance, "
-                    f"above the {pct(bar)} bar for a text bridge"
+                    f"above the {pct(bar)} bar for a {card.kind} bridge"
                 )
             return False, (
-                f"it scored {pct(card.accuracy)}, below the {pct(bar)} bar for a text bridge "
+                f"it scored {pct(card.accuracy)}, below the {pct(bar)} bar for a {card.kind} bridge "
                 f"({pct(card.chance)} chance plus 15 points)"
             )
-        return False, f"the rule planner only judges vector and text bridges, not {card.kind} bridges"
+        return False, f"the rule planner only judges vector, text and tool bridges, not {card.kind} bridges"
 
     def _check_vector(self, request: FitRequest, card: ReportCard) -> tuple[bool, str]:
         bar = card.chance + VECTOR_MARGIN

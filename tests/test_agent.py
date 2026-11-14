@@ -101,6 +101,15 @@ def fake_sense(monkeypatch):
         state.text_calls.append(dataset)
         return FakeBridge("text", f"text:{dataset.name}" if dataset is not None else "text:captions")
 
+    def build(kind, model, dataset, scope):
+        if kind == "vector":
+            return bridges.fit_vector_bridge(model, dataset, dataset.fit_idx)
+        if kind == "text":
+            return bridges.make_text_bridge(model, dataset if scope == "closed" else None)
+        if kind == "tool":
+            return FakeBridge("tool", f"tool:{dataset.name}")
+        raise ValueError(f"Unsupported fake bridge kind: {kind}")
+
     def fake_verify(model, bridge, dataset, request, text_bridge=None, max_items=200, seed=0):
         state.verify_calls.append((bridge.name, text_bridge.name if text_bridge else None))
         accuracy, controls = state.results[bridge.kind]
@@ -116,6 +125,8 @@ def fake_sense(monkeypatch):
     monkeypatch.setattr(datasets, "load_labelled_set", lambda name: toy_set())
     monkeypatch.setattr(bridges, "fit_vector_bridge", fit_vector)
     monkeypatch.setattr(bridges, "make_text_bridge", make_text)
+    monkeypatch.setattr(bridges, "build", build, raising=False)
+    monkeypatch.setattr(bridges, "availability", lambda info, modality: [], raising=False)
     monkeypatch.setattr(verify, "verify", fake_verify)
     monkeypatch.setattr(registry, "install", lambda bridge, card: state.installs.append((bridge.name, card.verdict)))
     monkeypatch.setattr(registry, "installed", lambda name: state.earlier)  # senses installed before the run
@@ -199,6 +210,15 @@ def test_decide_open_scope_needs_unseen_classes():
 def test_decide_text_bar_is_inclusive():
     decision = RulePlanner().decide(FitRequest("fake", "toy"), [make_card("text:toy", "text", 0.35)])
     assert decision.install == "text:toy"
+
+
+def test_tool_card_uses_the_text_bars():
+    request = FitRequest("fake", "toy")
+    ok, why = RulePlanner().assess(request, make_card("tool:toy", "tool", 0.35, swapped=0.2))
+    assert ok and "tool bridge" in why
+    assert not RulePlanner().assess(request, make_card("tool:toy", "tool", 0.34, swapped=0.2))[0]
+    assert not RulePlanner().assess(request, make_card("tool:toy", "tool", 0.60, swapped=0.55))[0]
+    assert RulePlanner().assess(request, make_card("tool:toy", "tool", 0.60, swapped=0.50))[0]
 
 
 def test_planner_registry(monkeypatch):
@@ -318,6 +338,116 @@ def test_closed_weight_model_skips_vector(fake_sense):
     cards, installed, _ = run(FitRequest("fake", "toy"))
     assert fake_sense.vector_fits == 0
     assert installed == "text:toy" and [c.bridge for c in cards] == ["text:toy"]
+
+
+def test_closed_weight_model_tries_the_tool_bridge_when_available(fake_sense, monkeypatch):
+    fake_sense.model = FakeModel(open_weights=False)
+    calls = []
+
+    def availability(info, modality):
+        calls.append((info, modality))
+        return [{"kind": "tool", "available": True, "why": ""}]
+
+    monkeypatch.setattr(bridges, "availability", availability)
+    fake_sense.results = {"text": (0.6, {"swapped": 0.2}), "tool": (0.9, {"swapped": 0.2})}
+    cards, installed, _ = run(FitRequest("fake", "toy"))
+    assert {c.kind for c in cards} == {"text", "tool"} and installed == "tool:toy"
+    assert fake_sense.verify_calls == [("text:toy", None), ("tool:toy", None)]
+    assert calls == [(fake_sense.model.info, "audio")]
+
+
+def test_open_weight_model_does_not_try_the_tool_bridge(fake_sense, monkeypatch):
+    monkeypatch.setattr(bridges, "availability", lambda info, modality: [
+        {"kind": "tool", "available": True, "why": ""},
+    ])
+    fake_sense.results = {"vector": (0.9, {"swapped": 0.2}), "text": (0.6, {"swapped": 0.2})}
+    cards, installed, _ = run(FitRequest("fake", "toy"))
+    assert [c.kind for c in cards] == ["vector", "text"]
+    assert installed == "vector:toy"
+
+
+@pytest.mark.parametrize("availability_state", ["absent", "unavailable", "raises"])
+def test_closed_weight_tool_requires_reported_availability(fake_sense, monkeypatch, availability_state):
+    fake_sense.model = FakeModel(open_weights=False)
+    if availability_state == "absent":
+        monkeypatch.delattr(bridges, "availability")
+    elif availability_state == "unavailable":
+        monkeypatch.setattr(bridges, "availability", lambda info, modality: [
+            {"kind": "tool", "available": False, "why": "no tool support"},
+        ])
+    else:
+        def broken(info, modality):
+            raise ValueError("availability unknown")
+
+        monkeypatch.setattr(bridges, "availability", broken)
+    fake_sense.results = {"text": (0.6, {"swapped": 0.2})}
+    cards, installed, _ = run(FitRequest("fake", "toy"))
+    assert [c.kind for c in cards] == ["text"] and installed == "text:toy"
+
+
+@pytest.mark.parametrize("scope", ["closed", "open"])
+def test_without_bridges_build_the_old_branches_still_work(fake_sense, monkeypatch, scope):
+    monkeypatch.delattr(bridges, "build")
+    fake_sense.results = {"vector": (0.9, {"swapped": 0.2, "unseen_classes": 0.8}),
+                          "text": (0.6, {"swapped": 0.2})}
+    cards, installed, _ = run(FitRequest("fake", "toy", scope=scope))
+    assert [c.kind for c in cards] == ["vector", "text"] and installed == "vector:toy"
+    assert fake_sense.vector_fits == 1
+    assert (fake_sense.text_calls[0] is None) == (scope == "open")
+
+
+def test_without_bridges_build_tool_is_skipped(fake_sense, monkeypatch):
+    fake_sense.model = FakeModel(open_weights=False)
+    monkeypatch.delattr(bridges, "build")
+    monkeypatch.setattr(bridges, "availability", lambda info, modality: [
+        {"kind": "tool", "available": True, "why": ""},
+    ])
+    fake_sense.results = {"text": (0.6, {"swapped": 0.2})}
+    cards, installed, events = run(FitRequest("fake", "toy"))
+    assert [c.kind for c in cards] == ["text"] and installed == "text:toy"
+    assert any(e.step == "fit" and e.status == "fail" and "can build only vector and text" in e.message
+               for e in events)
+
+
+@pytest.mark.parametrize("scope", ["closed", "open"])
+def test_build_receives_each_kind_and_scope_and_only_vector_gets_control(fake_sense, monkeypatch, scope):
+    class ProposesTool(RulePlanner):
+        def plan(self, request, model, dataset):
+            return ["tool", "vector", "tool"]
+
+    calls = []
+
+    def build(kind, model, dataset, build_scope):
+        calls.append((kind, model, dataset.name, build_scope))
+        return FakeBridge(kind, f"{kind}:built")
+
+    monkeypatch.setattr(bridges, "build", build)
+    fake_sense.results = {"vector": (0.9, {"swapped": 0.2, "unseen_classes": 0.8}),
+                          "text": (0.6, {"swapped": 0.2}), "tool": (0.7, {"swapped": 0.2})}
+    cards, installed = loop.run_fit(FitRequest("fake", "toy", scope=scope), lambda event: None,
+                                    planner=ProposesTool())
+    assert calls == [(kind, fake_sense.model, "toy", scope) for kind in ["tool", "vector", "text"]]
+    assert fake_sense.verify_calls == [("tool:built", None), ("vector:built", "text:built"), ("text:built", None)]
+    assert installed == "vector:built" and len(cards) == 3
+
+
+def test_refusal_distinguishes_passed_but_unselected_from_ineligible_cards(fake_sense):
+    class Refuses(RulePlanner):
+        def decide(self, request, cards):
+            return Decision(None, "No bridge selected.")
+
+    fake_sense.results = {"vector": (0.3, {"swapped": 0.2}), "text": (0.6, {"swapped": 0.2})}
+    request = FitRequest("fake", "toy")
+    events = []
+    cards, installed = loop.run_fit(request, events.append, planner=Refuses())
+    assert installed is None and fake_sense.installs == []
+    vector, text = cards
+    assert all(c.verdict == "rejected" for c in cards)
+    assert vector.reason == RulePlanner().assess(request, vector)[1]
+    assert "passed" in text.reason and "not selected" in text.reason and "no bridge selected" in text.reason.lower()
+    assert "None was chosen instead" not in text.reason
+    assert events[-1].step == "done" and "the planner selected no bridge" in events[-1].message
+    assert "failed verification" not in events[-1].message and "passed verification" not in events[-1].message
 
 
 def test_planner_choosing_unknown_bridge_is_an_error(fake_sense):
