@@ -115,7 +115,7 @@ Auth comes from `~/.databrickscfg` or `DATABRICKS_HOST` and `DATABRICKS_TOKEN`. 
 - **The vector bridge passes a label, not a description.** The model treats the written vector like the word for the label: for the metal and jazz clips it said it was answering "Based on the names provided". Anything it says beyond the label is invented.
 - **The LLM planner's plan is unreliable.** See above; its install choice is checked against the rules. One planning call and one decision call are made per run.
 - **The LLM planner's stated reasons can be wrong.** In the GTZAN run it wrote that `text:gtzan` (47.5%, swapped input 20.0%) was "below the required accuracy > swapped + 0.10 threshold", which is false: the text bar is 35% and the swapped bar 30%, and it cleared both. The install was still right, because the rules check the choice, but the card's reason text comes from the model and is not checked.
-- **Tool, image and native bridges are not built.** A tool bridge that lets an API model call the specialist is in progress (#26). API models are verified on 50 held-out questions, not 200, so their intervals are wider (about 12 points either way).
+- **Image and native bridges are not built.** The tool bridge (PR #52) lets an API model call CLAP as a `listen` tool: verified directly on `openai-chat`, `tool:esc50` scored 96.0% [86.5, 98.9] on 50 questions (swapped 22.0%, no input 18.0%), the same as CLAP alone. The agent loop does not try it yet. API models are verified on 50 held-out questions, not 200, so their intervals are wider (about 12 points either way).
 - **Qwen3.5-2B is listed but untested in this harness.** It loads through the same code as the 0.8B; only the research scripts have run it.
 - **Chat has no history.** Each message stands alone, so a follow-up question needs the file attached again. Image inputs are not wired into `QwenModel.chat`.
 - **Jobs live in memory.** One run at a time, lost on restart; a run started in another browser tab shows up only as the 409 message.
@@ -132,7 +132,8 @@ Auth comes from `~/.databrickscfg` or `DATABRICKS_HOST` and `DATABRICKS_TOKEN`. 
 - [GTZAN](https://huggingface.co/datasets/marsyas/gtzan): 999 music clips, 10 genres; split 60/20/20 per genre for fitting, dev and test
 - [ESC-50](https://github.com/karolpiczak/ESC-50): 2,000 environmental sound clips, 50 classes; folds 1 to 3 fit, fold 4 dev, fold 5 test
 - [AudioCaps](https://github.com/cdjkim/audiocaps): caption text only (12,000 captions from `train.csv`), for the caption text bridge
-- Libraries: PyTorch, Transformers, NumPy, SciPy, soundfile, FastAPI, Uvicorn
+- Libraries: PyTorch, Transformers, NumPy, SciPy, soundfile, FastAPI, Uvicorn; optional: Databricks SDK, MLflow
+- Services: Databricks Free Edition (Unity Catalog, SQL warehouse, Volumes, MLflow) for the run records; the OpenAI API
 
 ## Layout
 
