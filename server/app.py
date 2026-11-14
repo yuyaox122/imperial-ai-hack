@@ -111,7 +111,6 @@ from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel as RequestBody
-from starlette.concurrency import iterate_in_threadpool
 
 from agent import jobs
 from sense import datasets, models, registry
@@ -369,7 +368,7 @@ def _parse_history(raw: str) -> list[dict]:
         return []
     try:
         turns = json.loads(raw)
-    except ValueError:
+    except (ValueError, RecursionError):  # RecursionError: nested deeper than json can read
         raise _bad_request(f"The history is not valid JSON. Send it as {HISTORY_FORM}.")
     if not isinstance(turns, list):
         raise _bad_request(f"The history must be a list, not {type(turns).__name__}. Send it as {HISTORY_FORM}.")
@@ -540,15 +539,21 @@ def _chat_events(turn: _ChatTurn, temp_paths: list[Path]) -> Iterator[str]:
 
 
 async def _stream_events(first: str, events: Iterator[str]) -> AsyncIterator[str]:
-    """`first`, then the rest of `events`, each read in the thread pool (a model call blocks). `events` is closed
-    however the response ends, also when the client goes away, so that it frees the chat lock and the uploads."""
+    """`first`, then the rest of `events`, each read in a worker thread (a model call blocks). `events` is closed
+    however the response ends, also when the client goes away, so that it frees the chat lock and the uploads.
+
+    The worker threads are counted by a limiter of this response's own, not by the shared pool's: every request
+    waiting for the chat lock holds a thread of the shared pool, and the stream that holds the lock must never wait
+    for one of those to go on or to close, or nothing would free the lock. One thread at a time, so that close never
+    runs while a read is still going."""
+    limiter = anyio.CapacityLimiter(1)
     try:
         yield first
-        async for chunk in iterate_in_threadpool(events):
+        while (chunk := await anyio.to_thread.run_sync(next, events, None, limiter=limiter)) is not None:
             yield chunk
     finally:
         with anyio.CancelScope(shield=True):
-            await anyio.to_thread.run_sync(events.close)
+            await anyio.to_thread.run_sync(events.close, limiter=limiter)
 
 
 def _tool_detail(item: SenseInput) -> str:

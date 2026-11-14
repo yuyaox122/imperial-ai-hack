@@ -8,6 +8,7 @@ Run: SENSE_FAKE=1 .venv/bin/python -m pytest -q tests/test_chat_stream.py
 
 from __future__ import annotations
 
+import gc
 import io
 import json
 import tempfile
@@ -104,18 +105,21 @@ class CharTokenizer:
 
 class Generate:
     """Stands in for model.generate: produces the characters of `text` one token at a time, feeding the streamer
-    and checking the stopping criteria as transformers does, and records the slot hooks in place while it runs."""
+    and checking the stopping criteria as transformers does, and records the slot hooks in place while it runs and
+    whether the model's lock was held."""
 
     def __init__(self, qwen, text: str, delay: float = 0.0, fail_at: int | None = None):
         self.qwen, self.text, self.delay, self.fail_at = qwen, text, delay, fail_at
         self.produced = 0
         self.hooks: list[int] = []
+        self.locked: list[bool] = []
 
     def generate(self, input_ids, attention_mask, max_new_tokens, do_sample, streamer=None, stopping_criteria=None):
         import torch
 
         assert do_sample is False and attention_mask.shape == input_ids.shape
         self.hooks.append(sum(len(layer._forward_hooks) for layer in self.qwen.layers))
+        self.locked.append(self.qwen._lock.locked())
         out = input_ids
         if streamer is not None:
             streamer.put(input_ids.cpu())
@@ -198,11 +202,14 @@ def test_qwen_chat_stream_joins_to_chat_with_the_same_slot_hooks(qwen):
     qwen.model = Generate(qwen, text)
     reply = qwen.chat("What is it?", [vector_input()], max_new_tokens=64, history=HISTORY)
     assert reply == text.strip()
+    [from_chat] = qwen.tok.messages
+    assert from_chat[:2] == HISTORY and [m["role"] for m in from_chat] == ["user", "assistant", "user"]
     pieces = list(qwen.chat_stream("What is it?", [vector_input()], max_new_tokens=64, history=HISTORY))
     assert len(pieces) > 1 and "".join(pieces) == reply
     assert qwen.model.hooks == [1, 1]  # the slot hook was in place for both, and removed after each
     assert sum(len(layer._forward_hooks) for layer in qwen.layers) == 0
-    assert [m["role"] for m in qwen.tok.messages[-1]] == ["user", "assistant", "user"]
+    assert qwen.tok.messages[-1] == from_chat  # the same messages for both
+    assert qwen.model.locked == [True, True]  # both generated holding the model's lock
     assert not qwen._lock.locked()
 
 
@@ -301,13 +308,15 @@ class Recording:
 
 
 class Streaming(Recording):
-    """Streams the given pieces; raises before piece `fail_at`. Records whether the chat lock was held."""
+    """Streams the given pieces; raises before piece `fail_at`. Records whether the chat lock was held, for each
+    piece and when the stream was closed."""
 
     def __init__(self, pieces, fail_at=None):
         super().__init__()
         self.pieces, self.fail_at = pieces, fail_at
         self.state = "new"
         self.locked: list[bool] = []
+        self.locked_at_close: bool | None = None
 
     def chat_stream(self, message, inputs, max_new_tokens=96, history=None):
         self.histories.append(history)
@@ -320,6 +329,7 @@ class Streaming(Recording):
                 yield piece
         finally:
             self.state = "closed"
+            self.locked_at_close = server_app._chat_lock.locked()
 
 
 @pytest.fixture
@@ -354,6 +364,7 @@ SONG = [("files", ("song.wav", b"abc", "audio/wav"))]
 @pytest.mark.parametrize("endpoint", ["/api/chat", "/api/chat/stream"])
 @pytest.mark.parametrize("history, says", [
     ("{not json", "The history is not valid JSON."),
+    pytest.param("[" * 100_000, "The history is not valid JSON.", id="nested-deeper-than-json-reads"),
     ('{"role": "user", "content": "hi"}', "The history must be a list, not dict."),
     ('"hello"', "The history must be a list, not str."),
     ("null", "The history must be a list, not NoneType."),
@@ -481,8 +492,64 @@ def test_a_client_that_goes_away_frees_the_lock_and_deletes_the_uploads(server):
     chunks = anyio.run(read_then_leave)
     assert chunks[0].startswith("event: used\n") and chunks[2] == 'event: token\ndata: {"text": "piece 1 "}\n\n'
     assert state.model.state == "closed"  # the model's stream was closed, not left running
+    assert state.model.locked_at_close is True  # closed by the server while it held the chat lock, not afterwards
     assert not server_app._chat_lock.locked()
     assert uploads_deleted(state)
+
+
+def test_uploads_are_deleted_even_if_the_body_is_never_read(server):
+    _, state = server
+    state.model = Streaming(["never sent"])
+    upload = UploadFile(io.BytesIO(b"abc"), filename="song.wav")
+    response = server_app.api_chat_stream(model="m1", message="hi", files=[upload], sample_ids=[], history="")
+    assert state.temps and all(path.exists() for path in state.temps)  # kept for the stream
+    del response  # what happens to a response whose body nobody reads
+    gc.collect()
+    assert uploads_deleted(state)
+    assert state.model.state == "new"  # the model was never asked
+    assert not server_app._chat_lock.locked()
+
+
+def test_a_stream_holding_the_chat_lock_still_gets_threads_while_chats_wait_for_it(server, monkeypatch):
+    """Each POST /api/chat waiting for the chat lock holds a thread of the shared pool. The stream that holds the
+    lock must not need one of those threads to go on, or it could never free the lock and the server would hang."""
+    _, state = server
+    lock = threading.Lock()
+    monkeypatch.setattr(server_app, "_chat_lock", lock)
+    state.model = Streaming(["one ", "two ", "three"])
+    response = server_app.api_chat_stream(model="m1", message="hi", files=[], sample_ids=[], history="")
+    wedged: list[bool] = []
+
+    def chat():  # what POST /api/chat does on a thread of the pool
+        with lock:
+            pass
+
+    async def scenario():
+        pool = anyio.to_thread.current_default_thread_limiter()
+        pool.total_tokens = 2  # this event loop's pool only; small, so that a few chats fill it
+        body = response.body_iterator
+        chunks = [await body.__anext__(), await body.__anext__()]  # used, then the first piece: the lock is held
+        assert lock.locked()
+        async with anyio.create_task_group() as tg:
+            for _ in range(pool.total_tokens + 1):  # more chats than the pool has threads
+                tg.start_soon(anyio.to_thread.run_sync, chat)
+            while pool.statistics().tasks_waiting < 1:  # every thread of the pool waits for the lock
+                await anyio.sleep(0.01)
+
+            async def watchdog():  # if the stream is stuck, free the lock by hand so that the test ends
+                await anyio.sleep(10)
+                wedged.append(True)
+                lock.release()
+
+            tg.start_soon(watchdog)
+            chunks += [chunk async for chunk in body]
+            tg.cancel_scope.cancel()  # stops the watchdog; the chats finish now that the lock is free
+        return chunks
+
+    chunks = anyio.run(scenario)
+    assert not wedged, "the stream waited for a thread held by a chat that was waiting for the stream's lock"
+    assert parse_events("".join(chunks))[-1] == ("done", {"reply": "one two three", "used": []})
+    assert state.model.locked_at_close is True
 
 
 # ----------------------------------------------------------------------------- end to end in fake mode
