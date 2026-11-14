@@ -12,6 +12,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
   <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/brain.js" defer></script>
   <script src="/static/app.js" defer></script>
 </head>
 <body>
@@ -179,6 +180,16 @@
         <span id="report-verdict" class="tag" hidden></span>
       </div>
       <div class="panel-scroll">
+        <div class="brain-block">
+          <div class="section-head">
+            <h3 class="pane-title">Brain</h3>
+            <span id="brain-meta" class="section-meta"></span>
+          </div>
+          <div class="brain-stage">
+            <canvas id="brain" aria-label="Which senses the model has, drawn as regions of a brain"></canvas>
+            <div id="brain-tip" class="brain-tip" hidden></div>
+          </div>
+        </div>
         <div id="report" class="report-body" aria-live="polite"></div>
         <div class="senses-block">
           <div class="section-head">

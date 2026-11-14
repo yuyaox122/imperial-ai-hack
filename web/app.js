@@ -524,7 +524,68 @@ function renderModelInfo() {
 }
 
 /** Sense chips on the band: native, installed (marked new until used in chat), checking, refused. */
+/* The brain card: one region per data colour, lit from the same API data as the senses list. */
+let brainView = null;
+let brainRegions = {};
+const BRAIN_RANK = { refused: 1, native: 2, running: 3, installed: 4 };
+
+function renderBrain() {
+  const canvas = $("brain");
+  if (!canvas || !window.SenseBrain) return;
+  if (!brainView) {
+    const installedBridge = (g) => ((brainRegions[g] || {}).senses || []).find((s) => s.bridge);
+    brainView = SenseBrain.mount(canvas, {
+      onHover: showBrainTip,
+      clickable: (g) => Boolean(installedBridge(g)),
+      onClick: (g) => { const s = installedBridge(g); if (s) selectReport(s.bridge); },
+    });
+  }
+  const regions = {};
+  const add = (modality, entry) => {
+    const g = SenseBrain.regionFor(MODALITY_TOKENS[modalityKey(modality)] || "input");
+    const r = (regions[g] = regions[g] || { level: null, senses: [] });
+    r.senses.push(entry);
+    if (!r.level || BRAIN_RANK[entry.level] > BRAIN_RANK[r.level]) r.level = entry.level;
+  };
+  const model = currentModel();
+  for (const m of model ? model.native || [] : []) add(m, { level: "native", title: capitalise(m), sub: "Native" });
+  for (const sense of state.senses) {
+    const card = senseCard(sense);
+    const acc = toNumber(card.accuracy);
+    add(sense.modality, { level: "installed", title: capitalise(sense.modality), sub: [`${kindLabel(card.kind)} bridge`, acc !== null ? pct(acc) : ""].filter(Boolean).join(" · "), bridge: sense.bridge });
+  }
+  const refused = refusedRun();
+  if (refused) add(refused.modality, { level: "refused", title: capitalise(refused.modality), sub: `Refused for ${datasetTitle(refused.dataset)}` });
+  const job = modelJob();
+  if (job && job.status === "running" && job.request && job.request.modality) add(job.request.modality, { level: "running", title: capitalise(job.request.modality), sub: "Agent run in progress" });
+  brainRegions = regions;
+  const levels = {};
+  for (const g in regions) levels[g] = regions[g].level;
+  brainView.update(levels);
+  const lit = Object.keys(regions).filter((g) => regions[g].level !== "refused").length;
+  $("brain-meta").textContent = model ? `${lit} of ${Object.keys(SenseBrain.REGIONS).length} regions` : "";
+}
+
+function showBrainTip(g, e) {
+  const tip = $("brain-tip");
+  if (!g || !e) { tip.hidden = true; return; }
+  const region = SenseBrain.REGIONS[g];
+  const senses = (brainRegions[g] || {}).senses || [];
+  tip.replaceChildren(
+    h("div", { class: "brain-tip-head", text: region.role }),
+    ...(senses.length
+      ? senses.map((s) => h("div", { class: `brain-tip-row brain-tip-row--${s.level}` }, h("span", { text: s.title }), h("span", { text: s.sub })))
+      : [h("div", { class: "brain-tip-row", text: "No sense here yet" })]),
+    senses.some((s) => s.bridge) ? h("div", { class: "brain-tip-hint", text: "Click to open its report card" }) : null,
+  );
+  tip.hidden = false;
+  const stage = tip.parentElement.getBoundingClientRect();
+  tip.style.left = `${Math.min(e.clientX - stage.left + 12, stage.width - tip.offsetWidth - 4)}px`;
+  tip.style.top = `${Math.min(e.clientY - stage.top + 12, stage.height - tip.offsetHeight - 4)}px`;
+}
+
 function renderChips() {
+  renderBrain();
   const list = $("sense-chips");
   const model = currentModel();
   if (!model) {
