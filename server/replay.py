@@ -5,6 +5,8 @@ Public surface (do not rename):
   start(run_id, speed=1.0) -> str                 job id "replay-<12 hex chars>"; plays the record in a worker thread
   get(job_id) -> tuple[JobState, dict] | None     live state of a replay, and {"of": run_id, "recorded", "speed"}
   running() -> bool                               True while a replay is playing
+  cancel(job_id) -> bool                          True when the replay was running and is now asked to stop;
+                                                  False when the id is unknown or the replay had already finished
 
 The replay job's request is the recorded one and it starts "running". Each recorded TraceEvent, unchanged, is
 appended when the time since the replay started reaches event.t / speed: speed 1 plays in real time, 1000 almost
@@ -15,6 +17,14 @@ is added just before the recorded [install] "ok" event, saying the sense was not
 themselves are replayed unchanged. At the end the recorded cards, installed and error are set, and
 then the status flips to the recorded one (as agent/jobs.py does, so a poller that sees the end sees the
 results). If the replay itself fails, it ends "failed" with an [error] event saying why.
+
+A cancelled replay stops at once: the worker checks for a cancel between events and while it waits for the next
+event's time. It then appends a last [error] "fail" event, "The replay was cancelled before it finished." (data
+{"replay": True, "cancelled": True}), sets error "Cancelled." and ends "failed". Cards and installed stay as they
+were, empty and None, since they are only set at the end. A sense already reinstalled at the install step stays
+installed. cancel waits up to CANCEL_WAIT_SECONDS for the worker to stop, which it does at once unless the
+cancel comes while a sense is being reinstalled, so running() is normally False when cancel returns and a new
+replay or agent run can start. A cancel that comes as the replay reaches its end is either applied or reported False.
 
 Only one replay plays at a time: a second start raises RuntimeError("a replay is already in progress").
 server/app.py also keeps replays and live agent runs apart. Replays live in memory only.
@@ -31,10 +41,12 @@ from sense import runs
 from sense.contracts import JobState, ReportCard, TraceEvent
 
 MIN_SPEED, MAX_SPEED = 0.1, 1000.0
+CANCEL_WAIT_SECONDS = 5.0  # how long cancel waits for the worker to stop
 
 _lock = threading.Lock()
 _replays: dict[str, tuple[JobState, dict]] = {}
 _current_id: str | None = None
+_workers: dict[str, tuple[threading.Event, threading.Thread]] = {}  # job id -> (cancel flag, worker) while playing
 
 log = logging.getLogger(__name__)
 
@@ -50,9 +62,12 @@ def start(run_id: str, speed: float = 1.0) -> str:
         job = JobState(id=f"replay-{uuid.uuid4().hex[:12]}", request=request)
         _replays[job.id] = (job, {"of": run_id, "recorded": record.get("recorded"), "speed": speed})
         _current_id = job.id
-    threading.Thread(
-        target=_play, args=(job, run_id, record, events, cards, speed), name=f"replay-{job.id}", daemon=True
-    ).start()
+        stop = threading.Event()
+        worker = threading.Thread(
+            target=_play, args=(job, run_id, record, events, cards, speed, stop), name=f"replay-{job.id}", daemon=True
+        )
+        _workers[job.id] = (stop, worker)
+        worker.start()  # under the lock, so that cancel never joins a worker that has not started
     return job.id
 
 
@@ -64,6 +79,18 @@ def get(job_id: str) -> tuple[JobState, dict] | None:
 def running() -> bool:
     with _lock:
         return _playing()
+
+
+def cancel(job_id: str) -> bool:
+    with _lock:
+        found = _replays.get(job_id)
+        worker = _workers.get(job_id)
+        if found is None or worker is None or found[0].status != "running":
+            return False
+        stop, thread = worker
+        stop.set()
+    thread.join(CANCEL_WAIT_SECONDS)
+    return True
 
 
 def _playing() -> bool:
@@ -85,15 +112,22 @@ def _check_speed(speed: object) -> float:
 
 
 def _play(
-    job: JobState, run_id: str, record: dict, events: list[TraceEvent], cards: list[ReportCard], speed: float
+    job: JobState,
+    run_id: str,
+    record: dict,
+    events: list[TraceEvent],
+    cards: list[ReportCard],
+    speed: float,
+    stop: threading.Event,
 ) -> None:
-    """Worker thread body."""
+    """Worker thread body. Ends the replay early once `stop` is set (see cancel)."""
     t0 = time.monotonic()
     try:
         for event in events:
             delay = event.t / speed - (time.monotonic() - t0)
-            if delay > 0:
-                time.sleep(delay)
+            if stop.wait(max(0.0, delay)):  # returns at once when cancelled
+                _end_cancelled(job, t0, speed)
+                return
             if event.step == "install" and event.status == "ok" and not runs.restore_sense(run_id):
                 job.events.append(TraceEvent(
                     step="install",
@@ -106,10 +140,14 @@ def _play(
                     t=event.t,
                 ))
             job.events.append(event)
-        job.cards = cards
-        job.installed = record.get("installed")
-        job.error = record.get("error")
-        job.status = record["status"]
+        with _lock:  # cancel reads the status under the same lock, so a late cancel is applied here or refused
+            if stop.is_set():
+                _end_cancelled(job, t0, speed)
+                return
+            job.cards = cards
+            job.installed = record.get("installed")
+            job.error = record.get("error")
+            job.status = record["status"]
     except Exception as exc:
         log.exception("The replay of run %s stopped.", run_id)
         detail = f"{type(exc).__name__}: {exc}" if str(exc) else type(exc).__name__
@@ -122,3 +160,18 @@ def _play(
         ))
         job.error = f"Replay stopped: {detail}"
         job.status = "failed"
+    finally:
+        _workers.pop(job.id, None)
+
+
+def _end_cancelled(job: JobState, t0: float, speed: float) -> None:
+    """End a cancelled replay: a last [error] event, then error and status. Cards and installed are left as they are."""
+    job.events.append(TraceEvent(
+        step="error",
+        status="fail",
+        message="The replay was cancelled before it finished.",
+        data={"replay": True, "cancelled": True},
+        t=round((time.monotonic() - t0) * speed, 3),
+    ))
+    job.error = "Cancelled."
+    job.status = "failed"
