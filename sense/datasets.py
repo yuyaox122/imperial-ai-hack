@@ -2,7 +2,8 @@
 
 Public surface (do not rename):
   available_sets() -> list[dict]                 [{"name", "title", "modality", "labels", "n", "origin", "meta"}]:
-                                                 the built-in sets present on disk ("origin": "builtin", "meta": {}),
+                                                 the built-in sets present on disk ("origin": "builtin"; "meta" is {}
+                                                 except for real gtzan, which notes its duplicates),
                                                  then every folder set ("origin": "folder", "meta": LabelledSet.meta)
   load_labelled_set(name) -> LabelledSet         "gtzan" (10 music genres), "esc50" (50 environmental sounds), or
                                                  the name of a folder set built earlier with from_folder
@@ -18,7 +19,11 @@ Public surface (do not rename):
 Built-in sets. Embeddings come from config.data_dir(): esc50_clap.npz, gtzan_clap.npz, audiocaps_text_clap.npz,
 written by the scripts in socket_pilot/ (keys documented in socket_pilot/clap_embed.py, clap_embed_gtzan.py,
 clap_text.py). Splits: esc50 uses its folds (1-3 fit, 4 dev, 5 test); gtzan uses a seeded 60/20/20 split per
-genre, as in socket_pilot/run_music.py. In fake mode both sets are small synthetic ones with separable classes.
+genre, as in socket_pilot/run_music.py, except that a recording GTZAN holds twice stays in one split: its 14
+duplicate recordings (found by file hash and by embedding cosine >= 0.999) go to one split whole, and the one
+filed under two genres (metal.00058 and rock.00016) is left out of every split. meta["left_out"] names it and
+meta["duplicate_groups_kept_in_one_split"] counts the rest. ESC-50 has no duplicates. In fake mode both sets are
+small synthetic ones with separable classes.
 
 Folder sets (from_folder). Each immediate sub-folder of the folder is one label; sub-folders whose name starts
 with "." or "_" (such as __MACOSX) are ignored. The label is the folder name with "_" and "-" read as spaces
@@ -213,8 +218,10 @@ def _real_set(name: str, data_dir: str, sample_dirs: tuple[str, ...]) -> Labelle
     if name == "esc50":
         fold = data["fold"]
         fit_idx, dev_idx, test_idx = (np.where(fold <= 3)[0], np.where(fold == 4)[0], np.where(fold == 5)[0])
+        set_meta: dict = {}
     else:
-        fit_idx, dev_idx, test_idx = _split_per_label(y, len(raw_names), seed=0)
+        fit_idx, dev_idx, test_idx, set_meta = _split_without_duplicates(data["emb"], y, len(raw_names), seed=0)
+        set_meta["left_out"] = [str(data["files"][i]) for i in set_meta.pop("left_out_idx")]
     files = _resolve_files(
         [str(f) for f in data["files"]],
         [raw_names[c] if name == "gtzan" else "" for c in y],
@@ -233,7 +240,37 @@ def _real_set(name: str, data_dir: str, sample_dirs: tuple[str, ...]) -> Labelle
         dev_idx=dev_idx,
         test_idx=test_idx,
         files=files,
+        meta=set_meta,
     )
+
+
+def _split_without_duplicates(
+    emb: np.ndarray, y: np.ndarray, n_labels: int, seed: int
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, dict]:
+    """_split_per_label, but a recording that occurs twice cannot sit in two splits. Clips whose embeddings are
+    near-identical (cosine >= _NEAR_DUPLICATE: the same recording, as from_folder treats it) form a group that goes
+    to one split whole, and a clip near-identical to a clip of another label is left out of every split, since its
+    label is in doubt. With no such clips this returns exactly what _split_per_label returns for the same seed.
+    GTZAN holds 14 duplicate recordings, one of them filed under two genres (metal.00058 and rock.00016)."""
+    unit = _unit_rows(emb)
+    y = np.asarray(y)
+    across = np.triu((unit @ unit.T >= _NEAR_DUPLICATE) & (y[:, None] != y[None, :]), k=1)
+    left_out = sorted({int(i) for pair in zip(*np.nonzero(across)) for i in pair})
+    rng = np.random.default_rng(seed)
+    fit: list[int] = []
+    dev: list[int] = []
+    test: list[int] = []
+    kept_together = 0
+    for c in range(n_labels):
+        members = np.array([i for i in np.where(y == c)[0] if i not in left_out], dtype=np.int64)
+        groups = [[int(members[k]) for k in g] for g in _near_duplicate_groups(unit[members])]
+        kept_together += sum(len(g) > 1 for g in groups)
+        f, d, t = _split_groups(groups, len(members), rng)
+        fit += f
+        dev += d
+        test += t
+    info = {"duplicate_groups_kept_in_one_split": kept_together, "left_out_idx": left_out}
+    return np.array(fit, dtype=np.int64), np.array(dev, dtype=np.int64), np.array(test, dtype=np.int64), info
 
 
 def _split_per_label(y: np.ndarray, n_labels: int, seed: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
