@@ -1,0 +1,337 @@
+{
+  "id": "cbbab20ef0a1",
+  "origin": "cli",
+  "recorded": "2026-11-14T18:40:12+00:00",
+  "request": {
+    "model": "openai-chat",
+    "dataset": "esc50",
+    "modality": "audio",
+    "scope": "open"
+  },
+  "status": "done",
+  "events": [
+    {
+      "step": "inspect",
+      "status": "start",
+      "message": "Loading the base model openai-chat and the labelled set esc50.",
+      "data": {},
+      "t": 0.0
+    },
+    {
+      "step": "inspect",
+      "status": "ok",
+      "message": "OpenAI chat (API) reads text and image natively, but not audio; it is not open-weight, so the vector bridge is unavailable. Environmental sounds (ESC-50): 50 labels, 1200 examples to fit on, 400 held out.",
+      "data": {
+        "model": {
+          "name": "openai-chat",
+          "label": "OpenAI chat (API)",
+          "native": [
+            "text",
+            "image"
+          ],
+          "open_weights": false,
+          "available": true,
+          "note": "Requires OPENAI_API_KEY; text bridges convey audio captions."
+        },
+        "dataset": {
+          "name": "esc50",
+          "title": "Environmental sounds (ESC-50)",
+          "labels": [
+            "dog",
+            "rooster",
+            "pig",
+            "cow",
+            "frog",
+            "cat",
+            "hen",
+            "insects",
+            "sheep",
+            "crow",
+            "rain",
+            "sea waves",
+            "crackling fire",
+            "crickets",
+            "chirping birds",
+            "water drops",
+            "wind",
+            "pouring water",
+            "toilet flush",
+            "thunderstorm",
+            "crying baby",
+            "sneezing",
+            "clapping",
+            "breathing",
+            "coughing",
+            "footsteps",
+            "laughing",
+            "brushing teeth",
+            "snoring",
+            "drinking sipping",
+            "door wood knock",
+            "mouse click",
+            "keyboard typing",
+            "door wood creaks",
+            "can opening",
+            "washing machine",
+            "vacuum cleaner",
+            "clock alarm",
+            "clock tick",
+            "glass breaking",
+            "helicopter",
+            "chainsaw",
+            "siren",
+            "car horn",
+            "engine",
+            "train",
+            "church bells",
+            "airplane",
+            "fireworks",
+            "hand saw"
+          ],
+          "n_fit": 1200,
+          "n_dev": 400,
+          "n_test": 400
+        }
+      },
+      "t": 0.111
+    },
+    {
+      "step": "plan",
+      "status": "start",
+      "message": "Asking the llm planner which bridges to try for open-scope audio.",
+      "data": {},
+      "t": 0.112
+    },
+    {
+      "step": "plan",
+      "status": "ok",
+      "message": "Bridges to try, in order: text.",
+      "data": {
+        "planner": "llm",
+        "kinds": [
+          "text"
+        ]
+      },
+      "t": 1.614
+    },
+    {
+      "step": "fit",
+      "status": "start",
+      "message": "Building the text bridge, which describes each clip with its nearest caption.",
+      "data": {
+        "kind": "text"
+      },
+      "t": 1.614
+    },
+    {
+      "step": "fit",
+      "status": "ok",
+      "message": "Built text:captions in 0.0 s.",
+      "data": {
+        "kind": "text",
+        "bridge": "text:captions",
+        "seconds": 0.01,
+        "layer": null,
+        "dev_accuracy": null
+      },
+      "t": 1.627
+    },
+    {
+      "step": "verify",
+      "status": "start",
+      "message": "Scoring text:captions on held-out Environmental sounds (ESC-50) examples against controls.",
+      "data": {
+        "bridge": "text:captions"
+      },
+      "t": 1.627
+    },
+    {
+      "step": "verify",
+      "status": "ok",
+      "message": "text:captions scored 90.0% on 50 held-out questions (chance 20.0%); controls: swapped input 18.0%, no input 18.0%, nearest-example lookup 100.0%, specialist alone 96.0%.",
+      "data": {
+        "card": {
+          "model": "openai-chat",
+          "modality": "audio",
+          "dataset": "esc50",
+          "scope": "open",
+          "bridge": "text:captions",
+          "kind": "text",
+          "n": 50,
+          "chance": 0.2,
+          "accuracy": 0.9,
+          "controls": {
+            "swapped": 0.18,
+            "no_input": 0.18,
+            "lookup": 1.0,
+            "specialist_alone": 0.96
+          },
+          "verdict": "candidate",
+          "reason": "",
+          "created": "2026-11-14T18:40:12+00:00",
+          "interval": [
+            0.7864,
+            0.9565
+          ]
+        }
+      },
+      "t": 24.686
+    },
+    {
+      "step": "decide",
+      "status": "start",
+      "message": "Asking the llm planner to choose among 1 verified candidates.",
+      "data": {},
+      "t": 24.686
+    },
+    {
+      "step": "decide",
+      "status": "ok",
+      "message": "Install text:captions: accuracy is 0.90 with swapped control 0.18, so it clears the required margin (0.90 >= 0.28). In this open-scope ESC-50 setting, the bridge is strong enough to justify installation, though unseen_classes means we should not claim broad generalisation from closed categories.",
+      "data": {
+        "install": "text:captions",
+        "cards": [
+          {
+            "model": "openai-chat",
+            "modality": "audio",
+            "dataset": "esc50",
+            "scope": "open",
+            "bridge": "text:captions",
+            "kind": "text",
+            "n": 50,
+            "chance": 0.2,
+            "accuracy": 0.9,
+            "controls": {
+              "swapped": 0.18,
+              "no_input": 0.18,
+              "lookup": 1.0,
+              "specialist_alone": 0.96
+            },
+            "verdict": "installed",
+            "reason": "Install text:captions: accuracy is 0.90 with swapped control 0.18, so it clears the required margin (0.90 >= 0.28). In this open-scope ESC-50 setting, the bridge is strong enough to justify installation, though unseen_classes means we should not claim broad generalisation from closed categories.",
+            "created": "2026-11-14T18:40:12+00:00",
+            "interval": [
+              0.7864,
+              0.9565
+            ]
+          }
+        ]
+      },
+      "t": 25.774
+    },
+    {
+      "step": "install",
+      "status": "start",
+      "message": "Installing text:captions for OpenAI chat (API).",
+      "data": {
+        "bridge": "text:captions",
+        "replaced": null
+      },
+      "t": 25.774
+    },
+    {
+      "step": "install",
+      "status": "ok",
+      "message": "Installed text:captions; OpenAI chat (API) can now take audio input in chat.",
+      "data": {
+        "bridge": "text:captions",
+        "replaced": null
+      },
+      "t": 25.775
+    },
+    {
+      "step": "done",
+      "status": "ok",
+      "message": "OpenAI chat (API) can now take audio input through text:captions: it scored 90.0% on 50 held-out questions, against 20.0% chance.",
+      "data": {
+        "installed": "text:captions"
+      },
+      "t": 25.775
+    }
+  ],
+  "cards": [
+    {
+      "model": "openai-chat",
+      "modality": "audio",
+      "dataset": "esc50",
+      "scope": "open",
+      "bridge": "text:captions",
+      "kind": "text",
+      "n": 50,
+      "chance": 0.2,
+      "accuracy": 0.9,
+      "controls": {
+        "swapped": 0.18,
+        "no_input": 0.18,
+        "lookup": 1.0,
+        "specialist_alone": 0.96
+      },
+      "verdict": "installed",
+      "reason": "Install text:captions: accuracy is 0.90 with swapped control 0.18, so it clears the required margin (0.90 >= 0.28). In this open-scope ESC-50 setting, the bridge is strong enough to justify installation, though unseen_classes means we should not claim broad generalisation from closed categories.",
+      "created": "2026-11-14T18:40:12+00:00",
+      "interval": [
+        0.7864,
+        0.9565
+      ]
+    }
+  ],
+  "installed": "text:captions",
+  "error": null,
+  "seconds": 25.8,
+  "machine": {
+    "platform": "macOS-27.0-arm64-arm-64bit",
+    "python": "3.12.12",
+    "machine": "arm64"
+  },
+  "api_model": "gpt-5.4-mini",
+  "api_usage_run": {
+    "calls": 150,
+    "cache_hits": 0,
+    "prompt_tokens": 12275,
+    "completion_tokens": 600
+  },
+  "api_usage_total": {
+    "calls": 155,
+    "cache_hits": 0,
+    "prompt_tokens": 12536,
+    "completion_tokens": 692
+  },
+  "chats": [
+    {
+      "file": "5-203128-A-0.wav",
+      "label": "dog",
+      "detail": "nearest caption: \"Dog barking and growling then a second dog barking in a higher pitch at the same time\" (cosine 0.78)",
+      "reply": "I can hear dogs barking and growling, with a second dog barking at a higher pitch at the same time.",
+      "seconds": 0.76
+    },
+    {
+      "file": "5-194930-A-1.wav",
+      "label": "rooster",
+      "detail": "nearest caption: \"A rooster crows and chickens back\" (cosine 0.64)",
+      "reply": "I can hear a rooster crowing, followed by chickens clucking in response.",
+      "seconds": 0.67
+    },
+    {
+      "file": "5-151085-A-20.wav",
+      "label": "crying baby",
+      "detail": "nearest caption: \"A baby cries and cries until it is sobbing\" (cosine 0.66)",
+      "reply": "I can hear a baby crying intensely, escalating into sobbing.",
+      "seconds": 0.68
+    },
+    {
+      "file": "5-170338-A-41.wav",
+      "label": "chainsaw",
+      "detail": "nearest caption: \"A motorcycle engine revving up\" (cosine 0.64)",
+      "reply": "You can hear a motorcycle engine revving up.",
+      "seconds": 0.61
+    },
+    {
+      "file": "5-179294-A-46.wav",
+      "label": "church bells",
+      "detail": "nearest caption: \"Church bells tolling with people speaking in the background\" (cosine 0.66)",
+      "reply": "I can hear church bells tolling, with people speaking in the background.",
+      "seconds": 0.59
+    }
+  ],
+  "note": "Recorded with a one-off script (agent.loop.run_fit, then OpenAIChatModel.chat on five held-out clips through the installed sense), not with demo_cli. The api_usage counts exclude the LLM planner's two calls."
+}

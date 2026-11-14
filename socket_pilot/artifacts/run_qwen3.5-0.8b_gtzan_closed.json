@@ -1,0 +1,368 @@
+{
+  "id": "cbffdb320d61",
+  "origin": "cli",
+  "recorded": "2026-11-14T18:59:27+00:00",
+  "request": {
+    "model": "qwen3.5-0.8b",
+    "dataset": "gtzan",
+    "modality": "audio",
+    "scope": "closed"
+  },
+  "status": "done",
+  "events": [
+    {
+      "step": "inspect",
+      "status": "start",
+      "message": "Loading the base model qwen3.5-0.8b and the labelled set gtzan.",
+      "data": {},
+      "t": 0.0
+    },
+    {
+      "step": "inspect",
+      "status": "ok",
+      "message": "Qwen3.5 0.8B (local) reads text and image natively, but not audio; it is open-weight. Music genres (GTZAN): 10 labels, 597 examples to fit on, 200 held out.",
+      "data": {
+        "model": {
+          "name": "qwen3.5-0.8b",
+          "label": "Qwen3.5 0.8B (local)",
+          "native": [
+            "text",
+            "image"
+          ],
+          "open_weights": true,
+          "available": true,
+          "note": ""
+        },
+        "dataset": {
+          "name": "gtzan",
+          "title": "Music genres (GTZAN)",
+          "labels": [
+            "blues",
+            "classical",
+            "country",
+            "disco",
+            "hip hop",
+            "jazz",
+            "metal",
+            "pop",
+            "reggae",
+            "rock"
+          ],
+          "n_fit": 597,
+          "n_dev": 200,
+          "n_test": 200
+        }
+      },
+      "t": 2.8
+    },
+    {
+      "step": "plan",
+      "status": "start",
+      "message": "Asking the llm planner which bridges to try for closed-scope audio.",
+      "data": {},
+      "t": 2.801
+    },
+    {
+      "step": "plan",
+      "status": "ok",
+      "message": "Bridges to try, in order: vector, text.",
+      "data": {
+        "planner": "llm",
+        "kinds": [
+          "vector",
+          "text"
+        ]
+      },
+      "t": 3.985
+    },
+    {
+      "step": "fit",
+      "status": "start",
+      "message": "Fitting the vector bridge on 597 labelled examples of Music genres (GTZAN).",
+      "data": {
+        "kind": "vector"
+      },
+      "t": 3.985
+    },
+    {
+      "step": "fit",
+      "status": "ok",
+      "message": "Built vector:gtzan in 23.2 s. It writes after block 0, chosen on dev questions (block 0: 79.5%, block 1: 79.5%, block 2: 77.5%, block 3: 57.0%, block 4: 50.5%).",
+      "data": {
+        "kind": "vector",
+        "bridge": "vector:gtzan",
+        "seconds": 23.2,
+        "layer": 0,
+        "dev_accuracy": {
+          "0": 0.795,
+          "1": 0.795,
+          "2": 0.775,
+          "3": 0.57,
+          "4": 0.505
+        }
+      },
+      "t": 27.188
+    },
+    {
+      "step": "fit",
+      "status": "start",
+      "message": "Building the text bridge, which names the closest of the 10 labels.",
+      "data": {
+        "kind": "text"
+      },
+      "t": 27.189
+    },
+    {
+      "step": "fit",
+      "status": "ok",
+      "message": "Built text:gtzan in 0.0 s.",
+      "data": {
+        "kind": "text",
+        "bridge": "text:gtzan",
+        "seconds": 0.0,
+        "layer": null,
+        "dev_accuracy": null
+      },
+      "t": 27.189
+    },
+    {
+      "step": "verify",
+      "status": "start",
+      "message": "Scoring vector:gtzan on held-out Music genres (GTZAN) examples against controls, including text:gtzan.",
+      "data": {
+        "bridge": "vector:gtzan"
+      },
+      "t": 27.189
+    },
+    {
+      "step": "verify",
+      "status": "ok",
+      "message": "vector:gtzan scored 79.5% on 200 held-out questions (chance 20.0%); controls: swapped input 12.5%, no input 22.0%, nearest-example lookup 84.5%, specialist alone 53.5%, text bridge 47.5%.",
+      "data": {
+        "card": {
+          "model": "qwen3.5-0.8b",
+          "modality": "audio",
+          "dataset": "gtzan",
+          "scope": "closed",
+          "bridge": "vector:gtzan",
+          "kind": "vector",
+          "n": 200,
+          "chance": 0.2,
+          "accuracy": 0.795,
+          "controls": {
+            "swapped": 0.125,
+            "no_input": 0.22,
+            "lookup": 0.845,
+            "specialist_alone": 0.535,
+            "text_bridge": 0.475
+          },
+          "verdict": "candidate",
+          "reason": "",
+          "created": "2026-11-14T19:00:10+00:00",
+          "interval": [
+            0.7337,
+            0.8451
+          ]
+        }
+      },
+      "t": 43.05
+    },
+    {
+      "step": "verify",
+      "status": "start",
+      "message": "Scoring text:gtzan on held-out Music genres (GTZAN) examples against controls.",
+      "data": {
+        "bridge": "text:gtzan"
+      },
+      "t": 43.05
+    },
+    {
+      "step": "verify",
+      "status": "ok",
+      "message": "text:gtzan scored 47.5% on 200 held-out questions (chance 20.0%); controls: swapped input 20.0%, no input 22.0%, nearest-example lookup 84.5%, specialist alone 53.5%.",
+      "data": {
+        "card": {
+          "model": "qwen3.5-0.8b",
+          "modality": "audio",
+          "dataset": "gtzan",
+          "scope": "closed",
+          "bridge": "text:gtzan",
+          "kind": "text",
+          "n": 200,
+          "chance": 0.2,
+          "accuracy": 0.475,
+          "controls": {
+            "swapped": 0.2,
+            "no_input": 0.22,
+            "lookup": 0.845,
+            "specialist_alone": 0.535
+          },
+          "verdict": "candidate",
+          "reason": "",
+          "created": "2026-11-14T19:00:21+00:00",
+          "interval": [
+            0.4069,
+            0.544
+          ]
+        }
+      },
+      "t": 54.534
+    },
+    {
+      "step": "decide",
+      "status": "start",
+      "message": "Asking the llm planner to choose among 2 verified candidates.",
+      "data": {},
+      "t": 54.534
+    },
+    {
+      "step": "decide",
+      "status": "ok",
+      "message": "Install vector:gtzan: its accuracy is 79.5% with swapped control at 12.5%, so it clears the required margin (79.5% > 22.5%) and is the stronger verified bridge. The text:gtzan candidate is only 47.5% accuracy with 20.0% swapped control, which is below the required accuracy > swapped + 0.10 threshold.",
+      "data": {
+        "install": "vector:gtzan",
+        "cards": [
+          {
+            "model": "qwen3.5-0.8b",
+            "modality": "audio",
+            "dataset": "gtzan",
+            "scope": "closed",
+            "bridge": "vector:gtzan",
+            "kind": "vector",
+            "n": 200,
+            "chance": 0.2,
+            "accuracy": 0.795,
+            "controls": {
+              "swapped": 0.125,
+              "no_input": 0.22,
+              "lookup": 0.845,
+              "specialist_alone": 0.535,
+              "text_bridge": 0.475
+            },
+            "verdict": "installed",
+            "reason": "Install vector:gtzan: its accuracy is 79.5% with swapped control at 12.5%, so it clears the required margin (79.5% > 22.5%) and is the stronger verified bridge. The text:gtzan candidate is only 47.5% accuracy with 20.0% swapped control, which is below the required accuracy > swapped + 0.10 threshold.",
+            "created": "2026-11-14T19:00:10+00:00",
+            "interval": [
+              0.7337,
+              0.8451
+            ]
+          },
+          {
+            "model": "qwen3.5-0.8b",
+            "modality": "audio",
+            "dataset": "gtzan",
+            "scope": "closed",
+            "bridge": "text:gtzan",
+            "kind": "text",
+            "n": 200,
+            "chance": 0.2,
+            "accuracy": 0.475,
+            "controls": {
+              "swapped": 0.2,
+              "no_input": 0.22,
+              "lookup": 0.845,
+              "specialist_alone": 0.535
+            },
+            "verdict": "rejected",
+            "reason": "text:gtzan scored 47.5% on 200 held-out questions (chance 20.0%); controls: swapped input 20.0%, no input 22.0%, nearest-example lookup 84.5%, specialist alone 53.5%. vector:gtzan was installed instead: Install vector:gtzan: its accuracy is 79.5% with swapped control at 12.5%, so it clears the required margin (79.5% > 22.5%) and is the stronger verified bridge. The text:gtzan candidate is only 47.5% accuracy with 20.0% swapped control, which is below the required accuracy > swapped + 0.10 threshold.",
+            "created": "2026-11-14T19:00:21+00:00",
+            "interval": [
+              0.4069,
+              0.544
+            ]
+          }
+        ]
+      },
+      "t": 56.028
+    },
+    {
+      "step": "install",
+      "status": "start",
+      "message": "Installing vector:gtzan for Qwen3.5 0.8B (local), replacing the earlier vector:gtzan-folder sense (77.0% on gtzan-folder, closed scope).",
+      "data": {
+        "bridge": "vector:gtzan",
+        "replaced": "vector:gtzan-folder"
+      },
+      "t": 56.028
+    },
+    {
+      "step": "install",
+      "status": "ok",
+      "message": "Installed vector:gtzan; Qwen3.5 0.8B (local) can now take audio input in chat.",
+      "data": {
+        "bridge": "vector:gtzan",
+        "replaced": "vector:gtzan-folder"
+      },
+      "t": 56.034
+    },
+    {
+      "step": "done",
+      "status": "ok",
+      "message": "Qwen3.5 0.8B (local) can now take audio input through vector:gtzan: it scored 79.5% on 200 held-out questions, against 20.0% chance. This sense covers the 10 categories of Music genres (GTZAN) only; a clip outside them will be given the nearest of those labels. It replaced the earlier vector:gtzan-folder sense (77.0% on gtzan-folder, closed scope).",
+      "data": {
+        "installed": "vector:gtzan",
+        "replaced": "vector:gtzan-folder"
+      },
+      "t": 56.034
+    }
+  ],
+  "cards": [
+    {
+      "model": "qwen3.5-0.8b",
+      "modality": "audio",
+      "dataset": "gtzan",
+      "scope": "closed",
+      "bridge": "vector:gtzan",
+      "kind": "vector",
+      "n": 200,
+      "chance": 0.2,
+      "accuracy": 0.795,
+      "controls": {
+        "swapped": 0.125,
+        "no_input": 0.22,
+        "lookup": 0.845,
+        "specialist_alone": 0.535,
+        "text_bridge": 0.475
+      },
+      "verdict": "installed",
+      "reason": "Install vector:gtzan: its accuracy is 79.5% with swapped control at 12.5%, so it clears the required margin (79.5% > 22.5%) and is the stronger verified bridge. The text:gtzan candidate is only 47.5% accuracy with 20.0% swapped control, which is below the required accuracy > swapped + 0.10 threshold.",
+      "created": "2026-11-14T19:00:10+00:00",
+      "interval": [
+        0.7337,
+        0.8451
+      ]
+    },
+    {
+      "model": "qwen3.5-0.8b",
+      "modality": "audio",
+      "dataset": "gtzan",
+      "scope": "closed",
+      "bridge": "text:gtzan",
+      "kind": "text",
+      "n": 200,
+      "chance": 0.2,
+      "accuracy": 0.475,
+      "controls": {
+        "swapped": 0.2,
+        "no_input": 0.22,
+        "lookup": 0.845,
+        "specialist_alone": 0.535
+      },
+      "verdict": "rejected",
+      "reason": "text:gtzan scored 47.5% on 200 held-out questions (chance 20.0%); controls: swapped input 20.0%, no input 22.0%, nearest-example lookup 84.5%, specialist alone 53.5%. vector:gtzan was installed instead: Install vector:gtzan: its accuracy is 79.5% with swapped control at 12.5%, so it clears the required margin (79.5% > 22.5%) and is the stronger verified bridge. The text:gtzan candidate is only 47.5% accuracy with 20.0% swapped control, which is below the required accuracy > swapped + 0.10 threshold.",
+      "created": "2026-11-14T19:00:21+00:00",
+      "interval": [
+        0.4069,
+        0.544
+      ]
+    }
+  ],
+  "installed": "vector:gtzan",
+  "error": null,
+  "seconds": 56.03,
+  "machine": {
+    "platform": "macOS-27.0-arm64-arm-64bit",
+    "python": "3.12.12",
+    "machine": "arm64"
+  }
+}
