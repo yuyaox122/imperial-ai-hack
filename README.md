@@ -123,5 +123,7 @@ A run names the sense it affects. When it installs a bridge for a model that alr
 | `scripts/demo_cli.py` | the agent from the command line |
 | `tests/` | fake-mode tests, including one end to end through the API |
 | `socket_pilot/` | research scripts and results |
+| `docs/plan.md` | the project plan the team approved |
+| `design/` | interface mockup and board diagrams |
 
 The team coordinates on the pinned board issue with `tools/board`; see [AGENTS.md](AGENTS.md).
