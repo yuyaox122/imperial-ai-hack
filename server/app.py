@@ -36,11 +36,13 @@ All JSON. Errors: {"detail": "<what went wrong and what to do>"} with a 4xx or 5
   DELETE /api/jobs/<job_id>
        -> {"cancelled": bool}                       stops a replay or a live agent run: true when it was running
                                                     and is now asked to stop, false when it had already finished.
-                                                    A cancelled replay stops at once and ends "failed" with error
-                                                    "Cancelled." and a last [error] event (data "cancelled": true);
-                                                    a sense it already reinstalled stays installed. A live agent
-                                                    run stops at its next trace event (agent.jobs.cancel) and is
-                                                    still recorded under <SENSE_HOME>/runs when it ends.
+                                                    A cancelled replay stops at once (unless it is reinstalling a
+                                                    sense: then once that ends; DELETE waits up to 5 s for it, so the
+                                                    replay may still be running when DELETE answers true), and ends
+                                                    "failed" with error "Cancelled." and a last [error] event (data
+                                                    "cancelled": true); a sense it already reinstalled stays installed.
+                                                    A live agent run stops at its next trace event (agent.jobs.cancel)
+                                                    and is still recorded under <SENSE_HOME>/runs when it ends.
                                                     400 for an unknown job; 409 for a running agent run while
                                                     agent.jobs cannot cancel one yet
   GET  /api/runs
