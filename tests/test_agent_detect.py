@@ -47,3 +47,62 @@ def test_unreadable_input_is_a_clear_error(tmp_path, make):
         p.write_bytes(b"")
     with pytest.raises(ValueError, match="x.wav"):
         detect(p)
+
+
+# ----------------------------------------------------------------------------- fix round 1
+@pytest.mark.parametrize("codec,bom", [("utf-16-le", b"\xff\xfe"), ("utf-16-be", b"\xfe\xff")])
+def test_utf16_text_with_a_byte_order_mark_is_text(tmp_path, codec, bom):
+    p = tmp_path / "notes.txt"
+    p.write_bytes(bom + "hello world\nsecond line\n".encode(codec))
+    d = detect(p)
+    assert (d.modality, d.format, d.how) == ("text", "text", "content") and "UTF-16" in d.detail
+
+
+def test_utf16le_csv_is_csv(tmp_path):
+    p = tmp_path / "walk.csv"
+    p.write_bytes(b"\xff\xfe" + "t,ax,ay,az\n0,0.1,0.2,9.8\n".encode("utf-16-le"))
+    assert (detect(p).modality, detect(p).format) == ("other", "csv")
+
+
+def test_a_note_starting_with_the_letters_id3_is_text(tmp_path):
+    p = tmp_path / "note.txt"
+    p.write_bytes(b"ID3 tags are stored at the start of an MP3 file.\n")
+    assert (detect(p).modality, detect(p).format) == ("text", "text")
+
+
+def test_ff_fe_followed_by_bytes_that_are_not_utf16_text_is_not_mp3(tmp_path):
+    p = tmp_path / "blob.bin"
+    p.write_bytes(b"\xff\xfe\x00\xdc\x00\xdc\x12\x34")  # lone low surrogates: not valid UTF-16
+    d = detect(p)
+    assert d.format != "mp3" and (d.modality, d.format) == ("other", "unknown")
+
+
+def test_aac_adts_sync_is_not_reported_as_mp3(tmp_path):
+    p = tmp_path / "a.aac"
+    p.write_bytes(b"\xff\xf1\x50\x80\x02\x1f\xfc")
+    assert detect(p).format != "mp3"
+
+
+@pytest.mark.parametrize("second", [0xFB, 0xFA, 0xF3, 0xF2, 0xE3])
+def test_every_layer3_frame_sync_is_mp3(tmp_path, second):
+    p = tmp_path / "song.bin"
+    p.write_bytes(bytes([0xFF, second, 0x90, 0x64]))
+    assert detect(p).format == "mp3"
+
+
+def test_fasta_with_a_utf8_byte_order_mark_is_fasta(tmp_path):
+    p = tmp_path / "gene.fasta"
+    p.write_bytes(b"\xef\xbb\xbf>seq1\nACGTACGT\n")
+    assert detect(p).format == "fasta"
+
+
+def test_a_short_file_ending_in_a_cut_off_character_is_unknown(tmp_path):
+    p = tmp_path / "one.bin"
+    p.write_bytes(b"\xc3")
+    assert (detect(p).modality, detect(p).format) == ("other", "unknown")
+
+
+def test_a_character_cut_off_by_the_read_window_is_still_text(tmp_path):
+    p = tmp_path / "long.txt"
+    p.write_bytes(("é" * 3000).encode())  # byte 4,096 falls inside a two-byte character
+    assert detect(p).format == "text"
