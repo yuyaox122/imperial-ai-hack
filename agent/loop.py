@@ -36,6 +36,7 @@ _CONTROL_NAMES = {
     "swapped": "swapped input",
     "no_input": "no input",
     "lookup": "nearest-example lookup",
+    "specialist_alone": "specialist alone",
     "text_bridge": "text bridge",
     "unseen_classes": "unseen classes",
 }
@@ -87,7 +88,13 @@ def run_fit(
         planner = planner or get_planner()
         say("start", f"Asking the {planner.name} planner which bridges to try for {request.scope}-scope {request.modality}.")
         kinds = list(planner.plan(request, info, dataset))
-        say("ok", f"Bridges to try, in order: {', '.join(kinds) or 'none'}.", planner=planner.name, kinds=kinds)
+        # Every bridge this model can take is verified, whatever the planner proposes: the text bridge is the
+        # fallback and a control, and a refused vector bridge must be refused with numbers, not skipped.
+        required = (["vector"] if info.open_weights else []) + ["text"]
+        added = [kind for kind in required if kind not in kinds]
+        kinds += added
+        note = f" The planner proposed {', '.join(kinds[: len(kinds) - len(added)]) or 'none'}; {', '.join(added)} added so every available bridge is verified." if added else ""
+        say("ok", f"Bridges to try, in order: {', '.join(kinds) or 'none'}.{note}", planner=planner.name, kinds=kinds)
 
         # [fit]
         step = "fit"
@@ -172,6 +179,11 @@ def run_fit(
                 f"{info.label} can now take {request.modality} input through {chosen.bridge}: it scored "
                 f"{pct(chosen.accuracy)} on {chosen.n} held-out questions, against {pct(chosen.chance)} chance."
             )
+            if chosen.kind == "vector" and request.scope == "closed":
+                summary += (
+                    f" This sense covers the {len(dataset.labels)} categories of {dataset.title} only; "
+                    "a clip outside them will be given the nearest of those labels."
+                )
             if earlier is not None:
                 summary += f" It replaced the earlier {earlier[1]}."
         outcome = {}

@@ -8,8 +8,8 @@ Public surface (do not rename):
 RulePlanner.plan: ["vector", "text"] for an open-weight model, ["text"] otherwise.
 RulePlanner.decide, over the verified candidate cards:
   - a vector card is acceptable when accuracy >= swapped + 0.25 and accuracy >= chance + 0.25, and, for
-    scope "open", when controls["unseen_classes"] >= chance + 0.25 as well
-  - a text card is acceptable when accuracy >= chance + 0.15
+    scope "open", when controls["unseen_classes"] >= chance + 0.25 and is within 0.20 of the accuracy
+  - a text card is acceptable when accuracy >= chance + 0.15 and accuracy >= swapped + 0.10
   - install the acceptable card with the highest accuracy, preferring vector when within 0.03 of the best;
     if none is acceptable install nothing
   - the reason names the numbers that decided it, in one or two plain sentences
@@ -22,10 +22,13 @@ from __future__ import annotations
 import logging
 from typing import Callable
 
+from sense import config
 from sense.contracts import BridgeKind, Decision, FitRequest, LabelledSet, ModelInfo, Planner, ReportCard
 
 VECTOR_MARGIN = 0.25  # a vector bridge must beat chance and swapped input by this much
 TEXT_MARGIN = 0.15  # a text bridge must beat chance by this much
+TEXT_SWAPPED_MARGIN = 0.10  # and swapped input by this much, or it is not using the input
+OPEN_DROP = 0.20  # for open scope, accuracy on unseen classes may trail fitted classes by at most this much
 PREFER_VECTOR_WITHIN = 0.03  # install the vector bridge when it is this close to the best acceptable card
 _EPS = 1e-9  # accuracies sitting exactly on a bar pass it
 
@@ -54,6 +57,11 @@ class RulePlanner:
             return self._check_vector(request, card)
         if card.kind == "text":
             bar = card.chance + TEXT_MARGIN
+            swapped = card.controls.get("swapped")
+            if swapped is not None and card.accuracy + _EPS < swapped + TEXT_SWAPPED_MARGIN:
+                return False, (
+                    f"its {pct(card.accuracy)} is not 10 points above the {pct(swapped)} it scored with swapped input"
+                )
             if card.accuracy + _EPS >= bar:
                 return True, (
                     f"it scored {pct(card.accuracy)} against {pct(card.chance)} chance, "
@@ -86,6 +94,11 @@ class RulePlanner:
             elif unseen + _EPS < bar:
                 problems.append(
                     f"it scored only {pct(unseen)} on classes it was not fitted on, below the {pct(bar)} bar"
+                )
+            elif unseen + _EPS < card.accuracy - OPEN_DROP:
+                problems.append(
+                    f"it scored {pct(unseen)} on classes it was not fitted on, more than 20 points below its "
+                    f"{pct(card.accuracy)} on fitted classes, so it does not hold up on new kinds of input"
                 )
         if problems:
             return False, "; ".join(problems)
@@ -139,7 +152,8 @@ def register_planner(name: str, factory: Callable[[], Planner], preferred: bool 
 def get_planner(name: str | None = None) -> Planner:
     """The planner registered as `name`; with no name, the preferred planner, else RulePlanner."""
     if name is None:
-        name = _preferred or RulePlanner.name
+        # In fake mode the default is always the rule planner, so tests and the fake dev server never call an API.
+        name = RulePlanner.name if config.fake() else (_preferred or RulePlanner.name)
     if name not in _factories:
         raise ValueError(f"No planner is registered as {name!r}. Registered planners: {', '.join(sorted(_factories))}.")
     return _factories[name]()

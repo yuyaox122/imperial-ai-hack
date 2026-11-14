@@ -55,6 +55,7 @@ def verify(
         "no_input": score([[] for _ in test]),
         "lookup": _lookup(dataset, test, options),
     }
+    controls["specialist_alone"] = _specialist_alone(dataset, test, options, answers)
     if text_bridge is not None:
         controls["text_bridge"] = score([[text_bridge.from_embedding(dataset.emb[i], _source(dataset, i))] for i in test])
     if request.scope == "open" and bridge.kind == "vector":
@@ -73,7 +74,26 @@ def verify(
         verdict="candidate",
         reason="",
         created=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        interval=_wilson(accuracy, len(test)),
     )
+
+
+def _wilson(p: float, n: int, z: float = 1.96) -> list[float]:
+    """95% Wilson score interval for a proportion; unlike a bootstrap it has width at 0% and 100%."""
+    centre = (p + z * z / (2 * n)) / (1 + z * z / n)
+    half = z * np.sqrt(p * (1 - p) / n + z * z / (4 * n * n)) / (1 + z * z / n)
+    return [round(float(max(0.0, centre - half)), 4), round(float(min(1.0, centre + half)), 4)]
+
+
+def _specialist_alone(dataset: LabelledSet, test: np.ndarray, options: list[list[int]], answers: np.ndarray) -> float:
+    """The specialist answers the same questions with no base model: the option whose label text is closest
+    to the example in the specialist's own space. Shows what the base model adds, or does not."""
+    emb = dataset.emb[test].astype(np.float64)
+    text = dataset.label_text_emb.astype(np.float64)
+    emb /= np.linalg.norm(emb, axis=1, keepdims=True) + 1e-12
+    text /= np.linalg.norm(text, axis=1, keepdims=True) + 1e-12
+    picks = [int(np.argmax(emb[k] @ text[opts].T)) for k, opts in enumerate(options)]
+    return round(float((np.array(picks) == answers).mean()), 4)
 
 
 def _subsample(idx: np.ndarray, max_items: int, rng: np.random.Generator) -> np.ndarray:

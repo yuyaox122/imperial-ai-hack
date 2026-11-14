@@ -133,10 +133,11 @@ class ReportCard:
     n: int  # held-out items scored
     chance: float  # e.g. 0.2 for five options
     accuracy: float  # of this bridge
-    controls: dict[str, float]  # "swapped", "no_input", "lookup", "text_bridge", and "unseen_classes" for scope "open"
+    controls: dict[str, float]  # "swapped", "no_input", "lookup", "specialist_alone", "text_bridge", and "unseen_classes" for scope "open"
     verdict: Literal["installed", "rejected", "candidate"] = "candidate"
     reason: str = ""
     created: str = ""  # ISO 8601
+    interval: list[float] | None = None  # 95% Wilson interval for `accuracy`, [low, high]
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

@@ -36,6 +36,7 @@ def api(monkeypatch):
     rules = SimpleNamespace(
         plan=Mock(return_value=["text"]),
         decide=Mock(return_value=Decision("text:captions", "Rule result: 70% accuracy vs 20% swapped.")),
+        assess=Mock(side_effect=agent.planner.RulePlanner().assess),  # the real shared acceptance gate
     )
     monkeypatch.setattr(module, "RulePlanner", lambda: rules)
     yield SimpleNamespace(module=module, client=client, factory=factory, rules=rules, registration=registration)
@@ -196,13 +197,34 @@ def test_floor_cannot_be_overridden_by_llm_or_rules(api, request_data, cards):
     api.rules.decide.assert_called_once_with(request_data, [cards[1]])
 
 
-def test_floor_is_inclusive_at_exact_ten_points(api, request_data, cards):
+def test_vector_below_the_shared_gate_is_not_installed(api, request_data, cards):
+    """Ten points over swapped clears the floor but not the rule planner's 25-point vector margin."""
     cards[0].accuracy = .3
     api.client.chat.completions.create.return_value = completion({
         "install": "vector:sounds", "reason": "Vector accuracy is 30% against 20% swapped.",
     })
-    assert api.module.LLMPlanner().decide(request_data, cards).install == "vector:sounds"
+    assert api.module.LLMPlanner().decide(request_data, cards).install == "text:captions"
+    api.rules.decide.assert_called_once()
+
+
+def test_text_gate_is_inclusive_at_the_bar(api, request_data, cards):
+    cards[1].accuracy = .35  # chance .20 + .15, and above swapped .20 + .10
+    api.client.chat.completions.create.return_value = completion({
+        "install": "text:captions", "reason": "Text accuracy is 35% against 20% swapped.",
+    })
+    assert api.module.LLMPlanner().decide(request_data, cards).install == "text:captions"
     api.rules.decide.assert_not_called()
+
+
+def test_open_scope_vector_needs_unseen_classes(api, cards):
+    """For open scope the model may not install a vector bridge that fails on classes it was not fitted on."""
+    request = FitRequest("open-model", "sounds", scope="open")
+    cards[0].controls["unseen_classes"] = .21
+    api.client.chat.completions.create.return_value = completion({
+        "install": "vector:sounds", "reason": "Vector scored 85% accuracy against 20% swapped input.",
+    })
+    assert api.module.LLMPlanner().decide(request, cards).install == "text:captions"
+    api.rules.decide.assert_called_once()
 
 
 @pytest.mark.parametrize("swapped", [None, float("nan"), float("inf"), -.1, 1.1])

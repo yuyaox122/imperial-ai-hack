@@ -30,7 +30,7 @@ from sense.contracts import BaseModel, Bridge, ChoiceItem, LabelledSet, OpenMode
 
 LAMBDAS = [1e-2, 1e-1, 1.0, 10.0, 1e2, 1e3, 1e4, 1e5, 1e6]
 LAYER_CANDIDATES = range(5)  # blocks 0-4: Qwen3.5 reads the slots up to about block 4
-DEV_ITEMS = 100
+DEV_ITEMS = 200  # 100 was too noisy to separate blocks 0-2
 
 
 # ----------------------------------------------------------------------------- shared helpers
@@ -138,7 +138,10 @@ class VectorBridge:
             source=source,
             vector=vec,
             layer=self.layer,
-            detail=f'closest fitted label: "{self.labels[best]}" (cosine {sims[best]:.2f})',
+            detail=(
+                f'closest fitted label: "{self.labels[best]}" (cosine {sims[best]:.2f}); '
+                f"this sense covers its {len(self.labels)} fitted categories only"
+            ),
         )
 
     def prepare(self, path: Path) -> SenseInput:

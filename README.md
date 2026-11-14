@@ -54,28 +54,32 @@ Settings can also go in `.env` or `.env.local` (`KEY=VALUE` lines) in the reposi
 | `SENSE_QWEN_0P8B`, `SENSE_QWEN_2B` | Hugging Face id or local directory | `Qwen/Qwen3.5-0.8B`, `Qwen/Qwen3.5-2B` |
 | `SENSE_CLAP` | Hugging Face id or local directory | `laion/clap-htsat-unfused` |
 | `SENSE_SAMPLE_DIRS` | `:`-separated directories of raw audio | none |
-| `OPENAI_API_KEY` | reserved for an LLM planner and API models; nothing uses it yet | none |
+| `OPENAI_API_KEY` | enables the LLM planner (`SENSE_LLM_MODEL`, default `gpt-5.4-mini`) and the `openai-chat` API base model; never used in fake mode | none |
 
 Only one model process should run at a time on a 24 GB laptop. Loading a second local model through the harness releases the first.
 
 ## What works today
 
-Measured on 14 November 2026 on an M4 Pro with 24 GB, Qwen3.5-0.8B in float16 on MPS, through `scripts/demo_cli.py` and the HTTP server. Each card scores 200 held-out five-option questions (chance 20%). The rule planner installs a vector bridge when it beats chance and swapped input by 25 points each (and, for open scope, scores at least 45% on classes left out of fitting), and a text bridge when it beats chance by 15 points. It prefers the vector bridge when the two are within 3 points.
+Measured on 14 November 2026 on an M4 Pro with 24 GB, Qwen3.5-0.8B in float16 on MPS, through `scripts/demo_cli.py` and the HTTP server. Each card scores 200 held-out five-option questions (chance 20%) and carries a 95% Wilson interval for its accuracy.
 
-| Run | Candidate | Accuracy | Swapped input | No input | Nearest-example lookup | Text bridge | Unseen classes | Verdict |
-|---|---|---|---|---|---|---|---|---|
-| GTZAN, closed | `vector:gtzan` | 79.5% | 12.5% | 22.0% | 84.5% | 48.5% | | installed |
-| GTZAN, closed | `text:gtzan` | 48.5% | 20.0% | 22.0% | 84.5% | | | passed, not chosen |
-| GTZAN, open | `vector:gtzan` | 79.5% | 12.5% | 22.0% | 84.5% | 35.5% | 12.5% | rejected |
-| GTZAN, open | `text:captions` | 35.5% | 19.5% | 22.0% | 84.5% | | | installed |
-| ESC-50, open | `vector:esc50` | 97.0% | 17.5% | 21.0% | 99.5% | 80.5% | 41.2% | rejected |
-| ESC-50, open | `text:captions` | 80.5% | 17.5% | 21.0% | 99.5% | | | installed |
+The acceptance rules are in one place, `RulePlanner` in `agent/planner.py`. A vector bridge passes when it beats chance and swapped input by 25 points each; for open scope it must also score at least 45% on classes left out of fitting and stay within 20 points of its accuracy on fitted classes. A text bridge passes when it beats chance by 15 points and swapped input by 10. The vector bridge is preferred when the two are within 3 points.
 
-`text:gtzan` pastes the label CLAP matches best ('sounds like "rock"'); `text:captions` pastes the nearest of 12,000 AudioCaps captions. Nearest-example lookup answers the same five-option questions without the base model: it picks the offered label whose fitted clip is closest to the held-out clip in CLAP space. Unseen classes refits the vector bridge with a fifth of the labels left out and scores it on held-out clips of those labels: 40 clips of 2 genres for GTZAN, 80 clips of 10 sounds for ESC-50.
+With `OPENAI_API_KEY` set, the LLM planner (`agent/planner_llm.py`) proposes which bridges to try and which to install. The loop verifies every bridge the model can take whatever the planner proposes, and the planner may only install a bridge that passes the rules above; otherwise the rules decide.
 
-A whole agent run took 45.4 s (GTZAN closed), 48.6 s (GTZAN open) and 56.9 s (ESC-50 open). Fitting the vector bridge, with its search over blocks 0 to 4, took 13.0 to 17.9 s of that.
+| Run | Candidate | Accuracy | Swapped input | No input | Nearest-example lookup | Specialist alone | Text bridge | Unseen classes | Verdict |
+|---|---|---|---|---|---|---|---|---|---|
+| GTZAN, closed | `vector:gtzan` | 81.0% | 12.5% | 22.0% | 84.5% | 52.5% | 48.5% | | installed |
+| GTZAN, closed | `text:gtzan` | 48.5% | 20.0% | 22.0% | 84.5% | 52.5% | | | passed, not chosen |
+| ESC-50, open | `vector:esc50` | 96.5% | 18.0% | 21.0% | 99.5% | 99.0% | 80.5% | 51.2% | rejected |
+| ESC-50, open | `text:captions` | 80.5% | 17.5% | 21.0% | 99.5% | 99.0% | | | installed |
 
-The research run (`socket_pilot/run_music.py`) reported 84.9% for the GTZAN vector bridge, against 79.5% here. The difference is the layer choice and the question draw, not a bug. The agent chose block 2 on 100 dev questions (blocks 0 to 4 scored 70.0, 74.0, 76.0, 54.0 and 52.0%), where the research run used block 0. On held-out clips, blocks 0, 1 and 2 average 80.8, 82.2 and 79.0% over three question seeds, and block 0 alone ranges from 78.0% to 85.0% across seeds.
+`text:gtzan` pastes the label CLAP matches best ('sounds like "rock"'); `text:captions` pastes the nearest of 12,000 AudioCaps captions. Nearest-example lookup answers the same five-option questions without the base model: it picks the offered label whose fitted clip is closest to the held-out clip in CLAP space. Specialist alone is CLAP with no base model and no fitted examples: it picks the offered label whose text is closest to the clip. Unseen classes refits the vector bridge with a fifth of the labels left out and scores it on held-out clips of those labels: 40 clips of 2 genres for GTZAN, 80 clips of 10 sounds for ESC-50.
+
+A whole agent run took 57.7 s (GTZAN closed) and 64.0 s (ESC-50 open). The vector bridge's layer is chosen among blocks 0 to 4 on 200 dev questions.
+
+The research run (`socket_pilot/run_music.py`) reported 84.9% for the GTZAN vector bridge, against 81.0% here. The difference is the layer choice and the question draw, not a bug: on held-out clips, blocks 0, 1 and 2 average 80.8, 82.2 and 79.0% over three question seeds.
+
+In the GTZAN run the LLM planner chose the install; in the ESC-50 run its choice failed the rules and the rule planner decided. Its proposed plan differed between two otherwise identical ESC-50 runs (vector only, then text only), which is why the loop verifies every available bridge.
 
 Chat through the installed `vector:gtzan` bridge worked on held-out clips. The bridge mapped `reggae.00009.wav` to the label "reggae" (cosine 0.97), and the model's reply named reggae; it then described rhythm and instruments that the vector does not carry. Through the server, `classical.00082.wav` was answered as classical, and one message with an upload named `my song.wav` (a metal clip) and `jazz.00061.wav` was answered as metal and jazz. A `.txt` file in the same message was reported as not shown to the model, and so is an audio file that cannot be read, while the other files still reach the model.
 
@@ -83,12 +87,13 @@ A run names the sense it affects. When it installs a bridge for a model that alr
 
 ## What does not work yet
 
-- **GTZAN open scope sits on the bar.** `text:captions` scored 35.5% against a 35.0% bar. Over question seeds 0 to 4 it scores 32.0 to 37.0% (mean 34.4%), so whether it installs depends on the draw. Verification uses seed 0, so runs are reproducible. Use ESC-50 to demonstrate open scope.
-- **The ESC-50 rejection margin is small.** The vector bridge scored 41.2% on unseen sounds against the 45.0% bar.
-- **Nearest-example lookup beats the vector bridge.** On the same questions, lookup in CLAP space scores 84.5% on GTZAN against the bridge's 79.5%, and 99.5% on ESC-50 against 97.0%. The planner does not use lookup as a bar, so the bridge is installed anyway. The bridge lets the model use what CLAP heard, but it does not yet answer better than a lookup over CLAP's embeddings.
+- **GTZAN open scope sits on the bar.** In an earlier run `text:captions` scored 35.5% against a 35.0% bar, and 32.0 to 37.0% over question seeds 0 to 4, so whether it installs depends on the draw. Use ESC-50 to demonstrate open scope.
+- **The unseen-classes control is noisy.** For ESC-50 it was 41.2% in one run and 51.2% in another (80 clips of 10 left-out sounds; the chosen layer differed). Both are far below the 96.5% on fitted sounds, which is what the within-20-points rule checks.
+- **Nearest-example lookup beats the vector bridge.** On the same questions, lookup in CLAP space scores 84.5% on GTZAN against the bridge's 81.0%, and 99.5% on ESC-50 against 96.5%. The planner does not use lookup as a bar, so the bridge is installed anyway.
+- **On ESC-50 the specialist alone is as good as the bridge.** CLAP matching label text scores 99.0% with no base model. On GTZAN it scores 52.5%, so there the fitted bridge adds 28.5 points over the specialist's own text matching.
 - **The vector bridge passes a label, not a description.** The model treats the written vector like the word for the label: for the metal and jazz clips it said it was answering "Based on the names provided". Anything it says beyond the label is invented.
-- **No LLM planner.** Only the rule planner exists; `agent/planner_llm.py` is not written, and `OPENAI_API_KEY` is unused.
-- **No API models and no tool, image or native bridges.** Scenario 3 of the plan (Claude with a tool bridge) is not built.
+- **The LLM planner's plan is unreliable.** See above; its install choice is checked against the rules. One planning call and one decision call are made per run.
+- **The API base model has not been through a full agent run.** `openai-chat` (`sense/models_api.py`) is registered when a key is set and takes text bridges only; its tests are offline. Tool, image and native bridges are not built, and Scenario 3 of the plan is not demonstrated.
 - **Qwen3.5-2B is listed but untested in this harness.** It loads through the same code as the 0.8B; only the research scripts have run it.
 - **Chat has no history.** Each message stands alone, so a follow-up question needs the file attached again. Image inputs are not wired into `QwenModel.chat`.
 - **Jobs live in memory.** One run at a time, lost on restart; a run started in another browser tab shows up only as the 409 message.
@@ -101,6 +106,7 @@ A run names the sense it affects. When it installs a bridge for a model that alr
 
 - Base models (frozen): [Qwen/Qwen3.5-0.8B](https://huggingface.co/Qwen/Qwen3.5-0.8B), [Qwen/Qwen3.5-2B](https://huggingface.co/Qwen/Qwen3.5-2B)
 - Audio and text encoder (frozen): [laion/clap-htsat-unfused](https://huggingface.co/laion/clap-htsat-unfused)
+- Optional, through the OpenAI API: `gpt-5.4-mini` as the LLM planner and as the `openai-chat` base model
 - [GTZAN](https://huggingface.co/datasets/marsyas/gtzan): 999 music clips, 10 genres; split 60/20/20 per genre for fitting, dev and test
 - [ESC-50](https://github.com/karolpiczak/ESC-50): 2,000 environmental sound clips, 50 classes; folds 1 to 3 fit, fold 4 dev, fold 5 test
 - [AudioCaps](https://github.com/cdjkim/audiocaps): caption text only (12,000 captions from `train.csv`), for the caption text bridge
@@ -110,8 +116,8 @@ A run names the sense it affects. When it installs a bridge for a model that alr
 
 | Path | Contents |
 |---|---|
-| `sense/` | contracts, settings, base models, the CLAP specialist, datasets, bridges, verification, the installed-sense registry |
-| `agent/` | planner, the fit-verify-install loop, background jobs |
+| `sense/` | contracts, settings, base models (local Qwen3.5, an API model), the CLAP specialist, datasets, bridges, verification, the installed-sense registry |
+| `agent/` | rule planner and acceptance rules, LLM planner, the fit-verify-install loop, background jobs |
 | `server/app.py` | HTTP API and the static interface |
 | `web/` | the interface (no build step) |
 | `scripts/demo_cli.py` | the agent from the command line |

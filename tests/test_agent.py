@@ -204,6 +204,7 @@ def test_decide_text_bar_is_inclusive():
 def test_planner_registry(monkeypatch):
     monkeypatch.setattr(planner_mod, "_factories", dict(planner_mod._factories))
     monkeypatch.setattr(planner_mod, "_preferred", None)
+    monkeypatch.setattr(planner_mod.config, "fake", lambda: False)
     assert isinstance(get_planner(), RulePlanner)
 
     class Other(RulePlanner):
@@ -214,6 +215,10 @@ def test_planner_registry(monkeypatch):
     assert type(get_planner("rules")) is RulePlanner
     with pytest.raises(ValueError, match="No planner is registered as 'nope'"):
         get_planner("nope")
+    # in fake mode the default is always the rule planner, so tests never call an API
+    monkeypatch.setattr(planner_mod.config, "fake", lambda: True)
+    assert type(get_planner()) is RulePlanner
+    assert isinstance(get_planner("other"), Other)
 
 
 # ----------------------------------------------------------------------------- loop
@@ -397,3 +402,17 @@ def test_one_job_at_a_time_with_live_events(fresh_jobs, monkeypatch):
     second = jobs.start(FitRequest("fake", "toy"))
     assert second != first and jobs.latest().id == second
     assert wait_for(lambda: jobs.get(second).status == "done")
+
+
+def test_open_scope_vector_must_hold_up_on_unseen_classes():
+    """51% on unseen classes clears the chance bar but is far below 96.5% on fitted classes: not acceptable."""
+    from sense.contracts import ReportCard
+
+    card = ReportCard(
+        model="m", modality="audio", dataset="esc50", scope="open", bridge="vector:esc50", kind="vector",
+        n=200, chance=0.2, accuracy=0.965, controls={"swapped": 0.18, "unseen_classes": 0.512},
+    )
+    ok, sentence = RulePlanner().assess(FitRequest("m", "esc50", scope="open"), card)
+    assert not ok and "more than 20 points below" in sentence
+    card.controls["unseen_classes"] = 0.80
+    assert RulePlanner().assess(FitRequest("m", "esc50", scope="open"), card)[0]

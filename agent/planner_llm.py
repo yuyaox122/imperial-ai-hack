@@ -175,6 +175,10 @@ class LLMPlanner:
                 raise ValueError("Decision reason must cite measured accuracy and swapped control")
             if install is not None and not _clears_floor(by_name[install]):
                 raise ValueError("Decision fails the mandatory swapped-control floor")
+            # One shared gate: the model may only install a bridge the rule planner also accepts
+            # (vector margins, and the unseen-classes control for open scope).
+            if install is not None and not RulePlanner().assess(request, by_name[install])[0]:
+                raise ValueError("Decision fails the shared acceptance gate")
             return Decision(install, reason)
         except Exception:
             return self._fallback(request, cards)
