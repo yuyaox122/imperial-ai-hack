@@ -95,7 +95,15 @@
   <main id="workspace" class="workspace">
     <!-- 01 Runs: every recorded run, each one replayable -->
     <aside class="pane pane--runs" aria-labelledby="runs-heading">
-      <div class="pane-head">
+      <div class="chats-block">
+        <button id="new-chat-button" class="btn btn--primary new-chat" type="button" title="New chat (Ctrl+Shift+O)"><span data-icon="plus"></span>New chat<kbd>Ctrl ⇧ O</kbd></button>
+        <div class="section-head">
+          <h3 class="label">Chats</h3>
+          <span id="chats-count" class="section-meta"></span>
+        </div>
+        <ul id="chats-list" class="chats-list" aria-label="Chats"></ul>
+      </div>
+      <div class="pane-head runs-head">
         <h2 id="runs-heading" class="pane-title"><span class="idx" aria-hidden="true">01</span>Runs</h2>
         <button id="runs-refresh" class="icon-button" type="button" title="Reload the runs" aria-label="Reload the runs"><span data-icon="refresh"></span></button>
       </div>
@@ -116,6 +124,7 @@
       <div class="pane-head">
         <h2 id="chat-heading" class="pane-title"><span class="idx" aria-hidden="true">02</span>Chat</h2>
         <span id="chat-model" class="pane-sub"></span>
+        <button id="chat-new" class="icon-button chat-new" type="button" title="New chat (Ctrl+Shift+O)" aria-label="New chat"><span data-icon="plus"></span></button>
       </div>
       <div id="replay-bar" class="replay-bar" role="status" hidden></div>
       <div id="thread" class="thread" aria-live="polite">
@@ -123,27 +132,30 @@
           <div class="drop-zone brackets">
             <span class="drop-icon" data-icon="download"></span>
             <p class="drop-title">Drop an audio file here</p>
-            <p class="drop-sub">Or attach a sample clip below, then ask a question. Each reply says how every file reached the model, and warns when one did not.</p>
+            <p class="drop-sub">Or press Samples next to the message box to attach a clip, then ask a question. Each reply says how every file reached the model, and warns when one did not.</p>
             <ul id="drop-modalities" class="mods" aria-label="What the model can take in now"></ul>
           </div>
         </div>
       </div>
       <div class="chat-footer">
-        <div class="samples">
-          <div class="section-head">
-            <h3 class="label">Sample clips</h3>
-            <span id="samples-source" class="section-meta"></span>
-          </div>
-          <ul id="samples-list" class="samples-list"></ul>
-          <div id="samples-error" class="error" role="alert" hidden></div>
-        </div>
         <form id="chat-form" class="composer-form" novalidate>
+          <div id="samples-pop" class="samples-pop" hidden>
+            <div class="samples">
+              <div class="section-head">
+                <h3 class="label">Sample clips</h3>
+                <span id="samples-source" class="section-meta"></span>
+              </div>
+              <ul id="samples-list" class="samples-list"></ul>
+              <div id="samples-error" class="error" role="alert" hidden></div>
+            </div>
+          </div>
           <ul id="cmd-hints" class="cmd-hints" role="listbox" aria-label="Commands" hidden></ul>
           <ul id="attachments" class="attachments" aria-label="Files attached to the next message" hidden></ul>
           <div class="composer">
             <span class="prompt" aria-hidden="true">&gt;</span>
             <label class="sr-only" for="message">Message</label>
             <textarea id="message" rows="1" placeholder="Ask about the attached clip, or type / for commands"></textarea>
+            <button id="samples-button" class="btn btn--small samples-button" type="button" aria-expanded="false" aria-controls="samples-pop" title="Attach a sample clip">Samples</button>
             <label class="icon-button file-button" title="Attach audio">
               <span data-icon="paperclip"></span>
               <span class="sr-only">Attach audio</span>

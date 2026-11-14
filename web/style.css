@@ -755,3 +755,28 @@ button.sense-text:hover .sense-title { color: var(--accent-ink-hover); }
 .pane--inspector .run { border-top: 0; }
 .pane--inspector .steps { grid-template-columns: minmax(0, 1fr); }
 .pane--inspector .step { border-right: 0; border-bottom: var(--rule) solid var(--rule-light); }
+
+/* ================================================================ chats and samples menu */
+
+.chats-block { display: flex; flex-direction: column; gap: 8px; flex: none; max-height: 42%; padding: 12px 14px 8px; border-bottom: var(--rule) solid var(--rule-light); }
+.new-chat { justify-content: flex-start; width: 100%; height: 32px; }
+.new-chat kbd { margin-left: auto; font: 10px/1 var(--font-mono); color: var(--mcs-blue-200); opacity: 0.8; }
+.chats-block .section-head { margin: 4px 0 0; }
+.chats-list { list-style: none; margin: 0 -14px; padding: 0; overflow: auto; min-height: 0; }
+.chat-item {
+  display: flex; flex-direction: column; gap: 1px; width: 100%; padding: 6px 14px; text-align: left; cursor: pointer;
+  background: none; border: 0; color: var(--text); font: inherit;
+}
+.chat-item:hover { background: var(--app-widget); }
+.chat-item.is-active { background: var(--app-widget); box-shadow: inset 2px 0 0 var(--accent); color: var(--heading); }
+.chat-item-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-item-meta { color: var(--text-faint); font: 10.5px/1.4 var(--font-mono); }
+.runs-head { border-top: 0; }
+.chat-new { margin-left: auto; }
+
+.samples-pop {
+  position: absolute; left: 14px; right: 14px; bottom: calc(100% - 6px); z-index: 6; max-height: 320px; overflow: auto;
+  background: var(--app-window); border: var(--rule) solid var(--app-widget-hover-stroke); padding: 8px 10px;
+}
+.samples-pop .samples { padding: 0; border: 0; }
+.samples-button { flex: none; }

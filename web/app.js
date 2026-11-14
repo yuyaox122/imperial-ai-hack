@@ -87,6 +87,9 @@ const state = {
   runs: [], // the last /api/runs answer, newest first
   replaySpeed: 1,
   replayDismissed: null, // job id whose finished replay bar the user closed
+  chats: [{ id: 1, title: "New chat", turns: 0, frag: null }], // conversations on this page; /api/chat itself keeps no history
+  chatId: 1,
+  nextChatId: 2,
   server: "loading", // loading, ok or error: whether /api/models answered, for the status line
 };
 
@@ -1449,6 +1452,10 @@ async function sendMessage(event) {
   for (const sample of samples) form.append("sample_ids", sample.id);
 
   const turn = appendTurn(model, message, files, samples);
+  const chat = currentChat();
+  chat.turns += 1;
+  if (chat.turns === 1) chat.title = message.length > 46 ? `${message.slice(0, 45)}…` : message;
+  renderChats();
   state.chatting = true;
   syncControls();
   try {
@@ -2121,10 +2128,76 @@ function renderReplayBar() {
   );
 }
 
+// ---------------------------------------------------------------- chats
+
+const currentChat = () => state.chats.find((c) => c.id === state.chatId) || state.chats[0];
+
+/** Park the open conversation's messages so another chat can use the thread; replies still land in them. */
+function stashThread(chat) {
+  const frag = document.createDocumentFragment();
+  for (const el of [...$("thread").children]) if (el.id !== "thread-empty") frag.append(el);
+  chat.frag = frag;
+}
+
+function showChat(chat) {
+  state.chatId = chat.id;
+  if (chat.frag) $("thread").append(chat.frag);
+  chat.frag = null;
+  updateThreadEmpty();
+  scrollToEnd($("thread"));
+  renderChats();
+}
+
+/** New chat: an empty thread, same model and senses. An empty current chat is reused. */
+function newChat() {
+  const current = currentChat();
+  if (current.turns === 0 && !$("thread").querySelector(".turn")) {
+    $("message").focus();
+    return;
+  }
+  stashThread(current);
+  const chat = { id: state.nextChatId++, title: "New chat", turns: 0, frag: null };
+  state.chats.unshift(chat);
+  showChat(chat);
+  $("message").focus();
+}
+
+function switchChat(id) {
+  if (id === state.chatId) return;
+  const target = state.chats.find((c) => c.id === id);
+  if (!target) return;
+  stashThread(currentChat());
+  showChat(target);
+}
+
+function renderChats() {
+  const list = $("chats-list");
+  list.replaceChildren(...state.chats.map((chat) =>
+    h("li", {},
+      h("button", {
+        type: "button",
+        class: `chat-item${chat.id === state.chatId ? " is-active" : ""}`,
+        "aria-current": chat.id === state.chatId ? "true" : null,
+        onclick: () => switchChat(chat.id),
+      },
+        h("span", { class: "chat-item-title", text: chat.title }),
+        h("span", { class: "chat-item-meta", text: chat.turns ? `${chat.turns} message${chat.turns === 1 ? "" : "s"}` : "empty" })))));
+  $("chats-count").textContent = String(state.chats.length);
+}
+
+function toggleSamples(show) {
+  const pop = $("samples-pop");
+  const open = show === undefined ? pop.hidden : show;
+  pop.hidden = !open;
+  $("samples-button").setAttribute("aria-expanded", String(open));
+}
+
 // ---------------------------------------------------------------- slash commands
 
 const COMMANDS = [
+  { cmd: "new", help: "Start a new chat" },
   { cmd: "fit", help: "Give the model a new sense (opens New sense)" },
+  { cmd: "samples", help: "Pick a sample clip to attach" },
   { cmd: "replay", args: "[n]", help: "Replay the n-th most recent run (default 1)" },
   { cmd: "runs", help: "Reload the runs list" },
   { cmd: "report", help: "Show the report card" },
@@ -2170,7 +2243,9 @@ function runCommand(text) {
     updateThreadEmpty();
     scrollToEnd($("thread"));
   };
-  if (cmd === "fit" || cmd === "sense") openFit($("new-sense-button"));
+  if (cmd === "new") newChat();
+  else if (cmd === "samples") toggleSamples(true);
+  else if (cmd === "fit" || cmd === "sense") openFit($("new-sense-button"));
   else if (cmd === "runs") loadRuns();
   else if (["report", "run", "graph", "log"].includes(cmd)) setTab(cmd);
   else if (cmd === "replay") {
@@ -2181,6 +2256,7 @@ function runCommand(text) {
     else startReplay(run);
   } else if (cmd === "clear") {
     for (const el of [...$("thread").children]) if (el.id !== "thread-empty") el.remove();
+    currentChat().turns = 0;
     updateThreadEmpty();
   } else if (cmd === "help" || cmd === "") {
     note(COMMANDS.map((c) => `/${c.cmd}${c.args ? ` ${c.args}` : ""}  ${c.help}`).join("\n"));
@@ -2222,6 +2298,12 @@ function bindEvents() {
 
   for (const tab of document.querySelectorAll(".insp-tabs .tab")) tab.addEventListener("click", () => setTab(tab.dataset.tab));
   $("runs-refresh").addEventListener("click", loadRuns);
+  $("new-chat-button").addEventListener("click", newChat);
+  $("chat-new").addEventListener("click", newChat);
+  $("samples-button").addEventListener("click", () => toggleSamples());
+  document.addEventListener("mousedown", (e) => {
+    if (!$("samples-pop").hidden && !e.target.closest("#samples-pop, #samples-button")) toggleSamples(false);
+  });
   for (const b of document.querySelectorAll(".speed")) {
     b.addEventListener("click", () => {
       state.replaySpeed = Number(b.dataset.speed) || 1;
@@ -2235,6 +2317,11 @@ function bindEvents() {
       e.preventDefault();
       $("message").focus();
     }
+    if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === "o") {
+      e.preventDefault();
+      newChat();
+    }
+    if (e.key === "Escape" && !$("samples-pop").hidden) toggleSamples(false);
   });
   $("export-button").addEventListener("click", exportReport);
 
@@ -2303,6 +2390,7 @@ function init() {
   loadModels();
   loadDatasets();
   loadRuns();
+  renderChats();
   const savedJob = store.get("sessionStorage", "sense.job");
   if (savedJob) startJob(savedJob, null, true);
 }
