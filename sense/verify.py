@@ -1,7 +1,7 @@
 """Verification: score a candidate bridge on held-out examples against controls.
 
 Public surface (do not rename):
-  verify(model, bridge, dataset, request, text_bridge=None, max_items=200, seed=0) -> ReportCard
+  verify(model, bridge, dataset, request, text_bridge=None, max_items=None, seed=0) -> ReportCard
 
 Each held-out example (dataset.test_idx, at most max_items) becomes a five-option question: dataset.question,
 the true label and four other labels in a seeded random order. Chance is 0.2 (or 1/len(labels) if fewer than
@@ -14,6 +14,13 @@ five labels). The card's `accuracy` is the bridge's; `controls` holds:
   "unseen_classes"  only for request.scope == "open" and vector bridges: refit the bridge with a fifth of the
                     labels left out and score it on held-out examples of those labels
 The card comes back with verdict "candidate"; the planner decides.
+
+max_items None scores at most 200 held-out examples for an open-weight model, and at most
+config.api_verify_items() (SENSE_API_VERIFY_ITEMS, default 50) for a model that is not open-weight, such as an
+API model: there each question is asked three times (the bridge, swapped input and no input), each a paid
+request; the lookup and specialist-alone controls ask nothing (sense.models_api caches the answers, so verifying
+the same questions again asks the API nothing). Fewer items give a wider interval: the card's `n` says how many
+were scored and its `interval` how certain the accuracy is. An explicit max_items is used as given.
 """
 
 from __future__ import annotations
@@ -23,6 +30,7 @@ from pathlib import Path
 
 import numpy as np
 
+from sense import config
 from sense.bridges import fit_vector_bridge, five_options
 from sense.contracts import BaseModel, Bridge, ChoiceItem, FitRequest, LabelledSet, ReportCard, SenseInput
 
@@ -33,11 +41,13 @@ def verify(
     dataset: LabelledSet,
     request: FitRequest,
     text_bridge: Bridge | None = None,
-    max_items: int = 200,
+    max_items: int | None = None,
     seed: int = 0,
 ) -> ReportCard:
     if bridge.model_name != model.info.name:
         raise ValueError(f"{bridge.name} was built for {bridge.model_name}, not {model.info.name}; build it for this model.")
+    if max_items is None:
+        max_items = 200 if model.info.open_weights else config.api_verify_items()
     rng = np.random.default_rng(seed)
     test = _subsample(dataset.test_idx, max_items, rng)
     if len(test) == 0:
