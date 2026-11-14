@@ -82,27 +82,36 @@ and the rest are wrong or vague.
 
 ### Music (GTZAN, 10 genres), Qwen3.5-0.8B
 
-Per genre, 60 tracks fit the plug, 20 pick the layer and 20 are scored. Each track is its middle 10 seconds.
+Per genre, 60 tracks fit the plug, 20 pick the layer and the rest are scored. Each track is its middle 10 seconds.
 
-| Genre, five options, 199 held-out tracks of seen genres | Accuracy |
-|---|---|
-| Plug | 84.9 [79.4, 89.9] |
-| Swapped audio | 11.1 [7.0, 15.6] |
-| Nearest fitting track (lookup) | 79.9 [73.9, 85.4] |
-| Own text (ceiling) | 100.0 |
-| No write | 22.6 [17.1, 28.6] |
-| CLAP zero-shot, no language model | 49.2 [42.2, 56.3] |
+GTZAN holds 14 duplicate recordings (byte-identical files). The first version of `run_music.py` ignored them, so
+5 of its 199 held-out tracks had an identical copy among the fitting or dev tracks, and one recording filed under
+two genres (metal.00058 = rock.00016) could reach the "held out" rock-or-classical test as a fitted metal track.
+The current script keeps each duplicate group in one split and leaves that recording out of everything; the
+first-version column is reproduced exactly with `--keep-duplicates`. Both columns are measured runs
+(`artifacts/music_qwen35_0p8b.json` and `artifacts/music_qwen35_0p8b_dedup.json`). The two splits also differ in
+which tracks are scored and in the option order, so the change between the columns is not all due to the
+duplicates; every change lies within the 95% intervals.
 
-| Rock or classical, two options (chance 50) | Tracks | Accuracy |
+| Genre, five options, held-out tracks of seen genres | First version (199 tracks, block 0) | De-duplicated (196 tracks, block 1) |
 |---|---|---|
-| Plug fitted on all ten genres, held-out tracks | 40 | 100.0 |
-| Same, audio swapped | 40 | 0.0 |
-| Plug fitted with rock and classical held out | 200 | 53.5 [46.5, 60.5] |
-| Text-only plug | 200 | 53.5 [46.5, 60.0] |
-| Plug fitted on environmental sounds only (ESC-50) | 200 | 52.0 [45.0, 59.0] |
-| No write | 200 | 52.0 [45.5, 59.0] |
-| Nearest caption pasted into the prompt as text | 200 | 66.5 [60.0, 72.5] |
-| CLAP zero-shot, no language model | 200 | 98.5 [96.5, 100.0] |
+| Plug | 84.9 [79.4, 89.9] | 83.7 [78.6, 88.8] |
+| Swapped audio | 11.1 [7.0, 15.6] | 14.3 [9.7, 19.4] |
+| Nearest fitting track (lookup) | 79.9 [73.9, 85.4] | 78.1 [71.9, 83.7] |
+| Own text (ceiling) | 100.0 | 100.0 |
+| No write | 22.6 [17.1, 28.6] | 23.5 [17.9, 29.6] |
+| CLAP zero-shot, no language model | 49.2 [42.2, 56.3] | 51.0 [43.9, 58.2] |
+
+| Rock or classical, two options (chance 50) | First version | De-duplicated |
+|---|---|---|
+| Plug fitted on all ten genres, held-out tracks | 100.0 (40 tracks) | 94.9 [87.2, 100.0] (39) |
+| Same, audio swapped | 0.0 (40) | 5.1 [0.0, 12.8] (39) |
+| Plug fitted with rock and classical held out | 53.5 [46.5, 60.5] (200) | 51.8 [44.7, 58.8] (199) |
+| Text-only plug | 53.5 [46.5, 60.0] (200) | 50.3 [43.7, 57.3] (199) |
+| Plug fitted on environmental sounds only (ESC-50) | 52.0 [45.0, 59.0] (200) | 50.3 [43.2, 57.8] (199) |
+| No write | 52.0 [45.5, 59.0] (200) | 49.2 [42.2, 56.3] (199) |
+| Nearest caption pasted into the prompt as text | 66.5 [60.0, 72.5] (200) | 63.8 [57.3, 70.4] (199) |
+| CLAP zero-shot, no language model | 98.5 [96.5, 100.0] (200) | 98.5 [96.5, 100.0] (199) |
 
 An unseen track of a seen genre is classified reliably; an unseen genre is at chance, although CLAP's own
 vector separates the two genres at 98.5%. GTZAN is known to repeat artists across tracks, so "held-out

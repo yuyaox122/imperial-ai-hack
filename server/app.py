@@ -3,7 +3,8 @@
 All JSON. Errors: {"detail": "<what went wrong and what to do>"} with a 4xx or 5xx status.
 
   GET  /api/models
-       -> [ModelInfo dict]                          name, label, native, open_weights, available, note
+       -> [ModelInfo dict]                          name, label, native, open_weights, available, note, tools
+                                                    (tools: the model can call tools, so it can take a tool bridge)
   GET  /api/datasets
        -> [{"name", "title", "modality", "labels", "n", "origin", "meta"}]
           origin "builtin" (gtzan, esc50; meta {}, except that real gtzan notes its duplicate recordings) or
@@ -49,7 +50,10 @@ All JSON. Errors: {"detail": "<what went wrong and what to do>"} with a 4xx or 5
   POST /api/chat                                    multipart form: model, message, files (0..n uploads), sample_ids (0..n)
        -> {"reply": str, "used": [{"bridge", "kind", "source", "detail"}]}
           `used` lists how each file reached the model; a file whose modality has no installed sense, or that
-          cannot be read, is reported with kind "none" and is not shown to the model.
+          cannot be read, is reported with kind "none" and is not shown to the model. For kind "tool" (the model
+          could call the listen tool, which asks CLAP about the file) the detail says whether the model called it
+          and what the last call returned: "the model called listen 1 time: Similarity ... Best match: rock." or
+          "the model could call listen but did not".
           400 for an empty message; 409 while an agent run holds a different local model.
   GET  /                                            web/index.html; other files under web/ are served at /static/
 
@@ -316,6 +320,7 @@ def api_chat(
 
         inputs: list[SenseInput] = []
         used: list[dict] = []
+        tool_used: list[tuple[dict, SenseInput]] = []  # entries whose detail is only known after the reply
         for name, path in attached:
             modality = _modality_of(name)
             bridge = bridges.get(modality) if modality else None
@@ -339,16 +344,29 @@ def api_chat(
             item.source = name  # uploads sit under temporary names; show the name the user gave
             inputs.append(item)
             used.append({"bridge": bridge.name, "kind": bridge.kind, "source": item.source, "detail": item.detail})
+            if item.kind == "tool" and item.tool is not None:
+                tool_used.append((used[-1], item))
 
         try:
             with _chat_lock:
                 reply = base.chat(message, inputs, max_new_tokens=CHAT_TOKENS)
         except Exception as exc:
             raise HTTPException(status_code=500, detail=f"The model failed to answer: {exc}")
+        for entry, item in tool_used:
+            entry["detail"] = _tool_detail(item)
         return {"reply": reply, "used": used}
     finally:
         for tmp in temp_paths:
             tmp.unlink(missing_ok=True)
+
+
+def _tool_detail(item: SenseInput) -> str:
+    """What the model did with a tool input during its reply, for the interface."""
+    tool = item.tool
+    if not tool.calls:
+        return f"the model could call {tool.name} but did not"
+    n = len(tool.calls)
+    return f"the model called {tool.name} {n} time{'' if n == 1 else 's'}: {tool.calls[-1]['result']}"
 
 
 # ----------------------------------------------------------------------------- replay

@@ -280,7 +280,7 @@ def test_availability_for_the_fake_model(model):
     }
     assert entries["native"]["why"] == f"{model.info.label} does not read audio natively"
     assert "Fake CLAP" in entries["text"]["why"]
-    assert entries["tool"]["why"] == "the tool bridge is not built yet"
+    assert entries["tool"]["why"] == f"{model.info.label} cannot call tools; tool calls are wired for API models only"
     assert "spectrogram" in entries["image"]["why"]
     assert "open-weight" in entries["vector"]["why"]
 

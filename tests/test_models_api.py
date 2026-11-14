@@ -13,7 +13,7 @@ import pytest
 
 from sense import config
 import sense.models
-from sense.contracts import BaseModel, ChoiceItem, OpenModel, SenseInput
+from sense.contracts import BaseModel, ChoiceItem, OpenModel, SenseInput, ToolHandle
 
 
 def completion(content="A", *, finish="stop", refusal=None, usage=None):
@@ -385,3 +385,266 @@ def test_concurrent_writers_of_one_answer_leave_one_valid_file(api, tmp_path):
     assert model.usage()["calls"] == 4 and model.usage()["cache_hits"] == 4  # the first four raced, the rest hit
     [path] = cache_files(tmp_path)
     assert json.loads(path.read_text())["answer"] == "B"
+
+
+# ----------------------------------------------------------------------------- tool calls
+ANSWER = "Similarity of the clip to each candidate (CLAP): dog 0.40, cat 0.10. Best match: dog."
+
+
+def tool_input(key="clip-key-1", answer=ANSWER, source="dog.00012.wav", name="listen"):
+    """A tool input whose handle records its calls and always gives `answer`."""
+    def call(arguments):
+        handle.calls.append({"arguments": arguments, "result": answer})
+        return answer
+
+    handle = ToolHandle(
+        name=name,
+        description="Listen to an audio clip with CLAP.",
+        parameters={"type": "object", "properties": {"candidates": {"type": "array", "items": {"type": "string"}}}},
+        call=call,
+        key=key,
+    )
+    return SenseInput("tool", "audio", source=source, detail="the model can call the listen tool", tool=handle)
+
+
+def tool_call(arguments, call_id="call_1", name="listen"):
+    text = arguments if isinstance(arguments, str) else json.dumps(arguments)
+    return SimpleNamespace(id=call_id, type="function", function=SimpleNamespace(name=name, arguments=text))
+
+
+def calling(*calls, usage=None):
+    """A response in which the model calls tools instead of answering."""
+    response = SimpleNamespace(choices=[SimpleNamespace(
+        finish_reason="tool_calls", message=SimpleNamespace(content=None, refusal=None, tool_calls=list(calls)),
+    )])
+    if usage is not None:
+        response.usage = SimpleNamespace(prompt_tokens=usage[0], completion_tokens=usage[1])
+    return response
+
+
+def test_model_info_says_it_can_call_tools(api):
+    info, _ = api.registration.call_args.args
+    assert info.tools is True and info.to_dict()["tools"] is True
+
+
+def test_a_tool_call_is_run_and_its_result_sent_back_before_the_answer(api):
+    create = api.client.chat.completions.create
+    create.side_effect = [calling(tool_call({"clip": 1, "candidates": ["cat", "dog"]})), completion("B")]
+    inp = tool_input()
+    model = api.module.OpenAIChatModel()
+    assert model.choose([ChoiceItem("Which sound?", ["cat", "dog"], [inp])]) == [1]
+    assert inp.tool.calls == [{"arguments": {"candidates": ["cat", "dog"]}, "result": ANSWER}]
+
+    first, second = (c.kwargs for c in create.call_args_list)
+    system, user = first["messages"]
+    assert "listen tool" in system["content"] and "exactly one uppercase" in system["content"]
+    assert user["content"] == (
+        "Which sound?\nA. cat\nB. dog\n\n"
+        "Audio clip 1: you cannot hear it directly; call the listen tool with clip=1 to hear it."
+    )
+    assert "dog.00012" not in json.dumps(first)  # the file name, which can give the answer away, is never sent
+    [tool] = first["tools"]
+    assert tool["type"] == "function" and tool["function"]["name"] == "listen"
+    parameters = tool["function"]["parameters"]
+    assert parameters["required"] == ["clip"]
+    assert parameters["properties"]["clip"]["type"] == "integer" and parameters["properties"]["clip"]["maximum"] == 1
+    assert parameters["properties"]["candidates"]["items"] == {"type": "string"}
+    assert first["tool_choice"] == "auto"
+    assert first["max_completion_tokens"] == api.module.TOOL_CALL_TOKENS  # room for the call, not just a letter
+
+    assert second["messages"][:2] == first["messages"]
+    assistant, result = second["messages"][2:]
+    assert assistant == {"role": "assistant", "content": None, "tool_calls": [{
+        "id": "call_1", "type": "function",
+        "function": {"name": "listen", "arguments": json.dumps({"clip": 1, "candidates": ["cat", "dog"]})},
+    }]}
+    assert result == {"role": "tool", "tool_call_id": "call_1", "content": ANSWER}
+
+
+def test_chat_with_a_tool_input(api):
+    create = api.client.chat.completions.create
+    create.side_effect = [calling(tool_call({"clip": 1})), completion("It sounds like a dog.", finish="length")]
+    inp = tool_input()
+    assert api.module.OpenAIChatModel().chat("What is it?", [inp], max_new_tokens=40) == "It sounds like a dog."
+    assert inp.tool.calls == [{"arguments": {}, "result": ANSWER}]
+    first, second = (c.kwargs for c in create.call_args_list)
+    assert "listen tool" in first["messages"][0]["content"]
+    assert first["max_completion_tokens"] == api.module.TOOL_CALL_TOKENS
+    assert second["messages"][-1]["content"] == ANSWER
+
+
+def budgets(create):
+    return [(c.kwargs["tool_choice"], c.kwargs["max_completion_tokens"]) for c in create.call_args_list]
+
+
+def test_a_reply_after_a_tool_call_keeps_to_the_callers_limit(api):
+    """The answer round allows TOOL_CALL_TOKENS in case the model calls again; a longer reply is asked for again
+    within max_new_tokens, so free_text compares the bridge and no-input replies at the same budget."""
+    create = api.client.chat.completions.create
+    create.side_effect = [
+        calling(tool_call({"clip": 1}), usage=(30, 12)),
+        completion("It is a dog barking twice in a quiet room, then a car.", usage=(50, 14)),
+        completion("A dog barking", finish="length", usage=(50, 8)),
+    ]
+    model = api.module.OpenAIChatModel()
+    assert model.chat("What is it?", [tool_input()], max_new_tokens=8) == "A dog barking"
+    assert budgets(create) == [("auto", api.module.TOOL_CALL_TOKENS), ("auto", api.module.TOOL_CALL_TOKENS), ("none", 8)]
+    second, third = (c.kwargs for c in create.call_args_list[1:])
+    assert third["messages"] == second["messages"]  # the same question, asked again within the limit
+    assert model.usage() == {"calls": 3, "cache_hits": 0, "prompt_tokens": 130, "completion_tokens": 34}
+
+
+def test_a_reply_within_the_limit_is_kept(api):
+    create = api.client.chat.completions.create
+    create.side_effect = [calling(tool_call({"clip": 1}), usage=(30, 12)), completion("A dog.", usage=(50, 3))]
+    assert api.module.OpenAIChatModel().chat("What is it?", [tool_input()], max_new_tokens=8) == "A dog."
+    assert budgets(create) == [("auto", api.module.TOOL_CALL_TOKENS), ("auto", api.module.TOOL_CALL_TOKENS)]
+
+
+def test_a_long_reply_without_a_tool_call_is_asked_for_again_within_the_limit(api):
+    create = api.client.chat.completions.create
+    create.side_effect = [completion("x " * 100, usage=(30, 100)), completion("A dog", finish="length", usage=(30, 8))]
+    inp = tool_input()
+    assert api.module.OpenAIChatModel().chat("What is it?", [inp], max_new_tokens=8) == "A dog"
+    assert budgets(create) == [("auto", api.module.TOOL_CALL_TOKENS), ("none", 8)]
+    assert inp.tool.calls == []
+
+
+def test_without_tool_inputs_no_tools_are_offered(api):
+    api.module.OpenAIChatModel().choose([ChoiceItem("Which sound?", ["cat", "dog"])])
+    kwargs = api.client.chat.completions.create.call_args.kwargs
+    assert "tools" not in kwargs and "tool_choice" not in kwargs
+    assert "listen" not in kwargs["messages"][0]["content"]
+
+
+def test_the_model_picks_the_clip_by_number(api):
+    create = api.client.chat.completions.create
+    create.side_effect = [
+        calling(tool_call({"clip": 2, "candidates": ["cat"]}, "c2"), tool_call({"clip": 1.0}, "c1")),
+        completion("A"),
+    ]
+    one, two = tool_input("key-1", "first clip"), tool_input("key-2", "second clip")
+    api.module.OpenAIChatModel().choose([ChoiceItem("Which sound?", ["cat", "dog"], [one, two])])
+    first, second = (c.kwargs for c in create.call_args_list)
+    assert first["messages"][1]["content"].endswith(
+        "Audio clip 1: you cannot hear it directly; call the listen tool with clip=1 to hear it.\n\n"
+        "Audio clip 2: you cannot hear it directly; call the listen tool with clip=2 to hear it."
+    )
+    assert first["tools"][0]["function"]["parameters"]["properties"]["clip"]["maximum"] == 2
+    assert [m["content"] for m in second["messages"][3:]] == ["second clip", "first clip"]
+    assert [m["tool_call_id"] for m in second["messages"][3:]] == ["c2", "c1"]
+    assert one.tool.calls == [{"arguments": {}, "result": "first clip"}]
+    assert two.tool.calls == [{"arguments": {"candidates": ["cat"]}, "result": "second clip"}]
+
+
+@pytest.mark.parametrize("arguments, says", [
+    ({"clip": 3}, "clip must be the number of an audio clip, from 1 to 2"),
+    ({"clip": 0}, "clip must be"),
+    ({"clip": -1}, "clip must be"),
+    ({"clip": "one"}, "clip must be"),
+    ({"clip": True}, "clip must be"),
+    ({"clip": 1.5}, "clip must be"),
+    ({"candidates": ["cat"]}, "clip must be"),  # two clips: the model has to say which
+    ("{not json", "must be a JSON object"),
+    ("[1]", "must be a JSON object"),
+])
+def test_a_bad_tool_call_gets_an_error_text_and_no_clip_is_heard(api, arguments, says):
+    create = api.client.chat.completions.create
+    create.side_effect = [calling(tool_call(arguments)), completion("A")]
+    one, two = tool_input("key-1"), tool_input("key-2")
+    assert api.module.OpenAIChatModel().choose([ChoiceItem("Which sound?", ["cat", "dog"], [one, two])]) == [0]
+    error = create.call_args_list[1].kwargs["messages"][-1]
+    assert error["role"] == "tool" and error["content"].startswith("listen error: ") and says in error["content"]
+    assert one.tool.calls == [] and two.tool.calls == []
+
+
+def test_an_unknown_function_gets_an_error_text(api):
+    create = api.client.chat.completions.create
+    create.side_effect = [calling(tool_call({"clip": 1}, name="look")), completion("A")]
+    inp = tool_input()
+    api.module.OpenAIChatModel().choose([ChoiceItem("Which sound?", ["cat", "dog"], [inp])])
+    assert create.call_args_list[1].kwargs["messages"][-1]["content"] == (
+        "Error: there is no tool called 'look'; the only tool is listen."
+    )
+    assert inp.tool.calls == []
+
+
+def test_one_clip_needs_no_clip_number(api):
+    api.client.chat.completions.create.side_effect = [calling(tool_call({})), completion("B")]
+    inp = tool_input()
+    assert api.module.OpenAIChatModel().choose([ChoiceItem("Which sound?", ["cat", "dog"], [inp])]) == [1]
+    assert inp.tool.calls == [{"arguments": {}, "result": ANSWER}]
+
+
+def test_after_two_rounds_of_tool_calls_the_model_must_answer(api):
+    create = api.client.chat.completions.create
+
+    def answer(**kwargs):
+        if kwargs["tool_choice"] == "none":
+            return completion("B", usage=(20, 1))
+        return calling(tool_call({"clip": 1}, f"call_{len(kwargs['messages'])}"), usage=(10, 8))
+
+    create.side_effect = answer
+    inp = tool_input()
+    model = api.module.OpenAIChatModel()
+    assert model.choose([ChoiceItem("Which sound?", ["cat", "dog"], [inp])]) == [1]
+    requests = [c.kwargs for c in create.call_args_list]
+    assert [r["tool_choice"] for r in requests] == ["auto", "auto", "none"]
+    assert [len(r["messages"]) for r in requests] == [2, 4, 6]
+    assert requests[-1]["max_completion_tokens"] == 16  # the forced answer is a letter
+    assert all(r["tools"] == requests[0]["tools"] for r in requests)
+    assert len(inp.tool.calls) == 2
+    assert model.usage() == {"calls": 3, "cache_hits": 0, "prompt_tokens": 40, "completion_tokens": 17}
+
+
+def test_a_model_that_still_calls_tools_when_it_must_answer_fails(api):
+    api.client.chat.completions.create.side_effect = lambda **kwargs: calling(tool_call({"clip": 1}))
+    with pytest.raises(ValueError, match="no complete answer"):
+        api.module.OpenAIChatModel().choose([ChoiceItem("Which sound?", ["cat", "dog"], [tool_input()])])
+    assert api.client.chat.completions.create.call_count == 3
+
+
+def test_usage_counts_every_request_of_a_tool_call(api):
+    api.client.chat.completions.create.side_effect = [
+        calling(tool_call({"clip": 1}), usage=(30, 12)), completion("A", usage=(45, 1)),
+    ]
+    model = api.module.OpenAIChatModel()
+    model.choose([ChoiceItem("Which sound?", ["cat", "dog"], [tool_input()])])
+    assert model.usage() == {"calls": 2, "cache_hits": 0, "prompt_tokens": 75, "completion_tokens": 13}
+
+
+def test_the_cache_key_includes_each_tool_key(api, tmp_path):
+    """Two clips with the same question have the same prompt; only the tool key tells them apart."""
+    create = api.client.chat.completions.create
+    create.side_effect = lambda **kwargs: (
+        completion("B") if kwargs["messages"][-1]["role"] == "tool" else calling(tool_call({"clip": 1}))
+    )
+
+    def item(key):
+        return ChoiceItem("Which sound?", ["cat", "dog"], [tool_input(key)])
+
+    first = api.module.OpenAIChatModel()
+    assert first.choose([item("clip-a"), item("clip-b")]) == [1, 1]
+    assert create.call_count == 4 and len(cache_files(tmp_path)) == 2
+
+    messages = create.call_args_list[0].kwargs["messages"]
+    request = {"model": "gpt-5.4-mini", "instruction": messages[0]["content"], "content": messages[1]["content"],
+               "limit": 16, "tools": ["clip-a"]}
+    key = hashlib.sha256(json.dumps(request, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+    assert (tmp_path / "home" / "api_cache" / "gpt-5.4-mini" / key[:2] / f"{key}.json") in cache_files(tmp_path)
+
+    again = item("clip-a")
+    second = api.module.OpenAIChatModel()
+    assert second.choose([again]) == [1]  # answered from the cache: no request, and the tool is not called
+    assert create.call_count == 4 and again.inputs[0].tool.calls == []
+    assert second.usage() == {"calls": 0, "cache_hits": 1, "prompt_tokens": 0, "completion_tokens": 0}
+    second.choose([item("clip-c")])  # a new clip asks again
+    assert create.call_count == 6
+
+
+def test_a_tool_input_with_another_tool_is_refused_before_any_request(api):
+    with pytest.raises(ValueError, match="wires only the listen tool"):
+        api.module.OpenAIChatModel().choose([ChoiceItem("Which?", ["cat", "dog"], [tool_input(name="look")])])
+    with pytest.raises(ValueError, match="wires only the listen tool"):
+        api.module.OpenAIChatModel().chat("Which?", [tool_input(name="look")])
+    api.client.chat.completions.create.assert_not_called()
