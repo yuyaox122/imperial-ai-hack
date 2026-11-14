@@ -987,7 +987,7 @@ function renderGraph() {
     group.append(h("p", { class: "group-empty", text: "The agent chooses which bridges to try when it runs. Press New sense to start." }));
   } else {
     const kinds = planKinds(job);
-    if (kinds.length) group.append(h("span", { class: "group-count", text: `${kinds.length} tried` }));
+    if (kinds.length) group.querySelector(".group-head").append(h("span", { class: "group-count", text: `· ${kinds.length} tried` }));
     else group.append(h("p", { class: "group-empty", text: job.status === "running" ? "Planning…" : "No bridge was tried." }));
     for (const kind of kinds) {
       const fd = fitData(job, kind);

@@ -323,6 +323,7 @@ ul, ol { margin: 0; padding: 0; list-style: none; }
   height: 36px; padding: 0 14px; border-bottom: var(--rule) solid var(--rule-light);
 }
 .pane-head > .tag { margin-left: auto; }
+.pane-head > .pane-title, .run-head > .pane-title { flex: none; }
 .pane-sub { min-width: 0; color: var(--text-secondary); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .panel-scroll { flex: 1; min-height: 0; overflow: auto; }
 
@@ -404,18 +405,27 @@ ul, ol { margin: 0; padding: 0; list-style: none; }
 
 /* ================================================================ 02 sense graph */
 
-.center { display: grid; grid-template-rows: 36px minmax(0, 1fr) auto; min-width: 0; min-height: 0; }
-.graph-head { gap: 12px; padding-right: 0; }
-.legend { display: flex; align-items: center; gap: 12px; margin-left: auto; color: var(--text-secondary); font: 11px/1 var(--font-mono); white-space: nowrap; }
+/* One column that never grows past its track, so nothing in the centre can spill into the report pane. */
+.center { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: 36px minmax(0, 1fr) auto; min-width: 0; min-height: 0; overflow: hidden; }
+.graph-head { gap: 12px; padding-right: 0; min-width: 0; }
+
+/* Wire legend: a plot legend in the graph's lower left corner, knocked out of the grid. */
+.legend {
+  position: absolute; z-index: 2; left: 12px; bottom: 10px;
+  display: flex; align-items: center; gap: 12px; padding: 4px 8px;
+  background: var(--app-extreme); color: var(--text-secondary); font: 11px/1 var(--font-mono); white-space: nowrap;
+  pointer-events: none;
+}
 .legend li { display: flex; align-items: center; gap: 6px; }
 .legend .swatch { width: 12px; height: 2px; background: var(--swatch); }
+.graph-canvas[hidden] ~ .legend { display: none; }
 
 /* Tabs: the current one gets the accent bar along its top over the tab tint. */
-.tabs { display: flex; align-self: stretch; margin-left: 8px; border-left: var(--rule) solid var(--rule-light); }
+.tabs { display: flex; flex: none; align-self: stretch; margin-left: auto; border-left: var(--rule) solid var(--rule-light); }
 .tab {
-  position: relative; display: flex; align-items: center; gap: 6px;
+  position: relative; display: flex; align-items: center; gap: 6px; flex: none;
   padding: 0 14px; background: none; border: 0; border-right: var(--rule) solid var(--rule-light);
-  color: var(--text-secondary); font-size: 11px; letter-spacing: 0.05em; cursor: pointer;
+  color: var(--text-secondary); font-size: 11px; letter-spacing: 0.05em; white-space: nowrap; cursor: pointer;
 }
 .tab:last-child { border-right: 0; }
 .tab:hover:not(:disabled) { color: var(--heading); }
@@ -450,11 +460,12 @@ ul, ol { margin: 0; padding: 0; list-style: none; }
 button.node { cursor: pointer; }
 button.node:hover { border-color: var(--app-widget-hover-stroke); }
 .node.is-selected::after { content: ""; position: absolute; top: -1px; left: -1px; right: -1px; height: 3px; background: var(--accent); }
-.node-head { display: flex; align-items: center; gap: 7px; min-height: 30px; padding: 5px 8px 5px 9px; border-bottom: var(--rule) solid var(--rule-light); }
+.node-head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 7px; min-height: 30px; padding: 5px 8px 5px 9px; border-bottom: var(--rule) solid var(--rule-light); }
+.node-head > .tag { margin-left: auto; }
 .node-idx { flex: none; color: var(--text-faint); font: 10.5px/1 var(--font-mono); }
 .node-tile { flex: none; color: var(--text-secondary); }
 .node-tile .icon { width: 15px; height: 15px; }
-.node-title { flex: 1; min-width: 0; color: var(--heading); font-weight: 600; font-size: 13px; line-height: 1.25; overflow-wrap: anywhere; }
+.node-title { flex: 1 1 0; min-width: 6.5em; color: var(--heading); font-weight: 600; font-size: 13px; line-height: 1.25; overflow-wrap: break-word; }
 .node-sub { display: block; padding: 6px 10px; border-bottom: var(--rule) solid var(--rule-light); color: var(--text-secondary); font-size: 11.5px; line-height: 1.35; }
 .node--installed .node-head { background: var(--green-subtle); }
 .node--installed .node-title, .node--installed .node-tile { color: var(--green-strong); }
@@ -506,10 +517,10 @@ button.node:hover { border-color: var(--app-widget-hover-stroke); }
   position: absolute; top: 0; left: 12px; transform: translateY(-50%);
   display: flex; align-items: center; gap: 6px; padding: 0 6px;
   background: var(--app-extreme); color: var(--text-secondary);
-  font: 700 10.5px/1 var(--font-sans); letter-spacing: 0.08em; text-transform: uppercase;
+  font: 700 10.5px/1 var(--font-sans); letter-spacing: 0.08em; text-transform: uppercase; white-space: nowrap;
 }
 .group-head .icon { width: 13px; height: 13px; }
-.group-count { position: absolute; top: 0; right: 12px; transform: translateY(-50%); padding: 0 6px; background: var(--app-extreme); color: var(--text-secondary); font: 11px/1 var(--font-mono); }
+.group-count { color: var(--text-faint); font: 400 11px/1 var(--font-mono); letter-spacing: 0; text-transform: none; }
 .group-empty { color: var(--text-secondary); font-size: 12px; line-height: 1.5; }
 
 .held-check {
@@ -558,7 +569,7 @@ button.node:hover { border-color: var(--app-widget-hover-stroke); }
 .step--running .step-state { color: var(--mcs-blue-300); }
 .step--running .step-state .led { animation: blink 1.2s steps(2, jump-none) infinite; }
 .step--refused .step-state { color: var(--app-error); }
-.step-time { margin-left: auto; color: var(--text-secondary); white-space: nowrap; }
+.step-time { min-width: 0; margin-left: auto; overflow: hidden; color: var(--text-secondary); white-space: nowrap; text-overflow: ellipsis; }
 .step-title { margin-top: 3px; color: var(--heading); font-weight: 600; font-size: 12.5px; line-height: 1.3; }
 .step--pending .step-title { color: var(--text-secondary); }
 .step-desc {
@@ -656,7 +667,11 @@ button.sense-text:hover .sense-title { color: var(--accent-ink-hover); }
 
 /* ================================================================ narrow windows */
 
+@media (max-width: 1440px) {
+  .graph-canvas { column-gap: 32px; padding: 24px 20px 40px; }
+}
 @media (max-width: 1280px) {
   .workspace { grid-template-columns: 288px minmax(0, 1fr) 312px; }
-  .brand-topic, .legend { display: none; }
+  .graph-canvas { grid-template-columns: minmax(156px, 180px) minmax(208px, 240px) minmax(172px, 210px); }
+  .brand-topic { display: none; }
 }

@@ -140,12 +140,6 @@
       <div class="pane-head graph-head">
         <h2 id="graph-heading" class="pane-title"><span class="idx" aria-hidden="true">02</span>Sense graph</h2>
         <span id="graph-sub" class="pane-sub"></span>
-        <ul class="legend" aria-label="Wire colours">
-          <li><span class="swatch" style="--swatch: var(--wire-audio)"></span>Audio</li>
-          <li><span class="swatch" style="--swatch: var(--wire-embedding)"></span>Embedding</li>
-          <li><span class="swatch" style="--swatch: var(--wire-text)"></span>Text</li>
-          <li><span class="swatch" style="--swatch: var(--wire-data)"></span>Labelled data</li>
-        </ul>
         <div class="tabs" role="tablist" aria-label="Centre view">
           <button id="graph-tab" class="tab" type="button" role="tab" aria-selected="true" aria-controls="graph-canvas">Graph</button>
           <button id="log-button" class="tab" type="button" role="tab" aria-selected="false" aria-controls="log-view" disabled>Event log <span id="log-count" class="num"></span></button>
@@ -154,6 +148,12 @@
       <section class="graph" aria-labelledby="graph-heading">
         <div id="model-error" class="error graph-error" role="alert" hidden></div>
         <div id="graph-canvas" class="graph-canvas" role="tabpanel" aria-labelledby="graph-tab"></div>
+        <ul class="legend" aria-label="Wire colours">
+          <li><span class="swatch" style="--swatch: var(--wire-audio)"></span>Audio</li>
+          <li><span class="swatch" style="--swatch: var(--wire-embedding)"></span>Embedding</li>
+          <li><span class="swatch" style="--swatch: var(--wire-text)"></span>Text</li>
+          <li><span class="swatch" style="--swatch: var(--wire-data)"></span>Labelled data</li>
+        </ul>
         <div id="log-view" class="log-view" role="tabpanel" aria-labelledby="log-button" hidden>
           <ol id="timeline" class="timeline" aria-label="Every event of the run"></ol>
         </div>
