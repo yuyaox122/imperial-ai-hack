@@ -22,9 +22,9 @@ Issue #17. Branch `17-henad-redesign`.
 |---|---|---|
 | Henad · Design system | [55:75](https://www.figma.com/design/9DxXU1h0aHjw8Mc8vUwl8O/Imperial-AI-Hackathon?node-id=55-75) | Henad · Tokens: the Henad variable collection as swatches, each with its CSS name |
 | Henad · Design system | [55:749](https://www.figma.com/design/9DxXU1h0aHjw8Mc8vUwl8O/Imperial-AI-Hackathon?node-id=55-749) | Henad · Components: Graph node (Installed, Refused, Not installed), Held-out check, Status badge (five states), Callout (three), Agent step (Done, Refused), Metric row (four kinds), Band (Header, Status line) |
-| Henad · Screens | [50:2](https://www.figma.com/design/9DxXU1h0aHjw8Mc8vUwl8O/Imperial-AI-Hackathon?node-id=50-2) | Henad 01 · Ready, with the New sense window open |
-| Henad · Screens | [49:2](https://www.figma.com/design/9DxXU1h0aHjw8Mc8vUwl8O/Imperial-AI-Hackathon?node-id=49-2) | Henad 02 · Sense installed, with a chat turn |
-| Henad · Screens | [47:2](https://www.figma.com/design/9DxXU1h0aHjw8Mc8vUwl8O/Imperial-AI-Hackathon?node-id=47-2) | Henad 03 · Sense refused, fallback installed |
+| Henad · Screens | [60:2](https://www.figma.com/design/9DxXU1h0aHjw8Mc8vUwl8O/Imperial-AI-Hackathon?node-id=60-2) | Henad 01 · Ready, with the New sense window open |
+| Henad · Screens | [59:2](https://www.figma.com/design/9DxXU1h0aHjw8Mc8vUwl8O/Imperial-AI-Hackathon?node-id=59-2) | Henad 02 · Sense installed, with a chat turn |
+| Henad · Screens | [58:2](https://www.figma.com/design/9DxXU1h0aHjw8Mc8vUwl8O/Imperial-AI-Hackathon?node-id=58-2) | Henad 03 · Sense refused, fallback installed |
 | Local variables | collection "Henad", mode Dark | 131 colour variables |
 
 ### How Figma was used
@@ -36,7 +36,7 @@ Issue #17. Branch `17-henad-redesign`.
 2. **Build.** `web/style.css` declares the same names with the same values, so a change in Figma maps to one line of CSS.
 3. **Back into Figma.** The running build (fake mode, real API data) was captured into the Henad · Screens page in three states with the Figma MCP server (`generate_figma_design`).
    The capture bound colours to the Henad variables by their code syntax.
-   A Plugin API pass (`use_figma`) then bound the remaining 198 paints by value, so every solid colour in the three screens is a Henad variable and none is a raw hex.
+   A Plugin API pass (`use_figma`) then bound the remaining 163 paints by value and dropped 35 fully transparent ones, so every solid colour in the three screens is a Henad variable and none is a raw hex.
    The same pass redrew the corner brackets and the bridge group's end ticks, which CSS draws with gradients, as one-pixel rectangles on `Roles/rule-dark`, tiled the grid images, and replaced Iosevka Micfong with IBM Plex Mono, Henad's fallback, so teammates without Michael's font see no missing fonts.
 4. **Components.** The parts of the screens became component sets with variants on the Henad · Design system page, with Henad's rule for each in its description.
 
