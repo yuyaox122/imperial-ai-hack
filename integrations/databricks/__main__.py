@@ -5,6 +5,10 @@
   .venv/bin/python -m integrations.databricks backfill [FILE..]  write recorded runs (sense.runs, or CLI --save files)
   .venv/bin/python -m integrations.databricks serve [--port 8000] the usual server (server.app), and every agent run
                                                                   it finishes is written to Databricks
+  .venv/bin/python -m integrations.databricks triage [--model M] [--question Q] [--fold F] [--from FILE ...]
+                                                                  run the forest-monitoring triage (eval.triage) with
+                                                                  the installed sense, or take a saved record, and
+                                                                  write it to triage_batches and triage_clips
 
 Set up auth first: `databricks configure`, or DATABRICKS_HOST and DATABRICKS_TOKEN. See conn.py for the names.
 Flags: --no-mlflow skips MLflow, --no-upload skips the Volume copy of run.json.
@@ -90,24 +94,53 @@ def backfill(args: argparse.Namespace) -> int:
     return 1 if failed else 0
 
 
+def triage(args: argparse.Namespace) -> int:
+    from eval import triage as tri
+
+    if args.from_file:
+        # `--from a b c` puts b and c in the positional files; take them too.
+        paths = [*args.from_file, *args.files]
+        records = [json.loads(Path(f).read_text()) for f in paths]
+    else:
+        records = tri.run_all(args)
+        for record in records:
+            print(f"Saved {tri.save(record, args.save if len(records) == 1 else None)}")
+    for record in records:
+        print(tri.table(record), "\n")
+    if len(records) > 1:
+        print(tri.compare(records), "\n")
+    sql = conn.warehouse()
+    sink.setup(sql)
+    for record in records:
+        counts = sink.write_triage(record, sql, mlflow_runs=not args.no_mlflow)
+        print(f"Wrote triage {record['id']} to {conn.catalog()}.{conn.schema()}: {counts}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="python -m integrations.databricks", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("command", choices=["smoke", "setup", "backfill", "serve"])
+    ap.add_argument("command", choices=["smoke", "setup", "backfill", "serve", "triage"])
     ap.add_argument("files", nargs="*", help="backfill: run records written by scripts/demo_cli.py --save")
     ap.add_argument("--no-mlflow", action="store_true")
     ap.add_argument("--no-upload", action="store_true")
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=8000)
+    ap.add_argument("--from", dest="from_file", action="append", help="triage: write this saved eval.triage record instead of running one")
+    from eval.triage import add_arguments
+
+    add_arguments(ap)
     args = ap.parse_args(argv)
     if args.command == "smoke":
         return smoke(args)
     if args.command == "setup":
         sink.setup(conn.warehouse())
-        print(f"Ready: {conn.catalog()}.{conn.schema()} (runs, report_cards, trace_events, Volume {sink.VOLUME})")
+        print(f"Ready: {conn.catalog()}.{conn.schema()} ({', '.join(sink.DDL)}, Volume {sink.VOLUME})")
         return 0
     if args.command == "serve":
         return serve(args)
+    if args.command == "triage":
+        return triage(args)
     return backfill(args)
 
 

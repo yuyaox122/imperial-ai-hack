@@ -77,7 +77,7 @@ With `OPENAI_API_KEY` set, the LLM planner (`agent/planner_llm.py`) proposes whi
 
 A whole agent run took 56.0 s (GTZAN closed) and 64.0 s (ESC-50 open). The vector bridge's layer is chosen among blocks 0 to 4 on 200 dev questions. The closed-form fit of one block takes 0.5 to 0.7 s on GTZAN (597 clips) and 1.1 to 1.3 s on ESC-50 (1,200 clips); the whole fit step, five blocks each scored on the dev questions, takes 23 to 26 s.
 
-The research run (`socket_pilot/run_music.py`) reported 84.9% for the GTZAN vector bridge, against 79.5% here. That run used its own split with no duplicate check, so its GTZAN figures (84.9%, and 53.5% with both genres held out) are being re-measured on the de-duplicated split; until then treat them as approximate. Over three question seeds on the earlier split, blocks 0, 1 and 2 averaged 80.8, 82.2 and 79.0%, so the layer choice and the question draw also move the number by a few points.
+The research run (`socket_pilot/run_music.py`), re-measured on the de-duplicated split (PR #51), gives 83.7% [78.6, 88.8] for the GTZAN vector bridge on 196 held-out tracks (84.9% before de-duplication), against 79.5% here; its lookup scores 78.1% and swapped input 14.3%. With rock and classical both held out of fitting it scores 51.8% [44.7, 58.8], where chance is 50% (53.5% before). The two runs differ in split, scored tracks and option order as well as in the duplicates, and every change is inside the 95% intervals. `socket_pilot/README.md` shows both columns. Over three question seeds on the earlier split, blocks 0, 1 and 2 averaged 80.8, 82.2 and 79.0%, so the layer choice and the question draw also move the number by a few points.
 
 In free chat the vector bridge is much weaker than on multiple choice. Asked "Which genre (or sound) is in the audio clip? Answer in a few words." on 100 held-out clips, the reply named the true label and no other 37.0% of the time on GTZAN (95% interval 28.2 to 46.8%; swapped input 6.0%, no input 8.0%) and 45.0% on ESC-50 (35.6 to 54.8%; 0.0% and 0.0%). On GTZAN the model always names some genre but leans to hip hop and rock. On ESC-50 the matching is strict, so "Clock" for clock tick counts as naming no label, and 45% is a floor. Results: `socket_pilot/artifacts/free_text_*.json`, from `scripts/score_free_text.py`.
 
@@ -89,6 +89,26 @@ Chat through the installed `vector:gtzan` bridge worked on held-out clips. The b
 
 A run names the sense it affects. When it installs a bridge for a model that already has an audio sense, the trace says which sense it replaced and with what score. When it installs nothing, the trace names the earlier sense that chat keeps using. Each chat took 2.6 to 4.1 s, including CLAP's first load. Every endpoint in `server/app.py` was exercised against the real model: models, datasets, fit, jobs (including 409 for a second run and 400 for a bad scope), senses, samples (the WAV is served), chat and the interface.
 
+## A real task: forest-monitoring triage
+
+A forest-monitoring team wants chainsaw, hand saw and engine sounds flagged, so a ranger listens to fewer clips. ESC-50 stands in for field recordings: 400 clips per fold, 24 of them targets. `eval/triage.py` asks the base model about each clip through its installed sense, and asks again with no audio as a control. As a second control, CLAP lookup flags the clips whose nearest fitted example is a target, with no base model.
+
+We chose the question wording on fold 4 and report once on fold 5. On fold 4, Qwen3.5-0.8B with `text:captions`:
+
+| question | flagged | no input flags | caught | precision |
+|---|---|---|---|---|
+| ranger: "A forest ranger is listening for illegal logging. Which of these is in the audio clip?" | 372 | 400 | 24/24 | 6.5% |
+| neutral: "Which of these is in the audio clip?" | 295 | 400 | 24/24 | 8.1% |
+| yesno: "Is there a <target> in the audio clip?" | 212 | 400 | 23/24 | 10.8% |
+| chat: "What sound is in the audio clip? Answer in a few words." | 21 | 0 | 13/24 | 61.9% |
+
+The three wordings that offer the targets flag every clip with no audio at all; the model answers "chainsaw" to nothing. Only the open question beats no input. On fold 5 it flagged 26 clips and caught 13 of the 24 targets (54.2% recall, 50.0% precision, 3.5% false alarms): 6 of 8 chainsaws, 7 of 8 engines and none of the 8 hand saws. With no input it flagged none. CLAP lookup flagged 24 and caught 23 (95.8% precision, 0.3% false alarms). On this task the 0.8B adds nothing over CLAP, and a ranger should run the lookup. Records: `socket_pilot/artifacts/triage_qwen3.5-0.8b_esc50_*.json`.
+
+```bash
+.venv/bin/python -m integrations.databricks triage --question chat --fold test     # run it with the installed sense
+.venv/bin/python -m integrations.databricks triage --from socket_pilot/artifacts/triage_*.json   # write saved records
+```
+
 ## Databricks
 
 Every agent run is recorded in a Databricks workspace (Free Edition), so each install has a pass or fail record behind it.
@@ -96,6 +116,7 @@ Every agent run is recorded in a Databricks workspace (Free Edition), so each in
 - Delta tables `workspace.sensorium.runs`, `report_cards` and `trace_events`. Each report card is a row, with the accuracy, its interval, every control as its own column, the verdict and whether it was installed.
 - The run record (`run.json`) in the Volume `/Volumes/workspace/sensorium/runs/<run id>/`.
 - One MLflow run per verified bridge in the experiment `/Users/<you>/sensorium`, with the accuracy and controls as metrics and the verdict as a tag.
+- Triage: `triage_batches` (one row per method per batch, with the question) and `triage_clips` (one row per clip, with the reply), plus one MLflow run per batch.
 
 ```bash
 uv sync --group databricks                                  # client libraries, optional
@@ -115,7 +136,7 @@ Auth comes from `~/.databrickscfg` or `DATABRICKS_HOST` and `DATABRICKS_TOKEN`. 
 - **The vector bridge passes a label, not a description.** The model treats the written vector like the word for the label: for the metal and jazz clips it said it was answering "Based on the names provided". Anything it says beyond the label is invented.
 - **The LLM planner's plan is unreliable.** See above; its install choice is checked against the rules. One planning call and one decision call are made per run.
 - **The LLM planner's stated reasons can be wrong.** In the GTZAN run it wrote that `text:gtzan` (47.5%, swapped input 20.0%) was "below the required accuracy > swapped + 0.10 threshold", which is false: the text bar is 35% and the swapped bar 30%, and it cleared both. The install was still right, because the rules check the choice, but the card's reason text comes from the model and is not checked.
-- **Tool, image and native bridges are not built.** A tool bridge that lets an API model call the specialist is in progress (#26). API models are verified on 50 held-out questions, not 200, so their intervals are wider (about 12 points either way).
+- **Image and native bridges are not built.** The tool bridge (PR #52) lets an API model call CLAP as a `listen` tool: verified directly on `openai-chat`, `tool:esc50` scored 96.0% [86.5, 98.9] on 50 questions (swapped 22.0%, no input 18.0%), the same as CLAP alone. The agent loop does not try it yet. API models are verified on 50 held-out questions, not 200, so their intervals are wider (about 12 points either way).
 - **Qwen3.5-2B is listed but untested in this harness.** It loads through the same code as the 0.8B; only the research scripts have run it.
 - **Chat has no history.** Each message stands alone, so a follow-up question needs the file attached again. Image inputs are not wired into `QwenModel.chat`.
 - **Jobs live in memory.** One run at a time, lost on restart; a run started in another browser tab shows up only as the 409 message.
@@ -132,7 +153,8 @@ Auth comes from `~/.databrickscfg` or `DATABRICKS_HOST` and `DATABRICKS_TOKEN`. 
 - [GTZAN](https://huggingface.co/datasets/marsyas/gtzan): 999 music clips, 10 genres; split 60/20/20 per genre for fitting, dev and test
 - [ESC-50](https://github.com/karolpiczak/ESC-50): 2,000 environmental sound clips, 50 classes; folds 1 to 3 fit, fold 4 dev, fold 5 test
 - [AudioCaps](https://github.com/cdjkim/audiocaps): caption text only (12,000 captions from `train.csv`), for the caption text bridge
-- Libraries: PyTorch, Transformers, NumPy, SciPy, soundfile, FastAPI, Uvicorn
+- Libraries: PyTorch, Transformers, NumPy, SciPy, soundfile, FastAPI, Uvicorn; optional: Databricks SDK, MLflow
+- Services: Databricks Free Edition (Unity Catalog, SQL warehouse, Volumes, MLflow) for the run records; the OpenAI API
 
 ## Layout
 

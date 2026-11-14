@@ -199,6 +199,7 @@ Runs of the harness in `sense/` and `agent/`, not of the pilot scripts, on the s
 | `run_openai-chat_esc50_open.json` | the API model `openai-chat` (gpt-5.4-mini), ESC-50 open scope, 50 items: `text:captions` at 90.0%, with API usage and five chats |
 | `free_text_qwen3.5-0.8b_gtzan_vector.json` | free-text answers through `vector:gtzan`: the reply names the true genre and no other in 37.0% of 100 clips |
 | `free_text_qwen3.5-0.8b_esc50_vector.json` | free-text answers through `vector:esc50`: 45.0% under strict matching ("Clock" for clock tick counts as no label) |
+| `tool_openai-chat_closed.json` | the tool bridge with `openai-chat`, `verify` called directly (closed scope, 50 items): `tool:esc50` 96.0% and `tool:gtzan` 52.0%, the same as the specialist-alone control (96.0% and 50.0%), with the API usage and one chat each in which the model called `listen` |
 
 Fit time in the harness: the closed-form fit of one block (ridge with its penalty search, plus the host's label
 targets) took 0.50 to 0.66 s on GTZAN's 597 fitting clips and 1.13 to 1.25 s on ESC-50's 1,200

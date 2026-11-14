@@ -12,9 +12,11 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
   <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/brain.js" defer></script>
   <script src="/static/app.js" defer></script>
 </head>
 <body>
+  <a class="skip-link" href="#message">Skip to message</a>
   <!-- Henad design system (Michael's claude.ai artifact "Henad"): calm, ruled and dense. design/figma-notes.md
        maps the parts to the Figma file. -->
 
@@ -50,6 +52,7 @@
     </div>
 
     <div class="actions">
+      <button id="mode-button" class="btn" type="button" aria-pressed="false" title="Switch to the terminal view (/term)"><span class="mode-glyph" aria-hidden="true">&gt;_</span><span id="mode-label">Terminal</span></button>
       <button id="new-sense-button" class="btn btn--primary" type="button" aria-haspopup="dialog" aria-controls="fit-popover" aria-expanded="false"><span data-icon="plus"></span>New sense</button>
     </div>
 
@@ -57,7 +60,7 @@
   </header>
 
   <!-- New sense: the window that starts the agent, opened from New sense or Add a sense -->
-  <div id="fit-popover" class="popover" role="dialog" aria-labelledby="fit-heading" hidden>
+  <dialog id="fit-popover" class="popover" aria-labelledby="fit-heading" hidden>
     <form id="fit-form" novalidate>
       <div class="popover-head">
         <h2 id="fit-heading">Give <span id="fit-model">the model</span> a sense</h2>
@@ -65,120 +68,144 @@
       </div>
       <div class="popover-body">
         <p id="model-info" class="hint"></p>
-        <div class="field">
-          <label class="label" for="dataset-select">Labelled examples</label>
-          <select id="dataset-select" class="select" disabled>
-            <option value="">Loading labelled sets…</option>
-          </select>
-          <p id="dataset-info" class="hint"></p>
-          <div id="dataset-error" class="error" role="alert" hidden></div>
-        </div>
         <fieldset class="field">
-          <legend class="label">Scope</legend>
+          <legend class="label">Examples</legend>
           <div class="segmented">
-            <input type="radio" id="scope-closed" name="scope" value="closed" checked>
-            <label for="scope-closed">These categories only</label>
-            <input type="radio" id="scope-open" name="scope" value="open">
-            <label for="scope-open">Any sound</label>
+            <input type="radio" id="fit-auto" name="fit-mode" value="auto" checked>
+            <label for="fit-auto">Let the agent find them</label>
+            <input type="radio" id="fit-manual" name="fit-mode" value="manual">
+            <label for="fit-manual">Choose a labelled set</label>
           </div>
-          <p id="scope-hint" class="hint"></p>
         </fieldset>
+        <div id="auto-fields" class="field">
+          <label class="label" for="fit-goal">What should the model understand?</label>
+          <textarea id="fit-goal" class="goal-input" rows="3" placeholder="For example: recognise the sound in this clip"></textarea>
+          <label id="fit-drop" class="fit-drop" for="fit-file">Drop a file here, or choose one
+            <input id="fit-file" type="file">
+          </label>
+          <p id="fit-file-name" class="hint">The agent will choose examples and verify a bridge for your goal.</p>
+        </div>
+        <div id="manual-fields" class="field" hidden>
+          <div class="field">
+            <label class="label" for="dataset-select">Labelled examples</label>
+            <select id="dataset-select" class="select" disabled>
+              <option value="">Loading labelled sets…</option>
+            </select>
+            <p id="dataset-info" class="hint"></p>
+            <div id="dataset-error" class="error" role="alert" hidden></div>
+          </div>
+          <fieldset class="field">
+            <legend class="label">Scope</legend>
+            <div class="segmented">
+              <input type="radio" id="scope-closed" name="scope" value="closed" checked>
+              <label for="scope-closed">These categories only</label>
+              <input type="radio" id="scope-open" name="scope" value="open">
+              <label for="scope-open">Any sound</label>
+            </div>
+            <p id="scope-hint" class="hint"></p>
+          </fieldset>
+        </div>
         <div id="fit-error" class="error" role="alert" hidden></div>
       </div>
       <div class="popover-actions">
         <button id="run-button" class="btn btn--primary" type="submit" disabled><span data-icon="sparkles"></span><span id="run-label">Run agent</span></button>
       </div>
     </form>
-  </div>
+  </dialog>
 
-  <main class="workspace">
-    <!-- 01 Chat -->
+  <main id="workspace" class="workspace">
+    <!-- Chats stay in view; recorded runs open on demand. -->
+    <aside class="pane pane--chats" aria-labelledby="chats-heading">
+      <div class="pane-head">
+        <h2 id="chats-heading" class="pane-title"><span class="idx" aria-hidden="true">01</span>Chats</h2>
+        <span id="chats-count" class="section-meta"></span>
+      </div>
+      <div class="chats-block">
+        <button id="new-chat-button" class="btn btn--primary new-chat" type="button" title="New chat (Ctrl+Shift+O)"><span data-icon="plus"></span>New chat<kbd>Ctrl ⇧ O</kbd></button>
+        <label class="sr-only" for="chat-search">Search chats</label>
+        <input id="chat-search" class="chat-search" type="search" placeholder="Search chats" autocomplete="off">
+        <div id="chats-list" class="chats-list"></div>
+      </div>
+      <button id="runs-button" class="btn runs-button" type="button" aria-haspopup="dialog" aria-controls="runs-dialog"><span data-icon="play"></span>Runs<span id="runs-summary" class="section-meta"></span></button>
+    </aside>
+
+    <!-- 02 Chat -->
     <section class="pane pane--chat" id="chat-panel" aria-labelledby="chat-heading">
       <div class="pane-head">
-        <h2 id="chat-heading" class="pane-title"><span class="idx" aria-hidden="true">01</span>Chat</h2>
+        <h2 id="chat-heading" class="pane-title"><span class="idx" aria-hidden="true">02</span>Chat</h2>
         <span id="chat-model" class="pane-sub"></span>
+        <button id="chat-new" class="icon-button chat-new" type="button" title="New chat (Ctrl+Shift+O)" aria-label="New chat"><span data-icon="plus"></span></button>
       </div>
-      <div id="thread" class="thread" aria-live="polite">
+      <div id="replay-bar" class="replay-bar" role="status" hidden></div>
+      <div id="chat-activity" class="chat-activity" role="status" hidden></div>
+      <div id="thread" class="thread" role="log" aria-label="Conversation" aria-live="polite" aria-relevant="additions" tabindex="0">
         <div id="thread-empty" class="thread-empty">
           <div class="drop-zone brackets">
             <span class="drop-icon" data-icon="download"></span>
             <p class="drop-title">Drop an audio file here</p>
-            <p class="drop-sub">Or attach a sample clip below, then ask a question. Each reply says how every file reached the model, and warns when one did not.</p>
+            <p class="drop-sub">Or press Samples next to the message box to attach a clip, then ask a question. Each reply says how every file reached the model, and warns when one did not.</p>
             <ul id="drop-modalities" class="mods" aria-label="What the model can take in now"></ul>
           </div>
         </div>
       </div>
       <div class="chat-footer">
-        <div class="samples">
-          <div class="section-head">
-            <h3 class="label">Sample clips</h3>
-            <span id="samples-source" class="section-meta"></span>
-          </div>
-          <ul id="samples-list" class="samples-list"></ul>
-          <div id="samples-error" class="error" role="alert" hidden></div>
-        </div>
+        <p id="chat-storage" class="chat-storage-note">Chats saved in this browser · uploads are not saved</p>
         <form id="chat-form" class="composer-form" novalidate>
+          <div id="samples-pop" class="samples-pop" hidden>
+            <div class="samples">
+              <div class="section-head">
+                <h3 class="label">Sample clips</h3>
+                <span id="samples-source" class="section-meta"></span>
+              </div>
+              <ul id="samples-list" class="samples-list"></ul>
+              <div id="samples-error" class="error" role="alert" hidden></div>
+            </div>
+          </div>
+          <ul id="cmd-hints" class="cmd-hints" role="listbox" aria-label="Commands" hidden></ul>
           <ul id="attachments" class="attachments" aria-label="Files attached to the next message" hidden></ul>
           <div class="composer">
             <span class="prompt" aria-hidden="true">&gt;</span>
             <label class="sr-only" for="message">Message</label>
-            <textarea id="message" rows="1" placeholder="Ask about the attached clip"></textarea>
+             <textarea id="message" rows="1" aria-describedby="composer-hint" placeholder="Ask about the attached clip, or type / for commands"></textarea>
+            <button id="samples-button" class="btn btn--small samples-button" type="button" aria-expanded="false" aria-controls="samples-pop" title="Attach a sample clip">Samples</button>
             <label class="icon-button file-button" title="Attach audio">
               <span data-icon="paperclip"></span>
               <span class="sr-only">Attach audio</span>
               <input id="file-input" class="sr-only" type="file" accept=".wav,.mp3,.flac,.ogg,.opus,.aif,.aiff,.au" multiple>
             </label>
             <button id="send-button" class="send" type="submit" disabled aria-label="Send"><span data-icon="arrow-up"></span></button>
-          </div>
+            <button id="chat-stop" class="btn btn--small" type="button" hidden>Stop receiving</button>
+           </div>
+           <p id="composer-hint" class="composer-hint">Enter to send · Shift+Enter for a new line</p>
           <div id="chat-error" class="error" role="alert" hidden></div>
         </form>
       </div>
     </section>
 
-    <!-- 02 Sense graph and 03 Agent run -->
-    <section class="center" aria-label="Agent">
-      <div class="pane-head graph-head">
-        <h2 id="graph-heading" class="pane-title"><span class="idx" aria-hidden="true">02</span>Sense graph</h2>
-        <span id="graph-sub" class="pane-sub"></span>
-        <div class="tabs" role="tablist" aria-label="Centre view">
-          <button id="graph-tab" class="tab" type="button" role="tab" aria-selected="true" aria-controls="graph-canvas">Graph</button>
-          <button id="log-button" class="tab" type="button" role="tab" aria-selected="false" aria-controls="log-view" disabled>Event log <span id="log-count" class="num"></span></button>
+    <!-- 03 Inspector: the brain, then Report / Run / Graph / Log -->
+    <aside class="pane pane--report pane--inspector" id="report-panel" aria-label="Inspector">
+      <div class="brain-block">
+          <div class="section-head">
+            <h3 class="pane-title">Brain</h3>
+            <span id="brain-meta" class="section-meta"></span>
+          </div>
+          <div class="brain-stage">
+            <canvas id="brain" role="img" aria-label="Model senses" aria-describedby="brain-access"></canvas>
+            <div id="brain-tip" class="brain-tip" hidden></div>
+          </div>
+          <ul id="brain-access" class="brain-access" aria-label="Brain regions and senses"></ul>
         </div>
+      <div class="tabs insp-tabs" role="tablist" aria-label="Inspector">
+        <button id="report-tab" class="tab" type="button" role="tab" aria-selected="true" aria-controls="report-view" data-tab="report">Report</button>
+        <button id="run-tab" class="tab" type="button" role="tab" tabindex="-1" aria-selected="false" aria-controls="run-view" data-tab="run">Run <span id="run-tab-led" class="led" hidden></span></button>
+        <button id="graph-tab" class="tab" type="button" role="tab" tabindex="-1" aria-selected="false" aria-controls="graph-view" data-tab="graph">Graph</button>
+        <button id="log-button" class="tab" type="button" role="tab" tabindex="-1" aria-selected="false" aria-controls="log-view" data-tab="log" disabled>Log <span id="log-count" class="num"></span></button>
       </div>
-      <section class="graph" aria-labelledby="graph-heading">
-        <div id="model-error" class="error graph-error" role="alert" hidden></div>
-        <div id="graph-canvas" class="graph-canvas" role="tabpanel" aria-labelledby="graph-tab"></div>
-        <ul class="legend" aria-label="Wire colours">
-          <li><span class="swatch" style="--swatch: var(--wire-audio)"></span>Audio</li>
-          <li><span class="swatch" style="--swatch: var(--wire-embedding)"></span>Embedding</li>
-          <li><span class="swatch" style="--swatch: var(--wire-text)"></span>Text</li>
-          <li><span class="swatch" style="--swatch: var(--wire-data)"></span>Labelled data</li>
-        </ul>
-        <div id="log-view" class="log-view" role="tabpanel" aria-labelledby="log-button" hidden>
-          <ol id="timeline" class="timeline" aria-label="Every event of the run"></ol>
+      <div id="report-view" class="insp-view panel-scroll" role="tabpanel" aria-labelledby="report-tab">
+        <div class="pane-head report-head">
+          <h2 id="report-heading" class="pane-title" tabindex="-1"><span class="idx" aria-hidden="true">04</span>Report card</h2>
+          <span id="report-verdict" class="tag" hidden></span>
         </div>
-      </section>
-
-      <section id="trace-panel" class="run" aria-labelledby="trace-heading">
-        <div class="run-head">
-          <h2 id="trace-heading" class="pane-title"><span class="idx" aria-hidden="true">03</span>Agent run</h2>
-          <span id="trace-status" class="tag" hidden></span>
-          <span id="trace-request" class="run-meta">Not run yet.</span>
-          <span id="trace-elapsed" class="run-elapsed num"></span>
-        </div>
-        <ol id="steps" class="steps" aria-label="Steps of the agent run"></ol>
-        <div id="trace-outcome" aria-live="polite"></div>
-        <div id="trace-error" class="error" role="alert" hidden></div>
-      </section>
-    </section>
-
-    <!-- 04 Report card and 05 Senses -->
-    <aside class="pane pane--report" id="report-panel" aria-labelledby="report-heading">
-      <div class="pane-head">
-        <h2 id="report-heading" class="pane-title" tabindex="-1"><span class="idx" aria-hidden="true">04</span>Report card</h2>
-        <span id="report-verdict" class="tag" hidden></span>
-      </div>
-      <div class="panel-scroll">
         <div id="report" class="report-body" aria-live="polite"></div>
         <div class="senses-block">
           <div class="section-head">
@@ -189,12 +216,66 @@
           <div id="senses-error" class="error" role="alert" hidden></div>
         </div>
       </div>
+      <div id="run-view" class="insp-view panel-scroll" role="tabpanel" aria-labelledby="run-tab" hidden>
+      <section id="trace-panel" class="run" aria-labelledby="trace-heading">
+        <div class="run-head">
+          <h2 id="trace-heading" class="pane-title"><span class="idx" aria-hidden="true">03</span>Agent run</h2>
+          <span id="trace-status" class="tag" hidden></span>
+          <span id="trace-request" class="run-meta">Not run yet.</span>
+          <span id="trace-elapsed" class="run-elapsed num"></span>
+          <button id="job-stop" class="btn btn--small" type="button" hidden>Stop</button>
+        </div>
+        <ol id="steps" class="steps" aria-label="Steps of the agent run"></ol>
+        <div id="trace-outcome" aria-live="polite"></div>
+        <div id="trace-error" class="error" role="alert" hidden></div>
+      </section>
+      </div>
+      <div id="graph-view" class="insp-view" role="tabpanel" aria-labelledby="graph-tab" hidden>
+        <div class="pane-head graph-head">
+          <h2 id="graph-heading" class="pane-title"><span class="idx" aria-hidden="true">06</span>Sense graph</h2>
+          <span id="graph-sub" class="pane-sub"></span>
+        </div>
+      <section class="graph" aria-labelledby="graph-heading">
+        <div id="model-error" class="error graph-error" role="alert" hidden></div>
+        <div id="graph-canvas" class="graph-canvas"></div>
+        <ul class="legend" aria-label="Wire colours">
+          <li><span class="swatch" style="--swatch: var(--wire-audio)"></span>Audio</li>
+          <li><span class="swatch" style="--swatch: var(--wire-embedding)"></span>Embedding</li>
+          <li><span class="swatch" style="--swatch: var(--wire-text)"></span>Text</li>
+          <li><span class="swatch" style="--swatch: var(--wire-data)"></span>Labelled data</li>
+        </ul>
+
+      </section>
+      </div>
+        <div id="log-view" class="log-view insp-view" role="tabpanel" aria-labelledby="log-button" hidden>
+          <ol id="timeline" class="timeline" aria-label="Every event of the run"></ol>
+        </div>
       <div class="report-footer">
         <button id="export-button" class="btn" type="button" disabled><span data-icon="download"></span>Export report</button>
         <button id="add-sense-button" class="btn btn--primary" type="button" aria-haspopup="dialog" aria-controls="fit-popover"><span data-icon="plus"></span>Add a sense</button>
       </div>
     </aside>
   </main>
+
+  <dialog id="runs-dialog" class="runs-dialog" aria-labelledby="runs-heading" aria-describedby="runs-description">
+    <div class="pane-head runs-head">
+      <h2 id="runs-heading" class="pane-title">Runs</h2>
+      <button id="runs-refresh" class="icon-button" type="button" aria-label="Reload the runs"><span data-icon="refresh"></span></button>
+      <button id="runs-close" class="icon-button" type="button" aria-label="Close runs" autofocus><span data-icon="x"></span></button>
+    </div>
+    <p id="runs-description" class="hint">Review recorded outcomes or replay a run. Chat stays available during replay.</p>
+    <button id="runs-current" class="btn" type="button" hidden>View current run</button>
+    <div class="runs-speed">
+      <span class="label">Replay speed</span>
+      <div class="speed-seg" role="group" aria-label="Replay speed">
+        <button type="button" class="speed" data-speed="1" aria-pressed="true">1×</button>
+        <button type="button" class="speed" data-speed="2" aria-pressed="false">2×</button>
+        <button type="button" class="speed" data-speed="4" aria-pressed="false">4×</button>
+      </div>
+    </div>
+    <ul id="runs-list" class="runs-list" aria-label="Recorded runs" tabindex="0"></ul>
+    <div id="runs-error" class="error" role="alert" hidden></div>
+  </dialog>
 
   <!-- The band: status line, every value from the API -->
   <footer class="band statusline" aria-label="Status">

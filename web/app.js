@@ -53,13 +53,16 @@ const RULE_TEXT =
 const STATUS_WORDS = { start: "started", ok: "succeeded", fail: "failed", info: "note" };
 const JOB_WORDS = { running: "Running", done: "Finished", failed: "Failed", lost: "Disconnected" };
 
-/* The six steps of the agent loop, in the order of the Figma Agent step strip. Unknown steps from the
-   server are shown after these. Before a run each card says what the step will do. */
+/* Auto-discovery steps surround the original fit loop. Legacy runs show only their own steps. */
 const STEPS = [
+  { key: "detect", title: "Detect the input", idle: "Identify what kind of file the model needs to understand.", auto: true },
+  { key: "research", title: "Research the task", idle: "Find a suitable specialist and approach for the goal.", auto: true },
+  { key: "data", title: "Find labelled examples", idle: "Choose data for fitting and independent verification.", auto: true },
   { key: "inspect", title: "Check the base model", idle: "Read what the model accepts and whether its weights are open." },
   { key: "plan", title: "Choose bridges", idle: "Choose which bridges to try." },
   { key: "fit", title: "Build bridges", idle: "Build each candidate from the labelled examples." },
   { key: "verify", title: "Verify on held-out", idle: "Score each one on held-out clips against the controls." },
+  { key: "claims", title: "Report supported claims", idle: "State what the measurements support and their limits.", auto: true },
   { key: "decide", title: "Install or refuse", idle: "Pick the bridge that beats the controls, or refuse." },
   { key: "install", title: "Install", idle: "Add it to the model's senses, ready for chat." },
 ];
@@ -79,11 +82,20 @@ const state = {
   job: null,
   starting: false,
   chatting: false,
+  chatAbort: null,
+  fitFile: null,
   senses: [], // the last /api/senses answer for state.model
   usedBridges: new Set(), // bridges a chat reply has used; their top-bar chip stops being "new"
   reportBridge: null, // which card the report panel shows
   reportCard: null, // the card it shows, for Export report
-  showLog: false,
+  tab: "report", // which inspector tab is open: report, run, graph or log
+  runs: [], // the last /api/runs answer, newest first
+  replaySpeed: 1,
+  replayDismissed: null, // job id whose finished replay bar the user closed
+  chats: [{ id: 1, title: "New chat", turns: 0, frag: null, messages: [] }],
+  editing: null,
+  chatId: 1,
+  nextChatId: 2,
   server: "loading", // loading, ok or error: whether /api/models answered, for the status line
 };
 
@@ -115,6 +127,8 @@ function h(tag, attrs, ...children) {
 const ICONS = {
   "plus": "M19,13H13V19H11V13H5V11H11V5H13V11H19V13Z", // mdi:plus
   "x": "M19,6.41L17.59,5L12,10.59L6.41,5L5,6.41L10.59,12L5,17.59L6.41,19L12,13.41L17.59,19L19,17.59L13.41,12L19,6.41Z", // mdi:close
+  "refresh": "M17.65,6.35C16.2,4.9 14.21,4 12,4A8,8 0 0,0 4,12A8,8 0 0,0 12,20C15.73,20 18.84,17.45 19.73,14H17.65C16.83,16.33 14.61,18 12,18A6,6 0 0,1 6,12A6,6 0 0,1 12,6C13.66,6 15.14,6.69 16.22,7.78L13,11H20V4L17.65,6.35Z", // mdi:refresh
+  "copy": "M19,21H8V7H19M19,5H8A2,2 0 0,0 6,7V21A2,2 0 0,0 8,23H19A2,2 0 0,0 21,21V7A2,2 0 0,0 19,5M16,1H4A2,2 0 0,0 2,3V17H4V3H16V1Z", // mdi:content-copy
   "chevron-down": "M7.41,8.58L12,13.17L16.59,8.58L18,10L12,16L6,10L7.41,8.58Z", // mdi:chevron-down
   "check": "M21,7L9,19L3.5,13.5L4.91,12.09L9,16.17L19.59,5.59L21,7Z", // mdi:check
   "check-circle": "M12 2C6.5 2 2 6.5 2 12S6.5 22 12 22 22 17.5 22 12 17.5 2 12 2M12 20C7.59 20 4 16.41 4 12S7.59 4 12 4 20 7.59 20 12 16.41 20 12 20M16.59 7.58L10 14.17L7.41 11.59L6 13L10 17L18 9L16.59 7.58Z", // mdi:check-circle-outline
@@ -369,7 +383,8 @@ function syncControls() {
   const running = jobRunning();
 
   const run = $("run-button");
-  run.disabled = !usable || !state.dataset || state.starting || running;
+  const auto = $("fit-auto").checked;
+  run.disabled = !usable || (auto ? !state.fitFile || !$("fit-goal").value.trim() : !state.dataset) || state.starting || running;
   $("run-label").textContent = running ? "Agent running…" : state.starting ? "Starting…" : "Run agent";
   if (state.starting || running) run.setAttribute("aria-busy", "true");
   else run.removeAttribute("aria-busy");
@@ -380,6 +395,21 @@ function syncControls() {
   send.replaceChildren(icon(state.chatting ? "loader" : "arrow-up"));
   if (state.chatting) send.setAttribute("aria-busy", "true");
   else send.removeAttribute("aria-busy");
+  const working = state.chats.find((chat) => chat.messages.some((m) => m.status === "pending"));
+  const elsewhere = working && working.id !== state.chatId;
+  const activity = $("chat-activity");
+  activity.hidden = !elsewhere;
+  // Do not repeatedly announce or replace a focused navigation button on unrelated updates.
+  if (activity.dataset.chat !== String(elsewhere ? working.id : "")) {
+    activity.dataset.chat = elsewhere ? String(working.id) : "";
+    activity.replaceChildren(...(elsewhere ? [
+      h("span", { text: `Replying in “${working.title}”. You can browse chats while it finishes.` }),
+      h("button", { type: "button", class: "link-button", text: "View working chat", onclick: () => switchChat(working.id) }),
+    ] : []));
+  }
+  $("chat-stop").hidden = !state.chatting || Boolean(elsewhere);
+  $("thread").setAttribute("aria-busy", String(Boolean(working && !elsewhere)));
+  for (const button of document.querySelectorAll(".msg-actions button")) button.disabled = state.chatting;
 
   const label = usable ? model.label : "";
   $("chat-model").textContent = label;
@@ -420,16 +450,20 @@ function openFit(anchor) {
   const pop = $("fit-popover");
   pop.hidden = false;
   pop.dataset.anchor = anchor === $("add-sense-button") ? "report" : "top";
+  if (!pop.open) pop.showModal();
   $("new-sense-button").setAttribute("aria-expanded", "true");
-  const target = $("dataset-select").disabled ? $("run-button") : $("dataset-select");
+  $("add-sense-button").setAttribute("aria-expanded", "true");
+  const target = $("fit-auto").checked ? $("fit-goal") : $("dataset-select");
   target.focus();
 }
 
 function closeFit(returnFocus) {
   const pop = $("fit-popover");
   if (pop.hidden) return;
+  pop.close();
   pop.hidden = true;
   $("new-sense-button").setAttribute("aria-expanded", "false");
+  $("add-sense-button").setAttribute("aria-expanded", "false");
   if (returnFocus) $(pop.dataset.anchor === "report" ? "add-sense-button" : "new-sense-button").focus();
 }
 
@@ -524,7 +558,83 @@ function renderModelInfo() {
 }
 
 /** Sense chips on the band: native, installed (marked new until used in chat), checking, refused. */
+/* The brain card: one region per data colour, lit from the same API data as the senses list. */
+let brainView = null;
+let brainRegions = {};
+const BRAIN_RANK = { refused: 1, native: 2, running: 3, installed: 4 };
+
+function renderBrain() {
+  const canvas = $("brain");
+  if (!canvas || !window.SenseBrain) return;
+  if (!brainView) {
+    const installedBridge = (g) => ((brainRegions[g] || {}).senses || []).find((s) => s.bridge);
+    brainView = SenseBrain.mount(canvas, {
+      onHover: showBrainTip,
+      clickable: (g) => Boolean(installedBridge(g)),
+      onClick: (g) => { const s = installedBridge(g); if (s) selectReport(s.bridge); },
+    });
+  }
+  const regions = {};
+  const add = (modality, entry) => {
+    const g = SenseBrain.regionFor(MODALITY_TOKENS[modalityKey(modality)] || "input");
+    const r = (regions[g] = regions[g] || { level: null, senses: [] });
+    r.senses.push(entry);
+    if (!r.level || BRAIN_RANK[entry.level] > BRAIN_RANK[r.level]) r.level = entry.level;
+  };
+  const model = currentModel();
+  for (const m of model ? model.native || [] : []) add(m, { level: "native", title: capitalise(m), sub: "Native" });
+  for (const sense of state.senses) {
+    const card = senseCard(sense);
+    const acc = toNumber(card.accuracy);
+    add(sense.modality, { level: "installed", title: capitalise(sense.modality), sub: [`${kindLabel(card.kind)} bridge`, acc !== null ? pct(acc) : ""].filter(Boolean).join(" · "), bridge: sense.bridge });
+  }
+  const refused = refusedRun();
+  if (refused) add(refused.modality, { level: "refused", title: capitalise(refused.modality), sub: `Refused for ${datasetTitle(refused.dataset)}` });
+  const job = modelJob();
+  if (job && job.status === "running" && job.request && job.request.modality) add(job.request.modality, { level: "running", title: capitalise(job.request.modality), sub: "Agent run in progress" });
+  brainRegions = regions;
+  const levels = {};
+  for (const g in regions) levels[g] = regions[g].level;
+  brainView.update(levels);
+  const lit = Object.keys(regions).filter((g) => regions[g].level !== "refused").length;
+  $("brain-meta").textContent = model ? `${lit} of ${Object.keys(SenseBrain.REGIONS).length} regions` : "";
+  const entries = Object.entries(regions).flatMap(([g, r]) => r.senses.map((s) => ({ ...s, region: SenseBrain.REGIONS[g].role })));
+  const summary = entries.map((s) => `${s.region}: ${s.title}, ${s.sub}`).join(". ");
+  canvas.setAttribute("aria-label", summary || "Choose a model to see its senses");
+  // Text and keyboard equivalents of the canvas hover/click targets.
+  const access = $("brain-access");
+  const signature = JSON.stringify(entries);
+  if (access.dataset.signature !== signature) {
+    access.dataset.signature = signature;
+    access.replaceChildren(...entries.map((s) => h("li", {},
+      s.bridge ? h("button", {
+        type: "button", class: "link-button", text: `${s.title} · ${s.sub}`,
+        "aria-label": `${s.region}: ${s.title}, ${s.sub}. Open report`,
+        onclick: () => selectReport(s.bridge),
+      }) : h("span", { text: `${s.title} · ${s.sub}` }))));
+  }
+}
+
+function showBrainTip(g, e) {
+  const tip = $("brain-tip");
+  if (!g || !e) { tip.hidden = true; return; }
+  const region = SenseBrain.REGIONS[g];
+  const senses = (brainRegions[g] || {}).senses || [];
+  tip.replaceChildren(
+    h("div", { class: "brain-tip-head", text: region.role }),
+    ...(senses.length
+      ? senses.map((s) => h("div", { class: `brain-tip-row brain-tip-row--${s.level}` }, h("span", { text: s.title }), h("span", { text: s.sub })))
+      : [h("div", { class: "brain-tip-row", text: "No sense here yet" })]),
+    senses.some((s) => s.bridge) ? h("div", { class: "brain-tip-hint", text: "Click to open its report card" }) : null,
+  );
+  tip.hidden = false;
+  const stage = tip.parentElement.getBoundingClientRect();
+  tip.style.left = `${Math.min(e.clientX - stage.left + 12, stage.width - tip.offsetWidth - 4)}px`;
+  tip.style.top = `${Math.min(e.clientY - stage.top + 12, stage.height - tip.offsetHeight - 4)}px`;
+}
+
 function renderChips() {
+  renderBrain();
   const list = $("sense-chips");
   const model = currentModel();
   if (!model) {
@@ -615,7 +725,7 @@ function senseCard(sense) {
 /** The latest finished run for this model that installed nothing, as {modality, dataset, best card}. */
 function refusedRun() {
   const job = modelJob();
-  if (!job || job.status !== "done" || job.installed || !job.request) return null;
+  if (!job || job.status !== "done" || job.installed || !job.request || !job.cards.size) return null;
   const best = bestCard([...job.cards.values()]);
   return { modality: job.request.modality || (best && best.modality) || "audio", dataset: job.request.dataset, best };
 }
@@ -733,6 +843,7 @@ function reportCards() {
 function selectReport(bridge) {
   if (!bridge) return;
   state.reportBridge = bridge;
+  setTab("report");
   renderReport();
   renderGraph();
   const heading = $("report-heading");
@@ -1118,6 +1229,9 @@ function drawWires() {
     path.style.stroke = colour;
     svg.append(path);
   };
+  // Measure the content without the old SVG size, which otherwise prevents the canvas shrinking.
+  svg.setAttribute("width", "0");
+  svg.setAttribute("height", "0");
   svg.setAttribute("width", String(canvas.scrollWidth));
   svg.setAttribute("height", String(canvas.scrollHeight));
   const job = modelJob();
@@ -1354,6 +1468,13 @@ async function sendMessage(event) {
   const errorEl = $("chat-error");
   const message = box.value.trim();
   showError(errorEl, null);
+  if (message.startsWith("/")) {
+    runCommand(message);
+    box.value = "";
+    autosize(box);
+    $("cmd-hints").hidden = true;
+    return;
+  }
   if (state.chatting) return;
   const model = currentModel();
   if (!model || !model.available) {
@@ -1368,36 +1489,181 @@ async function sendMessage(event) {
 
   const files = [...state.files];
   const samples = [...state.attachedSamples.values()];
+  const chat = currentChat();
+  if (state.editing && state.editing.record.files.some((f) => !files.some((picked) => picked.name === f.name))) {
+    showError(errorEl, new Error("Reattach the original uploaded files before resending this message."));
+    return;
+  }
+  if (state.editing && state.editing.chat === chat) truncateChat(chat, state.editing.record);
+  state.editing = null;
+  const record = { model: { name: model.name, label: model.label }, message, files, samples, status: "pending" };
+  chat.messages.push(record);
+  record.turn = drawMessage(record, chat);
+  box.value = "";
+  autosize(box);
+  state.files = [];
+  state.attachedSamples.clear();
+  for (const sample of samples) syncSampleItem(sample.id);
+  renderAttachments();
+  await requestReply(chat, record);
+}
+
+/** Retry/edit replaces this turn and its follow-ups, so history never includes a stale answer. */
+function truncateChat(chat, record) {
+  const index = chat.messages.indexOf(record);
+  if (index < 0) return;
+  for (const removed of chat.messages.splice(index)) removed.turn?.root.remove();
+}
+
+async function requestReply(chat, record) {
+  const { model, message, files, samples } = record;
   const form = new FormData();
   form.append("model", model.name);
   form.append("message", message);
+  const index = chat.messages.indexOf(record);
+  const history = chat.messages.slice(0, index).filter((m) => m.status === "done" && m.model.name === model.name)
+    .slice(-6).flatMap((m) => [{ role: "user", content: m.message }, { role: "assistant", content: m.result.reply || "" }]);
+  form.append("history", JSON.stringify(history));
   for (const file of files) form.append("files", file, file.name);
   for (const sample of samples) form.append("sample_ids", sample.id);
 
-  const turn = appendTurn(model, message, files, samples);
+  record.status = "pending";
+  chat.updatedAt = Date.now();
+  record.error = null;
+  record.turn.reply.replaceChildren(h("p", { class: "msg-text pending", text: "Waiting for the model" }));
+  record.turn.tags.replaceChildren();
   state.chatting = true;
+  state.chatAbort = new AbortController();
+  saveChats();
+  renderChats();
   syncControls();
   try {
-    const result = await api("/api/chat", { method: "POST", body: form });
-    fillReply(turn, result || {});
-    if (box.value.trim() === message) {
-      box.value = "";
-      autosize(box);
-    }
-    state.files = state.files.filter((f) => !files.includes(f));
-    for (const sample of samples) {
-      state.attachedSamples.delete(sample.id);
-      syncSampleItem(sample.id);
-    }
-    renderAttachments();
+    const result = await streamReply(form, record.turn, state.chatAbort.signal);
+    record.result = result || {};
+    record.status = "done";
+    fillReply(record.turn, record.result);
   } catch (err) {
-    turn.root.remove();
-    updateThreadEmpty();
-    showError(errorEl, err);
+    record.status = "failed";
+    record.error = err.name === "AbortError" ? "Stopped receiving the reply. The server may still be finishing generation." : err.message;
+    record.turn.reply.replaceChildren(h("p", { class: "error", role: "alert", text: record.error }));
   } finally {
     state.chatting = false;
+    state.chatAbort = null;
+    chat.updatedAt = Date.now();
+    saveChats();
+    renderChats();
     syncControls();
   }
+}
+
+/** SSE is framed by blank lines, not network chunks. Older servers fall back before generation starts. */
+async function streamReply(form, turn, signal) {
+  const response = await fetch("/api/chat/stream", { method: "POST", body: form, signal });
+  if (response.status === 404 || response.status === 405) {
+    const fallback = await fetch("/api/chat", { method: "POST", body: form, signal });
+    const body = await fallback.json();
+    if (!fallback.ok) throw new ApiError(detailText(body, fallback.status), fallback.status);
+    return body;
+  }
+  if (!response.ok) {
+    const body = await response.json().catch(() => null);
+    throw new ApiError(detailText(body, response.status), response.status);
+  }
+  if (!(response.headers.get("content-type") || "").includes("text/event-stream") || !response.body) {
+    throw new Error("The server did not return a reply stream.");
+  }
+  const text = h("p", { class: "msg-text" });
+  turn.reply.replaceChildren(text);
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let lineBuffer = "", eventType = "", dataLines = [], reply = "", used = [], result = null;
+  const line = (value) => {
+    if (value === "") {
+      if (dataLines.length) {
+        const data = JSON.parse(dataLines.join("\n"));
+        if (eventType === "used") used = Array.isArray(data) ? data : [];
+        else if (eventType === "token") {
+          reply += data.text || "";
+          text.textContent = reply;
+          if (turn.root.isConnected && nearEnd($("thread"))) scrollToEnd($("thread"));
+        } else if (eventType === "done") result = { reply: data.reply ?? reply, used };
+        else if (eventType === "error") throw new Error(data.detail || "The model failed to answer.");
+      }
+      eventType = "";
+      dataLines = [];
+    } else if (value.startsWith("event:")) eventType = value.slice(6).trim();
+    else if (value.startsWith("data:")) dataLines.push(value.slice(5).replace(/^ /, ""));
+  };
+  try {
+    while (!result) {
+      const chunk = await reader.read();
+      const lines = (lineBuffer + decoder.decode(chunk.value, { stream: !chunk.done })).split("\n");
+      lineBuffer = lines.pop();
+      for (const value of lines) line(value.replace(/\r$/, ""));
+      if (chunk.done) {
+        if (lineBuffer) line(lineBuffer.replace(/\r$/, ""));
+        line("");
+        if (!result) throw new Error("The reply stream ended early. Retry this message.");
+      }
+    }
+    return result;
+  } finally {
+    await reader.cancel().catch(() => {});
+    reader.releaseLock();
+  }
+}
+
+function drawMessage(record, chat) {
+  const turn = appendTurn(record.model, record.message, record.files, record.samples);
+  if (record.status === "done") fillReply(turn, record.result || {});
+  else if (record.status !== "pending") turn.reply.replaceChildren(h("p", { class: "error", text: record.error || "Reply interrupted. Retry to send again." }));
+  turn.root.append(h("div", { class: "msg-actions" },
+    h("button", { type: "button", class: "link-button", text: "Retry", onclick: () => retryMessage(chat, record) }),
+    h("button", { type: "button", class: "link-button", text: "Edit", onclick: () => editMessage(chat, record) })));
+  return turn;
+}
+
+function editMessage(chat, record) {
+  if (state.chatting) return;
+  state.editing = { chat, record };
+  $("message").value = record.message;
+  state.files = record.files.filter((f) => f instanceof File);
+  state.attachedSamples = new Map(record.samples.map((s) => [s.id, s]));
+  if (state.models.some((m) => m.name === record.model.name && m.available)) {
+    $("model-select").value = record.model.name;
+    setModel(record.model.name);
+  }
+  renderAttachments();
+  autosize($("message"));
+  $("message").focus();
+  showError($("chat-error"), new Error(record.files.some((f) => !(f instanceof File))
+    ? "Reattach the uploaded files before resending. Sending replaces this message and its follow-ups."
+    : "Editing this message. Sending replaces it and its follow-ups. Escape cancels."));
+}
+
+function retryMessage(chat, record) {
+  if (state.chatting) return;
+  if (record.files.some((f) => !(f instanceof File))) { editMessage(chat, record); return; }
+  if (!state.models.some((m) => m.name === record.model.name && m.available)) {
+    showError($("chat-error"), new Error("This message's model is unavailable. Edit it to select an available model."));
+    return;
+  }
+  if (state.editing) cancelEdit();
+  showError($("chat-error"), null);
+  truncateChat(chat, record);
+  chat.messages.push(record);
+  record.turn = drawMessage(record, chat);
+  requestReply(chat, record);
+}
+
+function cancelEdit() {
+  state.editing = null;
+  $("message").value = "";
+  state.files = [];
+  state.attachedSamples.clear();
+  renderAttachments();
+  showError($("chat-error"), null);
+  autosize($("message"));
 }
 
 /** A user turn (name line, attachments, message) and the model's answer under its own name line. */
@@ -1455,7 +1721,12 @@ function fillReply(turn, result) {
     ...kinds.map((k) => tag(`Heard via ${kindLabel(k).toLowerCase()} bridge`, "info")),
     ...(missing ? [tag("File not received", "danger")] : []),
   );
-  const parts = [h("p", { class: "msg-text", text: result.reply || "The model returned an empty reply." })];
+  const replyText = result.reply || "The model returned an empty reply.";
+  const copy = h("button", { type: "button", class: "icon-button msg-copy", title: "Copy the reply", "aria-label": "Copy the reply" }, icon("copy", 13));
+  copy.addEventListener("click", () => {
+    if (navigator.clipboard) navigator.clipboard.writeText(replyText).then(() => copy.replaceChildren(icon("check", 13)), () => {});
+  });
+  const parts = [h("p", { class: "msg-text", text: replyText }), copy];
   if (used.length) parts.push(h("ul", { class: "used-list", "aria-label": "How each file reached the model" }, used.map(usedItem)));
   turn.reply.replaceChildren(...parts);
   let changed = false;
@@ -1495,6 +1766,8 @@ function postAgentResult(job, data) {
   let result;
   if (job.status === "failed") {
     result = resultCard("refused", "The run failed", "", data.error || "The server gave no error text. Check the server log, then run the agent again.", null, null);
+  } else if (!cards.length && !data.installed) {
+    result = callout("info", "Agent finished", job.doneMessage || "No bridge was installed.");
   } else if (fallback) {
     // Screen 03: the first bridge was refused and the agent installed another one instead.
     const r = fallback.refused;
@@ -1573,16 +1846,21 @@ async function runAgent(event) {
   if (state.starting || jobRunning()) return;
   const model = currentModel();
   const dataset = currentDataset();
+  const auto = $("fit-auto").checked;
   if (!model || !model.available) {
     showError(errorEl, new Error("Choose an available base model first."));
     return;
   }
-  if (!dataset) {
+  if (!auto && !dataset) {
     showError(errorEl, new Error("Choose a set of labelled examples first."));
     return;
   }
+  if (auto && (!state.fitFile || !$("fit-goal").value.trim())) {
+    showError(errorEl, new Error("Drop a file and describe what you want the model to understand."));
+    return;
+  }
   const scope = document.querySelector('input[name="scope"]:checked');
-  const request = {
+  const request = auto ? { model: model.name, goal: $("fit-goal").value.trim() } : {
     model: model.name,
     dataset: dataset.name,
     modality: dataset.modality || "audio",
@@ -1591,7 +1869,13 @@ async function runAgent(event) {
   state.starting = true;
   syncControls();
   try {
-    const result = await api("/api/fit", {
+    const form = new FormData();
+    if (auto) {
+      form.append("model", request.model);
+      form.append("goal", request.goal);
+      form.append("file", state.fitFile, state.fitFile.name);
+    }
+    const result = await api(auto ? "/api/auto" : "/api/fit", auto ? { method: "POST", body: form } : {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(request),
@@ -1601,6 +1885,9 @@ async function runAgent(event) {
     closeFit(false);
     startJob(result.job_id, request, false);
   } catch (err) {
+    if (auto && (err.status === 404 || err.status === 405)) {
+      err = new Error("Automatic discovery is not available on this server yet. Choose a labelled set, or update the server.");
+    }
     showError(errorEl, err);
   } finally {
     state.starting = false;
@@ -1632,11 +1919,13 @@ function startJob(id, request, resumed) {
   $("log-button").disabled = false;
   $("trace-outcome").replaceChildren();
   showError($("trace-error"), null);
+  if (!resumed) setTab("run");
   renderTraceHead();
   renderSteps();
   renderGraph();
   renderReport();
   renderChips();
+  renderRuns();
   syncControls();
   poll(state.job);
 }
@@ -1669,7 +1958,7 @@ async function poll(job) {
   }
   if (state.job !== job) return;
   job.failures = 0;
-  showError($("trace-error"), null);
+  showError($("trace-error"), job.cancelError || null);
   applyJob(job, data || {});
   if (job.status === "running") job.timer = setTimeout(() => poll(job), POLL_MS);
   else finishJob(job, data || {});
@@ -1677,6 +1966,7 @@ async function poll(job) {
 
 function applyJob(job, data) {
   if (data.request) job.request = data.request;
+  if (data.replay) job.replay = data.replay;
   job.status = typeof data.status === "string" ? data.status : "running";
   const events = Array.isArray(data.events) ? data.events : [];
   if (events.length < job.seen) {
@@ -1781,8 +2071,11 @@ function finishJob(job, data) {
   renderReport();
   renderGraph();
   postAgentResult(job, data);
+  if (state.tab === "run") setTab("report");
   syncControls();
   loadSenses();
+  renderRuns();
+  if (!job.replay) setTimeout(loadRuns, 800); // the server records a finished run
 }
 
 function stepStatus(key, s, job) {
@@ -1829,11 +2122,16 @@ function stepCode(key, s) {
   return key;
 }
 
-/** The six steps of the agent run, filled from the trace, plus any step the server adds. */
+function visibleSteps(job = state.job) {
+  const auto = !job || Boolean(job.request?.goal) || STEPS.some((s) => s.auto && job.steps.has(s.key));
+  return STEPS.filter((s) => auto || !s.auto);
+}
+
+/** Known steps in execution order, followed by any newly introduced server steps. */
 function renderSteps() {
   const job = state.job;
   const extra = job ? [...job.steps.keys()].filter((k) => !STEP_INDEX[k]) : [];
-  const keys = [...STEPS.map((s) => s.key), ...extra];
+  const keys = [...visibleSteps(job).map((s) => s.key), ...extra];
   $("steps").style.setProperty("--steps", String(keys.length));
   $("steps").replaceChildren(
     ...keys.map((key, i) => {
@@ -1871,8 +2169,9 @@ function renderProgress() {
     delete bar.dataset.state;
     return;
   }
-  const finished = STEPS.filter((s) => ["done", "refused"].includes(stepStatus(s.key, job.steps.get(s.key), job))).length;
-  bar.style.width = `${(job.status === "running" ? finished / STEPS.length : 1) * 100}%`;
+  const steps = visibleSteps(job);
+  const finished = steps.filter((s) => ["done", "refused"].includes(stepStatus(s.key, job.steps.get(s.key), job))).length;
+  bar.style.width = `${(job.status === "running" ? finished / steps.length : 1) * 100}%`;
   bar.dataset.state = job.status === "running" ? "running" : job.status === "done" ? "done" : "failed";
 }
 
@@ -1881,6 +2180,13 @@ function renderTraceHead() {
   const pill = $("trace-status");
   renderProgress();
   renderStatus();
+  renderReplayBar();
+  $("job-stop").hidden = !job || job.status !== "running";
+  $("job-stop").disabled = Boolean(job?.cancelling);
+  $("job-stop").textContent = job?.cancelling ? "Stopping…" : "Stop";
+  const led = $("run-tab-led");
+  led.hidden = !(job && job.status === "running");
+  led.className = "led led--run";
   if (!job) {
     pill.hidden = true;
     $("trace-request").textContent = "Not run yet. Press New sense to start the agent.";
@@ -1892,17 +2198,36 @@ function renderTraceHead() {
   else if (job.status === "lost") setTag(pill, JOB_WORDS.lost, "warning");
   else if (fallbackRun(job)) setTag(pill, "Refused · fallback installed", "warning");
   else if (job.installed) setTag(pill, "Sense installed", "success");
+  else if (job.status === "done" && !job.cards.size) setTag(pill, "Finished", "neutral");
   else if (job.status === "done") setTag(pill, "Refused", "danger");
   else setTag(pill, JOB_WORDS[job.status] || job.status, "neutral");
   const req = job.request;
   const reached = [...job.steps.keys()].filter((k) => STEP_INDEX[k]).length;
   $("trace-request").textContent = req
     ? [
-        `${modelLabel(req.model)} · ${datasetTitle(req.dataset)} · ${(SCOPE_LABELS[req.scope] || req.scope || "").toLowerCase()}`,
-        job.status === "running" ? `step ${Math.max(1, reached)} of ${STEPS.length}` : `${reached} steps`,
-      ].join(" · ")
+        job.replay ? "Recorded run" : null,
+        `${modelLabel(req.model)} · ${req.goal || datasetTitle(req.dataset)} · ${(SCOPE_LABELS[req.scope] || req.scope || "").toLowerCase()}`,
+        job.status === "running" ? `step ${Math.max(1, reached)} of ${visibleSteps(job).length}` : `${reached} steps`,
+      ].filter(Boolean).join(" · ")
     : "Resuming the last run…";
   $("trace-elapsed").textContent = job.elapsed !== null ? seconds(job.elapsed) : "";
+}
+
+async function cancelJob() {
+  const job = state.job;
+  if (!job || job.status !== "running" || job.cancelling) return;
+  job.cancelling = true;
+  job.cancelError = null;
+  renderTraceHead();
+  try {
+    const result = await api(`/api/jobs/${enc(job.id)}`, { method: "DELETE" });
+    if (!result?.cancelled) throw new Error("The run could not be cancelled; it may already have finished.");
+  } catch (err) {
+    job.cancelling = false;
+    job.cancelError = err;
+    if (state.job === job) showError($("trace-error"), err);
+  }
+  if (state.job === job) renderTraceHead();
 }
 
 function resetTrace() {
@@ -1912,7 +2237,7 @@ function resetTrace() {
   $("timeline").replaceChildren();
   $("log-count").textContent = "";
   $("log-button").disabled = true;
-  setLogVisible(false);
+  if (state.tab === "log") setTab("run");
   $("trace-outcome").replaceChildren();
   renderTraceHead();
   renderSteps();
@@ -1922,14 +2247,390 @@ function resetTrace() {
 }
 
 /** Event log tab: swaps the sense graph for every event of the run, as the server sent them. */
-function setLogVisible(show) {
-  state.showLog = show;
-  $("log-view").hidden = !show;
-  $("graph-canvas").hidden = show;
-  $("log-button").setAttribute("aria-selected", String(show));
-  $("graph-tab").setAttribute("aria-selected", String(!show));
-  if (show) scrollToEnd($("log-view"));
-  else drawWires();
+/** The inspector's tabs. The graph needs more room than the others, so its tab widens the inspector. */
+function setTab(name) {
+  const selected = document.querySelector(`.insp-tabs [data-tab="${name}"]`);
+  if (!selected || selected.disabled) return;
+  state.tab = name;
+  const views = { report: "report-view", run: "run-view", graph: "graph-view", log: "log-view" };
+  for (const [key, id] of Object.entries(views)) $(id).hidden = key !== name;
+  for (const tab of document.querySelectorAll(".insp-tabs .tab")) {
+    tab.setAttribute("aria-selected", String(tab.dataset.tab === name));
+    tab.tabIndex = tab.dataset.tab === name ? 0 : -1;
+  }
+  $("workspace").classList.toggle("is-wide", name === "graph");
+  if (name === "log") scrollToEnd($("log-view"));
+  if (name === "graph") requestAnimationFrame(drawWires);
+}
+
+// ---------------------------------------------------------------- runs and replay
+
+function openRuns() {
+  closeFit(false);
+  const dialog = $("runs-dialog");
+  if (!dialog.open) dialog.showModal();
+  loadRuns();
+}
+
+function closeRuns() {
+  if ($("runs-dialog").open) $("runs-dialog").close();
+}
+
+async function loadRuns() {
+  showError($("runs-error"), null);
+  try {
+    const runs = await api("/api/runs");
+    state.runs = Array.isArray(runs) ? runs : [];
+  } catch (err) {
+    showError($("runs-error"), err, loadRuns);
+  }
+  renderRuns();
+}
+
+const clock = (iso) => {
+  const d = iso ? new Date(iso) : null;
+  return d && !Number.isNaN(d.getTime()) ? d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "";
+};
+
+/** One row per recorded run (newest first), each with its outcome and a Replay button. */
+function renderRuns() {
+  const list = $("runs-list");
+  const job = state.job;
+  const busy = jobRunning() || state.starting;
+  $("runs-summary").textContent = jobRunning() ? (job.replay ? "Replaying" : "Running") : `${state.runs.length} recorded`;
+  $("runs-current").hidden = !job;
+  const replayOf = job && job.replay ? job.replay.of : null;
+  const rows = [];
+  if (jobRunning() && !job.replay) {
+    rows.push(h("li", { class: "run-item run-item--live" },
+      h("span", { class: "run-item-main" },
+        h("span", { class: "run-item-title" }, h("span", { class: "led led--run" }), " Live run"),
+        h("span", { class: "run-item-meta", text: job.request ? `${modelLabel(job.request.model)} · ${datasetTitle(job.request.dataset)}` : "" }))));
+  }
+  for (const run of state.runs) {
+    const r = run.request || {};
+    const active = replayOf === run.id;
+    const outcome = run.status === "failed" ? "failed" : run.installed ? `installed · ${run.installed}` : "nothing installed";
+    const meta = [modelLabel(r.model), (SCOPE_LABELS[r.scope] || r.scope || "").toLowerCase(), toNumber(run.seconds) !== null ? seconds(run.seconds) : "", clock(run.recorded), run.origin]
+      .filter(Boolean).join(" · ");
+    rows.push(h("li", { class: `run-item${active ? " is-active" : ""}` },
+      h("span", { class: "run-item-main" },
+        h("span", { class: "run-item-title", text: `${capitalise(r.modality || "sense")} · ${datasetTitle(r.dataset) || "?"}` }),
+        h("span", { class: "run-item-meta", text: meta }),
+        h("span", { class: `run-item-outcome run-item-outcome--${run.installed ? "ok" : run.status === "failed" ? "fail" : "none"}`, text: outcome })),
+      h("button", {
+        type: "button",
+        class: "btn btn--small",
+        disabled: busy,
+        title: busy ? "Wait for the current run to finish" : `Replay at ${state.replaySpeed}×`,
+        onclick: () => startReplay(run),
+      }, icon("play", 12), active && busy ? "Playing" : "Replay")));
+  }
+  if (!rows.length) rows.push(h("li", { class: "runs-empty", text: "No recorded runs yet. Every finished agent run lands here, ready to replay." }));
+  list.replaceChildren(...rows);
+}
+
+async function startReplay(run) {
+  showError($("runs-error"), null);
+  if (jobRunning() || state.starting) return;
+  state.starting = true;
+  renderRuns();
+  syncControls();
+  try {
+    const result = await api("/api/replay", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ run: run.id, speed: state.replaySpeed }),
+    });
+    if (!result || !result.job_id) throw new Error("The server started no replay.");
+    state.starting = false;
+    state.replayDismissed = null;
+    startJob(result.job_id, run.request || null, false);
+    state.job.replay = { of: run.id, recorded: run.recorded, speed: state.replaySpeed };
+    renderTraceHead();
+    renderRuns();
+    closeRuns();
+    $("run-tab").focus();
+  } catch (err) {
+    if (!$("runs-dialog").open) $("runs-dialog").showModal();
+    showError($("runs-error"), err, () => startReplay(run));
+  } finally {
+    state.starting = false;
+    renderRuns();
+    syncControls();
+  }
+}
+
+/** The bar above the chat while a recorded run plays. Chat stays live under it. */
+function renderReplayBar() {
+  const bar = $("replay-bar");
+  const job = state.job;
+  if (!job || !job.replay || state.replayDismissed === job.id) {
+    bar.hidden = true;
+    return;
+  }
+  const run = state.runs.find((r) => r.id === job.replay.of);
+  const total = run ? toNumber(run.seconds) : null;
+  const done = job.status !== "running";
+  const frac = done ? 1 : total && job.elapsed !== null ? Math.min(1, job.elapsed / total) : 0;
+  const last = [...job.steps.keys()].pop();
+  bar.hidden = false;
+  bar.replaceChildren(
+    h("span", { class: "replay-mark", text: done ? "■" : "▶" }),
+    h("span", { class: "replay-text", text: `${job.status === "failed" ? "Replay failed or cancelled" : done ? "Replay finished" : "Replaying a recorded run"} · ${job.replay.speed || 1}×${job.replay.recorded ? ` · recorded ${clock(job.replay.recorded)}` : ""}` }),
+    h("span", { class: "replay-track" }, h("span", { class: "replay-fill", style: `width:${(frac * 100).toFixed(1)}%` })),
+    h("span", { class: "replay-step num", text: [last || "", job.elapsed !== null ? seconds(job.elapsed) : "", total !== null ? `/ ${seconds(total)}` : ""].filter(Boolean).join(" ") }),
+    h("span", { class: "replay-note", text: "chat stays live" }),
+    !done ? h("button", { type: "button", class: "btn btn--small", disabled: job.cancelling, text: job.cancelling ? "Stopping…" : "Stop replay", onclick: cancelJob }) : null,
+    done ? h("button", { type: "button", class: "icon-button", "aria-label": "Close the replay bar", onclick: () => { state.replayDismissed = job.id; renderReplayBar(); } }, icon("x", 13)) : null,
+  );
+}
+
+// ---------------------------------------------------------------- chats
+
+const currentChat = () => state.chats.find((c) => c.id === state.chatId) || state.chats[0];
+
+/** Store data, never DOM/HTML or uploaded bytes. Rebuild handlers and text nodes on reload. */
+function saveChats() {
+  for (const chat of state.chats) {
+    chat.turns = chat.messages.length;
+    chat.title = chat.turns ? chat.messages[0].message.slice(0, 46) : "New chat";
+  }
+  const chats = state.chats.slice(0, 40).map((chat) => ({
+    id: chat.id,
+    updatedAt: chat.updatedAt || null,
+    messages: chat.messages.slice(-100).map(({ model, message, files, samples, status, result, error }) => ({
+      model, message, files: files.map((f) => ({ name: f.name, type: f.type })), samples, status, result, error,
+    })),
+  }));
+  try {
+    localStorage.setItem("sense.chats.v1", JSON.stringify({ chats, chatId: state.chatId }));
+    $("chat-storage").textContent = "Chats saved in this browser · uploads are not saved";
+  } catch {
+    $("chat-storage").textContent = "Browser storage unavailable or full · chats are not saved";
+  }
+}
+
+function restoreChats() {
+  try {
+    const saved = JSON.parse(store.get("localStorage", "sense.chats.v1") || "null");
+    if (!saved || !Array.isArray(saved.chats)) return;
+    const ids = new Set();
+    const chats = saved.chats.filter((c) => {
+      if (!c || !Number.isSafeInteger(c.id) || c.id < 1 || ids.has(c.id) || !Array.isArray(c.messages)) return false;
+      ids.add(c.id);
+      return true;
+    }).slice(0, 40).map((c) => ({
+      id: c.id, turns: 0, title: "New chat", frag: null,
+      updatedAt: toNumber(c.updatedAt),
+      messages: c.messages.filter((m) => m && typeof m.message === "string" && m.model && typeof m.model.name === "string").slice(-100).map((m) => ({
+        model: { name: m.model.name, label: typeof m.model.label === "string" ? m.model.label : m.model.name },
+        message: m.message,
+        files: (Array.isArray(m.files) ? m.files : []).filter((f) => f && typeof f.name === "string").map((f) => ({ name: f.name, type: typeof f.type === "string" ? f.type : "" })),
+        samples: (Array.isArray(m.samples) ? m.samples : []).filter((s) => s && typeof s.id === "string"),
+        status: m.status === "done" && m.result && typeof m.result.reply === "string" ? "done" : "failed",
+        result: m.result && typeof m.result.reply === "string" ? {
+          reply: m.result.reply,
+          used: (Array.isArray(m.result.used) ? m.result.used : []).filter((u) => u && typeof u.kind === "string")
+            .map((u) => Object.fromEntries(["kind", "bridge", "source", "detail"].map((k) => [k, typeof u[k] === "string" ? u[k] : ""]))),
+        } : null,
+        error: typeof m.error === "string" ? m.error : "Reply interrupted by reload. Retry to send again.",
+      })),
+    }));
+    if (!chats.length) return;
+    state.chats = chats;
+    state.nextChatId = Math.max(...chats.map((c) => c.id)) + 1;
+    for (const chat of chats) {
+      for (const record of chat.messages) record.turn = drawMessage(record, chat);
+      stashThread(chat);
+    }
+    showChat(chats.find((c) => c.id === saved.chatId) || chats[0]);
+  } catch {
+    // A corrupt/older save must not prevent the app from starting.
+  }
+}
+
+/** Park the open conversation's messages so another chat can use the thread; replies still land in them. */
+function stashThread(chat) {
+  if (state.editing?.chat === chat) cancelEdit();
+  chat.draft = $("message").value;
+  chat.draftFiles = [...state.files];
+  chat.draftSamples = new Map(state.attachedSamples);
+  const frag = document.createDocumentFragment();
+  for (const el of [...$("thread").children]) if (el.id !== "thread-empty") frag.append(el);
+  chat.frag = frag;
+}
+
+function showChat(chat) {
+  if (state.editing) cancelEdit();
+  showError($("chat-error"), null);
+  state.chatId = chat.id;
+  $("message").value = chat.draft || "";
+  state.files = chat.draftFiles || [];
+  state.attachedSamples = new Map(chat.draftSamples || []);
+  autosize($("message"));
+  renderAttachments();
+  for (const id of state.sampleRefs.keys()) syncSampleItem(id);
+  if (chat.frag) $("thread").append(chat.frag);
+  chat.frag = null;
+  updateThreadEmpty();
+  scrollToEnd($("thread"));
+  saveChats();
+  renderChats();
+  syncControls();
+}
+
+/** New chat: an empty thread, same model and senses. An empty current chat is reused. */
+function newChat() {
+  $("chat-search").value = "";
+  const current = currentChat();
+  if (current.turns === 0 && !$("thread").querySelector(".turn")) {
+    $("message").focus();
+    return;
+  }
+  stashThread(current);
+  const chat = { id: state.nextChatId++, title: "New chat", turns: 0, frag: null, messages: [] };
+  state.chats.unshift(chat);
+  showChat(chat);
+  $("message").focus();
+}
+
+function switchChat(id) {
+  if (id === state.chatId) return;
+  const target = state.chats.find((c) => c.id === id);
+  if (!target) return;
+  stashThread(currentChat());
+  showChat(target);
+  $("message").focus();
+}
+
+function renderChats() {
+  const list = $("chats-list");
+  const query = $("chat-search").value.trim().toLowerCase();
+  const chats = state.chats.filter((chat) => !query || chat.title.toLowerCase().includes(query)
+    || chat.messages.some((m) => m.message.toLowerCase().includes(query) || (m.result?.reply || "").toLowerCase().includes(query)));
+  const working = (chat) => chat.messages.some((m) => m.status === "pending");
+  const groups = [
+    ["Working", chats.filter(working)],
+    ["Current chat", chats.filter((c) => !working(c) && c.id === state.chatId)],
+    ["Previous chats", chats.filter((c) => !working(c) && c.id !== state.chatId).sort((a, b) => (b.updatedAt || b.id) - (a.updatedAt || a.id))],
+  ];
+  const focusedId = list.contains(document.activeElement) ? document.activeElement.dataset.chatId : null;
+  list.replaceChildren(...groups.filter(([, items]) => items.length).map(([label, items]) =>
+    h("section", { class: "chat-group", "aria-label": label },
+      h("h3", { class: "chat-group-title", text: label }),
+      h("ul", {}, ...items.map((chat) => {
+        const last = chat.messages.at(-1);
+        const status = working(chat) ? "Replying…" : last?.status === "failed" ? "Needs attention" : chat.turns ? `${chat.turns} message${chat.turns === 1 ? "" : "s"}` : "Ready to start";
+        const date = chat.updatedAt ? new Date(chat.updatedAt).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "";
+        return h("li", {}, h("button", {
+          type: "button",
+          class: `chat-item${chat.id === state.chatId ? " is-active" : ""}`,
+          "aria-current": chat.id === state.chatId ? "true" : null,
+          "data-chat-id": chat.id,
+          title: chat.title,
+          onclick: () => switchChat(chat.id),
+        },
+          h("span", { class: "chat-item-title", text: chat.title }),
+          h("span", { class: `chat-item-meta${working(chat) ? " is-working" : ""}`, text: [status, date].filter(Boolean).join(" · ") })));
+      })))));
+  if (!chats.length) list.append(h("p", { class: "chats-empty", text: "No matching chats. Try another word." }));
+  if (focusedId) list.querySelector(`[data-chat-id="${focusedId}"]`)?.focus();
+  $("chats-count").textContent = query ? `${chats.length} of ${state.chats.length}` : String(state.chats.length);
+}
+
+/** Terminal view: one look switch (CSS does the rest), remembered in this browser. */
+function setMode(term) {
+  document.body.classList.toggle("mode-term", term);
+  $("mode-button").setAttribute("aria-pressed", String(term));
+  $("mode-label").textContent = term ? "Normal view" : "Terminal";
+  store.set("localStorage", "sense.mode", term ? "term" : null);
+  requestAnimationFrame(drawWires);
+}
+
+function toggleSamples(show) {
+  const pop = $("samples-pop");
+  const open = show === undefined ? pop.hidden : show;
+  pop.hidden = !open;
+  $("samples-button").setAttribute("aria-expanded", String(open));
+}
+
+// ---------------------------------------------------------------- slash commands
+
+const COMMANDS = [
+  { cmd: "new", help: "Start a new chat" },
+  { cmd: "term", help: "Switch between the terminal and the normal view" },
+  { cmd: "fit", help: "Give the model a new sense (opens New sense)" },
+  { cmd: "samples", help: "Pick a sample clip to attach" },
+  { cmd: "replay", args: "[n]", help: "Replay the n-th most recent run (default 1)" },
+  { cmd: "runs", help: "Open recorded runs and replay" },
+  { cmd: "report", help: "Show the report card" },
+  { cmd: "run", help: "Show the agent run" },
+  { cmd: "graph", help: "Show the sense graph" },
+  { cmd: "log", help: "Show the event log" },
+  { cmd: "clear", help: "Clear the conversation on screen" },
+  { cmd: "help", help: "List these commands" },
+];
+
+function renderCommandHints() {
+  const box = $("message");
+  const list = $("cmd-hints");
+  const text = box.value;
+  if (!text.startsWith("/") || text.includes(" ")) {
+    list.hidden = true;
+    return;
+  }
+  const typed = text.slice(1).toLowerCase();
+  const matches = COMMANDS.filter((c) => c.cmd.startsWith(typed));
+  list.replaceChildren(...matches.map((c) =>
+    h("li", {
+      class: "cmd-hint",
+      role: "option",
+      "data-cmd": c.cmd,
+      onmousedown: (e) => {
+        e.preventDefault();
+        box.value = `/${c.cmd} `;
+        box.focus();
+        renderCommandHints();
+      },
+    },
+      h("span", { class: "cmd-name", text: `/${c.cmd}${c.args ? ` ${c.args}` : ""}` }),
+      h("span", { class: "cmd-help", text: c.help }))));
+  list.hidden = matches.length === 0;
+}
+
+function runCommand(text) {
+  const [name, ...args] = text.slice(1).trim().split(/\s+/);
+  const cmd = (name || "").toLowerCase();
+  const note = (t) => {
+    $("thread").append(h("p", { class: "thread-note turn", text: t }));
+    updateThreadEmpty();
+    scrollToEnd($("thread"));
+  };
+  if (cmd === "new") newChat();
+  else if (cmd === "term") setMode(!document.body.classList.contains("mode-term"));
+  else if (cmd === "samples") toggleSamples(true);
+  else if (cmd === "fit" || cmd === "sense") openFit($("new-sense-button"));
+  else if (cmd === "runs") openRuns();
+  else if (["report", "run", "graph", "log"].includes(cmd)) setTab(cmd);
+  else if (cmd === "replay") {
+    const n = Math.max(1, parseInt(args[0], 10) || 1);
+    const run = state.runs[n - 1];
+    if (!run) note(state.runs.length ? `There are only ${state.runs.length} recorded runs.` : "No recorded runs yet.");
+    else if (jobRunning()) note("A run is in progress. Wait for it to finish, then replay.");
+    else startReplay(run);
+  } else if (cmd === "clear") {
+    if (state.chatting) return;
+    for (const el of [...$("thread").children]) if (el.id !== "thread-empty") el.remove();
+    currentChat().messages = [];
+    currentChat().turns = 0;
+    state.editing = null;
+    saveChats();
+    renderChats();
+    updateThreadEmpty();
+  } else if (cmd === "help" || cmd === "") {
+    note(COMMANDS.map((c) => `/${c.cmd}${c.args ? ` ${c.args}` : ""}  ${c.help}`).join("\n"));
+  } else note(`Unknown command /${cmd}. Type /help for the list.`);
 }
 
 // ---------------------------------------------------------------- start
@@ -1940,6 +2641,43 @@ function updateScopeHint() {
 }
 
 function bindEvents() {
+  // Native dialogs make the background inert; keep Tab in the dialog rather than browser chrome.
+  document.addEventListener("keydown", (e) => {
+    const dialog = document.querySelector("dialog[open]");
+    if (!dialog || e.key !== "Tab") return;
+    const controls = [...dialog.querySelectorAll("button, input, select, textarea, a[href], [tabindex]")]
+      .filter((el) => !el.disabled && el.tabIndex >= 0 && el.getClientRects().length);
+    const first = controls[0], last = controls.at(-1);
+    if (!first) { e.preventDefault(); return; }
+    if (e.shiftKey && document.activeElement === first) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && document.activeElement === last) {
+      e.preventDefault();
+      first.focus();
+    }
+  });
+  $("chat-stop").addEventListener("click", () => state.chatAbort?.abort());
+  $("job-stop").addEventListener("click", cancelJob);
+  $("fit-goal").addEventListener("input", syncControls);
+  const chooseFitFile = (file) => {
+    state.fitFile = file || null;
+    $("fit-file-name").textContent = file ? file.name : "Choose a file to start.";
+    syncControls();
+  };
+  $("fit-file").addEventListener("change", (e) => chooseFitFile(e.target.files[0]));
+  $("fit-drop").addEventListener("dragover", (e) => { e.preventDefault(); e.currentTarget.classList.add("is-dropping"); });
+  $("fit-drop").addEventListener("dragleave", (e) => e.currentTarget.classList.remove("is-dropping"));
+  $("fit-drop").addEventListener("drop", (e) => {
+    e.preventDefault();
+    e.currentTarget.classList.remove("is-dropping");
+    chooseFitFile(e.dataTransfer.files[0]);
+  });
+  for (const radio of document.querySelectorAll('input[name="fit-mode"]')) radio.addEventListener("change", () => {
+    $("auto-fields").hidden = !$("fit-auto").checked;
+    $("manual-fields").hidden = $("fit-auto").checked;
+    syncControls();
+  });
   $("model-select").addEventListener("change", (e) => setModel(e.target.value));
   $("dataset-select").addEventListener("change", (e) => setDataset(e.target.value));
   for (const radio of document.querySelectorAll('input[name="scope"]')) {
@@ -1955,9 +2693,7 @@ function bindEvents() {
   $("new-sense-button").addEventListener("click", (e) => ($("fit-popover").hidden ? openFit(e.currentTarget) : closeFit(true)));
   $("add-sense-button").addEventListener("click", (e) => openFit(e.currentTarget));
   $("fit-close").addEventListener("click", () => closeFit(true));
-  document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape" && !$("fit-popover").hidden) closeFit(true);
-  });
+  $("fit-popover").addEventListener("cancel", (e) => { e.preventDefault(); closeFit(true); });
   document.addEventListener("mousedown", (e) => {
     const pop = $("fit-popover");
     if (pop.hidden || pop.contains(e.target)) return;
@@ -1965,13 +2701,77 @@ function bindEvents() {
     closeFit(false);
   });
 
-  $("graph-tab").addEventListener("click", () => setLogVisible(false));
-  $("log-button").addEventListener("click", () => setLogVisible(true));
+  for (const tab of document.querySelectorAll(".insp-tabs .tab")) tab.addEventListener("click", () => setTab(tab.dataset.tab));
+  document.querySelector(".insp-tabs").addEventListener("keydown", (e) => {
+    if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key)) return;
+    const tabs = [...document.querySelectorAll(".insp-tabs .tab:not(:disabled)")];
+    const index = tabs.indexOf(e.target);
+    if (index < 0) return;
+    e.preventDefault();
+    const next = e.key === "Home" ? 0 : e.key === "End" ? tabs.length - 1 : (index + (e.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length;
+    setTab(tabs[next].dataset.tab);
+    tabs[next].focus();
+  });
+  $("chat-search").addEventListener("input", renderChats);
+  $("runs-button").addEventListener("click", openRuns);
+  $("runs-close").addEventListener("click", closeRuns);
+  $("runs-dialog").addEventListener("close", () => $("runs-button").focus());
+  $("runs-current").addEventListener("click", () => {
+    closeRuns();
+    setTab("run");
+    $("run-tab").focus();
+  });
+  $("runs-refresh").addEventListener("click", loadRuns);
+  $("new-chat-button").addEventListener("click", newChat);
+  $("mode-button").addEventListener("click", () => setMode(!document.body.classList.contains("mode-term")));
+  $("chat-new").addEventListener("click", newChat);
+  $("samples-button").addEventListener("click", () => toggleSamples());
+  document.addEventListener("mousedown", (e) => {
+    if (!$("samples-pop").hidden && !e.target.closest("#samples-pop, #samples-button")) toggleSamples(false);
+  });
+  for (const b of document.querySelectorAll(".speed")) {
+    b.addEventListener("click", () => {
+      state.replaySpeed = Number(b.dataset.speed) || 1;
+      for (const other of document.querySelectorAll(".speed")) other.setAttribute("aria-pressed", String(other === b));
+      renderRuns();
+    });
+  }
+  // As in other chat harnesses, Ctrl/Cmd+K focuses the composer from anywhere.
+  document.addEventListener("keydown", (e) => {
+    if (document.querySelector("dialog[open]")) return;
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
+      e.preventDefault();
+      $("message").focus();
+    }
+    if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === "o") {
+      e.preventDefault();
+      newChat();
+    }
+    if (e.key === "Escape" && !$("samples-pop").hidden) toggleSamples(false);
+  });
   $("export-button").addEventListener("click", exportReport);
 
   const box = $("message");
-  box.addEventListener("input", () => autosize(box));
+  box.addEventListener("input", () => {
+    autosize(box);
+    renderCommandHints();
+  });
+  box.addEventListener("blur", () => setTimeout(() => ($("cmd-hints").hidden = true), 150));
   box.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && state.editing) {
+      cancelEdit();
+    }
+    const hints = $("cmd-hints");
+    if (e.key === "Tab" && !hints.hidden && hints.firstChild) {
+      e.preventDefault();
+      box.value = `/${hints.firstChild.dataset.cmd} `;
+      renderCommandHints();
+      return;
+    }
+    if (e.key === "Escape" && !hints.hidden) {
+      hints.hidden = true;
+      return;
+    }
     if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
       e.preventDefault();
       $("chat-form").requestSubmit();
@@ -2008,6 +2808,7 @@ function bindEvents() {
 function init() {
   hydrateIcons();
   bindEvents();
+  restoreChats();
   updateScopeHint();
   renderAttachments();
   renderSamples("Choose a labelled set to see its sample clips.");
@@ -2018,6 +2819,9 @@ function init() {
   syncControls();
   loadModels();
   loadDatasets();
+  loadRuns();
+  renderChats();
+  if (store.get("localStorage", "sense.mode") === "term") setMode(true);
   const savedJob = store.get("sessionStorage", "sense.job");
   if (savedJob) startJob(savedJob, null, true);
 }

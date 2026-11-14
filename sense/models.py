@@ -5,6 +5,10 @@ Public surface (do not rename):
   load_model(name) -> BaseModel             cached: one instance per name; loading a second local model
                                             releases the first (the laptop has 24 GB)
   register_model(info, loader)              lets other modules (for example an API adapter) add a model
+  chat_history(history) -> list[dict]       the earlier turns of a chat, checked: [{"role", "content"}], oldest
+                                            first; ValueError for anything that is not such a turn
+  stripped_pieces(pieces) -> Iterator[str]  the pieces of a streamed reply with the whitespace at the start and
+                                            end of the whole reply removed, as chat() strips its reply
 
 Local open-weight models implement contracts.OpenModel:
   "qwen3.5-0.8b", "qwen3.5-2b"   frozen Qwen3.5 through transformers; reference: socket_pilot/host.py.
@@ -20,6 +24,17 @@ Fake mode (SENSE_FAKE=1) lists two deterministic models for tests and interface 
 
 Prompt shape: one line per input ("Audio clip: <4 slot tokens>" or "Audio clip: <text>"), then the message or
 the question. API models may be added in sense/models_api.py, which is imported here if it exists.
+
+Chat history and streaming (contracts.BaseModel). chat() takes `history`, the earlier turns oldest first, text
+only. Every model here also has chat_stream(), which yields the reply in pieces that join to chat()'s reply.
+  QwenModel   the history goes into the chat template before the final user message, with the slot marker
+              removed from it, so slot tokens only ever sit in the final message (the slot count is still checked).
+              chat_stream runs model.generate in a worker thread with transformers' TextIteratorStreamer, holding
+              the model's lock for the whole generation, with the same greedy decoding and slot writes as chat().
+              Closing the stream early stops generation at the next token; the worker is always joined, and an
+              error in generation is raised to the reader.
+  FakeModel   adds "(N earlier turns)" to its reply when there is history, and streams the reply three words at a
+              time.
 """
 
 from __future__ import annotations
@@ -33,7 +48,7 @@ import warnings
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Iterable, Iterator
 
 import numpy as np
 
@@ -43,6 +58,7 @@ from sense.contracts import BaseModel, ChoiceItem, ModelInfo, SenseInput
 LETTERS = "ABCDE"
 SLOT_MARKER = "<|vision_pad|>"
 N_SLOTS = 4
+HISTORY_ROLES = ("user", "assistant")
 
 _LOCAL = {  # name -> (label, environment variable that overrides the source)
     "qwen3.5-0.8b": ("Qwen3.5 0.8B (local)", "SENSE_QWEN_0P8B"),
@@ -174,6 +190,60 @@ def _same_length_batches(lengths: list[int], batch: int):
             yield idx[s : s + batch]
 
 
+def chat_history(history: list[dict] | None) -> list[dict]:
+    """The earlier turns of a chat as chat messages, oldest first: [{"role": "user" or "assistant", "content": str}]
+    (other keys are dropped). None means no earlier turns. Raises ValueError for anything else."""
+    if history is None:
+        return []
+    if not isinstance(history, (list, tuple)):
+        raise ValueError(
+            f"The chat history must be a list of earlier turns, not {type(history).__name__}. "
+            'Give a list such as [{"role": "user", "content": "..."}, {"role": "assistant", "content": "..."}].'
+        )
+    turns = []
+    for k, turn in enumerate(history):
+        is_turn = isinstance(turn, dict) and turn.get("role") in HISTORY_ROLES and isinstance(turn.get("content"), str)
+        if not is_turn:
+            raise ValueError(
+                f'Turn {k + 1} of the chat history is not a turn: each needs a "role" of "user" or "assistant" and a '
+                'string "content".'
+            )
+        turns.append({"role": turn["role"], "content": turn["content"]})
+    return turns
+
+
+def _strip_slots(text: str) -> str:
+    """`text` without the slot marker, also one that removing another would form ("<|vision_<|vision_pad|>pad|>")."""
+    while SLOT_MARKER in text:
+        text = text.replace(SLOT_MARKER, "")
+    return text
+
+
+def _chat_messages(user: str, history: list[dict] | None = None) -> list[dict]:
+    """The messages for Qwen's chat template: the earlier turns, then the final user message `user`. The slot
+    marker is removed from the earlier turns, so only the final message (built by QwenModel._render) holds slots."""
+    earlier = [{"role": turn["role"], "content": _strip_slots(turn["content"])} for turn in chat_history(history)]
+    return earlier + [{"role": "user", "content": user}]
+
+
+def stripped_pieces(pieces: Iterable[str]) -> Iterator[str]:
+    """The pieces of a streamed reply with the whitespace at the start and end of the whole reply removed, as chat()
+    strips its reply: "".join(stripped_pieces(p)) == "".join(p).strip(). Whitespace at the end of a piece is held
+    back until more text follows it; pieces left empty are not yielded."""
+    started, held = False, ""
+    for piece in pieces:
+        if not started:
+            piece = piece.lstrip()
+            if not piece:
+                continue
+            started = True
+        text = held + piece
+        body = text.rstrip()
+        held = text[len(body):]
+        if body:
+            yield body
+
+
 @dataclass
 class _Rendered:
     ids: list[int]
@@ -212,7 +282,7 @@ class QwenModel:
         if not 0 <= layer < self.n_layers:
             raise ValueError(f"Layer {layer} does not exist: {self.info.label} has blocks 0 to {self.n_layers - 1}.")
 
-    def _render(self, inputs: list[SenseInput], body: str) -> _Rendered:
+    def _render(self, inputs: list[SenseInput], body: str, history: list[dict] | None = None) -> _Rendered:
         lines, vectors = [], []
         for k, inp in enumerate(inputs):
             label = _input_label(inp, k, len(inputs))
@@ -238,15 +308,15 @@ class QwenModel:
             else:
                 raise ValueError(f"{self.info.label} takes text and vector inputs here; {inp.kind} inputs are not wired up.")
         user = "\n".join(lines + [body.replace(SLOT_MARKER, "")])
-        ids = self.tok.encode(self._chat_template(user), add_special_tokens=False)
+        ids = self.tok.encode(self._chat_template(user, history), add_special_tokens=False)
         slots = [i for i, t in enumerate(ids) if t == self.slot_id]
         if len(slots) != N_SLOTS * len(vectors):
             raise RuntimeError(f"Expected {N_SLOTS * len(vectors)} slot tokens in the prompt, found {len(slots)}.")
         writes = [(slots[N_SLOTS * k : N_SLOTS * (k + 1)], vec, layer) for k, (vec, layer) in enumerate(vectors)]
         return _Rendered(ids=ids, writes=writes)
 
-    def _chat_template(self, user: str) -> str:
-        msgs = [{"role": "user", "content": user}]
+    def _chat_template(self, user: str, history: list[dict] | None = None) -> str:
+        msgs = _chat_messages(user, history)  # the earlier turns, then this message; only this one holds slots
         return self.tok.apply_chat_template(msgs, tokenize=False, add_generation_prompt=True, enable_thinking=False)
 
     def _run_with_writes(self, ids, rows: list[_Rendered], fn):
@@ -314,10 +384,12 @@ class QwenModel:
                     preds[i] = int(logits[row, : len(items[i].options)].argmax())
         return preds
 
-    def chat(self, message: str, inputs: list[SenseInput], max_new_tokens: int = 96) -> str:
+    def chat(
+        self, message: str, inputs: list[SenseInput], max_new_tokens: int = 96, history: list[dict] | None = None,
+    ) -> str:
         import torch
 
-        rendered = self._render(inputs, message)
+        rendered = self._render(inputs, message, history)
         ids = torch.tensor([rendered.ids], device=self.device)
 
         def generate():
@@ -331,6 +403,56 @@ class QwenModel:
         with self._lock, torch.no_grad():
             out = self._run_with_writes(ids, [rendered], generate)
         return self.tok.decode(out[0, ids.shape[1] :], skip_special_tokens=True).strip()
+
+    def chat_stream(
+        self, message: str, inputs: list[SenseInput], max_new_tokens: int = 96, history: list[dict] | None = None,
+    ) -> Iterator[str]:
+        """chat(), streamed: yields the reply in pieces as it is generated. The same greedy decoding and slot writes
+        as chat(), so the pieces join to chat()'s reply. A worker thread runs model.generate holding the model's
+        lock for the whole generation. Closing the iterator early stops generation at the next token; the worker
+        is joined before the iterator ends either way. An error in generation is raised here, after the pieces
+        already yielded."""
+        import torch
+        from transformers import StoppingCriteria, StoppingCriteriaList, TextIteratorStreamer
+
+        rendered = self._render(inputs, message, history)
+        ids = torch.tensor([rendered.ids], device=self.device)
+        streamer = TextIteratorStreamer(self.tok, skip_prompt=True, skip_special_tokens=True)
+        stop = threading.Event()
+        failed: list[BaseException] = []
+
+        class StopWhenClosed(StoppingCriteria):
+            def __call__(self, input_ids, scores, **kwargs):
+                return torch.full((input_ids.shape[0],), stop.is_set(), dtype=torch.bool, device=input_ids.device)
+
+        def generate():
+            return self.model.generate(
+                input_ids=ids,
+                attention_mask=torch.ones_like(ids),
+                max_new_tokens=max_new_tokens,
+                do_sample=False,
+                streamer=streamer,
+                stopping_criteria=StoppingCriteriaList([StopWhenClosed()]),
+            )
+
+        def work():
+            try:
+                with self._lock, torch.no_grad():  # grad mode is per thread, so it is set here, not by the reader
+                    self._run_with_writes(ids, [rendered], generate)
+            except BaseException as exc:  # raised to the reader once the stream has ended
+                failed.append(exc)
+            finally:
+                streamer.end()  # wakes the reader; after generate's own end() this only queues a second stop signal
+
+        worker = threading.Thread(target=work, name="qwen-chat-stream", daemon=True)
+        worker.start()
+        try:
+            yield from stripped_pieces(streamer)
+        finally:
+            stop.set()
+            worker.join()
+        if failed:
+            raise failed[0]
 
 
 # ----------------------------------------------------------------------------- fake
@@ -461,7 +583,10 @@ class FakeModel:
             return FAKE_CONCEPTS[int(sims.argmax())] if sims.max() > 0.5 else None
         return None
 
-    def chat(self, message: str, inputs: list[SenseInput], max_new_tokens: int = 96) -> str:
+    def chat(
+        self, message: str, inputs: list[SenseInput], max_new_tokens: int = 96, history: list[dict] | None = None,
+    ) -> str:
+        earlier = len(chat_history(history))
         if not inputs:
             reply = "No audio reached me, so I can only answer from your message."
         else:
@@ -477,7 +602,16 @@ class FakeModel:
                 heard = self._heard(inp)
                 parts.append(f"{name} sounds like {heard}." if heard else f"I cannot make out what is in {name.lower()}.")
             reply = " ".join(parts)
-        return " ".join(f"{reply} (Fake model reply to: {message.strip()})".split()[:max_new_tokens])
+        note = f" ({earlier} earlier turn{'' if earlier == 1 else 's'})" if earlier else ""
+        return " ".join(f"{reply} (Fake model reply to: {message.strip()}){note}".split()[:max_new_tokens])
+
+    def chat_stream(
+        self, message: str, inputs: list[SenseInput], max_new_tokens: int = 96, history: list[dict] | None = None,
+    ) -> Iterator[str]:
+        """chat()'s reply three words at a time (the spaces between them kept), so the pieces join to exactly it."""
+        words = self.chat(message, inputs, max_new_tokens, history).split(" ")
+        for k in range(0, len(words), 3):
+            yield " ".join(words[k : k + 3]) + (" " if k + 3 < len(words) else "")
 
 
 # API models, if a developer has added them. Imported last so that it can call register_model.

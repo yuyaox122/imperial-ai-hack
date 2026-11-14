@@ -7,6 +7,9 @@ Tables, in <catalog>.<schema> (see conn.py):
                 accuracy, interval_low, interval_high, the six controls as columns, controls_json, verdict,
                 reason, installed (this card's bridge was the one installed)
   trace_events  one row per trace event: run_id, i, t, step, status, message, data_json
+  triage_batches  one row per method of a triage batch (eval.triage): the installed sense, its no-input control,
+                and the specialist lookup; flagged, caught, recall, precision, false alarms
+  triage_clips  one row per clip of a triage batch: the sense's answer, both controls' answers, the hidden truth
 
 Writing a run replaces that run's rows, so backfilling twice gives the same tables.
 """
@@ -34,6 +37,12 @@ DDL = {
     + """, controls_json STRING, verdict STRING, reason STRING, installed BOOLEAN""",
     "trace_events": """run_id STRING, i BIGINT, t DOUBLE, step STRING, status STRING, message STRING,
         data_json STRING""",
+    "triage_batches": """batch_id STRING, recorded TIMESTAMP, task STRING, user STRING, model STRING, bridge STRING,
+        kind STRING, question STRING, source STRING, has_truth BOOLEAN, method STRING, n BIGINT, flagged BIGINT, listen_fraction DOUBLE,
+        threats BIGINT, caught BIGINT, named_right BIGINT, recall DOUBLE, recall_low DOUBLE, recall_high DOUBLE,
+        precision DOUBLE, false_alarm_rate DOUBLE, summary_json STRING, note STRING""",
+    "triage_clips": """batch_id STRING, i BIGINT, clip STRING, truth STRING, answer STRING, flagged BOOLEAN,
+        no_input STRING, lookup STRING, detail STRING, reply STRING""",
 }
 
 
@@ -174,6 +183,73 @@ def log_mlflow(record: dict) -> int:
             mlflow.log_metrics({k: v for k, v in metrics.items() if v is not None})
             mlflow.log_text(row["reason"] or "", "reason.txt")
     return len(rows)
+
+
+# ----------------------------------------------------------------------------- triage
+def triage_rows(record: dict) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """The triage_batches and triage_clips rows of an eval.triage record."""
+    batch = record["batch"]
+    batches = []
+    for method, r in record["summary"].items():
+        interval = r.get("recall_interval") or [None, None]
+        batches.append({
+            "batch_id": record["id"], "recorded": record["recorded"], "task": record["task"], "user": record["user"],
+            "model": record["model"], "bridge": record["sense"].get("bridge"), "kind": record["sense"].get("kind"),
+            "question": question_name(record), "source": batch["source"], "has_truth": bool(batch["has_truth"]), "method": method, "n": int(r["n"]),
+            "flagged": int(r["flagged"]), "listen_fraction": _float(r.get("listen_fraction")),
+            "threats": r.get("threats"), "caught": r.get("caught"), "named_right": r.get("named_right"),
+            "recall": _float(r.get("recall")), "recall_low": _float(interval[0]), "recall_high": _float(interval[1]),
+            "precision": _float(r.get("precision")), "false_alarm_rate": _float(r.get("false_alarm_rate")),
+            "summary_json": json.dumps(r, sort_keys=True), "note": record.get("note", ""),
+        })
+    clips = [
+        {"batch_id": record["id"], "i": int(c["i"]), "clip": c["clip"], "truth": c["truth"], "answer": c["sense"],
+         "flagged": bool(c["flagged"]), "no_input": c["no_input"], "lookup": c["lookup"], "detail": c.get("detail", ""),
+         "reply": c.get("reply")}
+        for c in record["clips"]
+    ]
+    return batches, clips
+
+
+def question_name(record: dict) -> str:
+    """eval.triage's name for how the model was asked. Records written before the question variants hold the
+    ranger question's full text instead."""
+    q = record.get("question") or "ranger"
+    return "ranger" if " " in q else q
+
+
+def write_triage(record: dict, sql: conn.SQL, *, mlflow_runs: bool = True) -> dict[str, int]:
+    """Writes one triage record; writing the same batch again replaces its rows."""
+    batches, clips = triage_rows(record)
+    counts = {}
+    for name, rows in (("triage_batches", batches), ("triage_clips", clips)):
+        sql.run(f"DELETE FROM {conn.table(name)} WHERE batch_id = :batch_id", {"batch_id": record["id"]})
+        if rows:
+            _insert(sql, name, rows)
+        counts[name] = len(rows)
+    if mlflow_runs:
+        counts["mlflow"] = log_triage_mlflow(record, batches)
+    return counts
+
+
+def log_triage_mlflow(record: dict, batches: list[dict[str, Any]]) -> int:
+    """One MLflow run for the batch: the sense's figures as metrics, each control's with a prefix."""
+    import mlflow
+
+    mlflow.set_tracking_uri("databricks")
+    mlflow.set_experiment(conn.experiment_path())
+    keys = ("flagged", "listen_fraction", "caught", "recall", "precision", "false_alarm_rate")
+    with mlflow.start_run(run_name=f"triage · {record['sense'].get('bridge')} · {record['id']}"):
+        mlflow.set_tags({"sensorium_triage_id": record["id"], "task": record["task"]})
+        mlflow.log_params({"model": record["model"], "bridge": record["sense"].get("bridge"),
+                           "question": question_name(record),
+                           "source": record["batch"]["source"], "n": record["batch"]["n"]})
+        metrics = {}
+        for row in batches:
+            prefix = "" if row["method"] == "sense" else f"{row['method']}_"
+            metrics.update({f"{prefix}{k}": row[k] for k in keys if row[k] is not None})
+        mlflow.log_metrics(metrics)
+    return 1
 
 
 # ----------------------------------------------------------------------------- live runs

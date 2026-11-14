@@ -1,0 +1,4138 @@
+{
+ "id": "triage-qwen3-5-0-8b-neutral-dev-20261114-193812",
+ "recorded": "2026-11-14T19:38:12+00:00",
+ "task": "forest-monitoring triage",
+ "user": "a forest-monitoring team listening for illegal logging",
+ "note": "ESC-50 fold 4 stands in for field recordings; its labels are hidden from the model and used only to score the flags afterwards.",
+ "question": "neutral",
+ "question_text": "Which of these is in the audio clip?",
+ "targets": [
+  "chainsaw",
+  "hand saw",
+  "engine"
+ ],
+ "model": "qwen3.5-0.8b",
+ "sense": {
+  "bridge": "text:captions",
+  "kind": "text",
+  "dataset": "esc50",
+  "scope": "open",
+  "accuracy": 0.805,
+  "n": 200
+ },
+ "batch": {
+  "source": "esc50 fold 4 (dev)",
+  "n": 400,
+  "has_truth": true
+ },
+ "summary": {
+  "sense": {
+   "n": 400,
+   "flagged": 295,
+   "listen_fraction": 0.7375,
+   "answers": {
+    "chainsaw": 101,
+    "hand saw": 52,
+    "engine": 142,
+    "none of these": 105
+   },
+   "threats": 24,
+   "caught": 24,
+   "named_right": 20,
+   "recall": 1.0,
+   "recall_interval": [
+    0.862,
+    1.0
+   ],
+   "precision": 0.0814,
+   "false_alarm_rate": 0.7207,
+   "per_target": {
+    "chainsaw": {
+     "clips": 8,
+     "caught": 8
+    },
+    "hand saw": {
+     "clips": 8,
+     "caught": 8
+    },
+    "engine": {
+     "clips": 8,
+     "caught": 8
+    }
+   }
+  },
+  "no_input": {
+   "n": 400,
+   "flagged": 400,
+   "listen_fraction": 1.0,
+   "answers": {
+    "chainsaw": 157,
+    "hand saw": 142,
+    "engine": 101,
+    "none of these": 0
+   },
+   "threats": 24,
+   "caught": 24,
+   "named_right": 7,
+   "recall": 1.0,
+   "recall_interval": [
+    0.862,
+    1.0
+   ],
+   "precision": 0.06,
+   "false_alarm_rate": 1.0,
+   "per_target": {
+    "chainsaw": {
+     "clips": 8,
+     "caught": 8
+    },
+    "hand saw": {
+     "clips": 8,
+     "caught": 8
+    },
+    "engine": {
+     "clips": 8,
+     "caught": 8
+    }
+   }
+  },
+  "lookup": {
+   "n": 400,
+   "flagged": 24,
+   "listen_fraction": 0.06,
+   "answers": {
+    "chainsaw": 9,
+    "hand saw": 8,
+    "engine": 7,
+    "none of these": 376
+   },
+   "threats": 24,
+   "caught": 24,
+   "named_right": 23,
+   "recall": 1.0,
+   "recall_interval": [
+    0.862,
+    1.0
+   ],
+   "precision": 1.0,
+   "false_alarm_rate": 0.0,
+   "per_target": {
+    "chainsaw": {
+     "clips": 8,
+     "caught": 8
+    },
+    "hand saw": {
+     "clips": 8,
+     "caught": 8
+    },
+    "engine": {
+     "clips": 8,
+     "caught": 8
+    }
+   }
+  }
+ },
+ "clips": [
+  {
+   "i": 0,
+   "clip": "4-102844-A-49.wav",
+   "truth": "hand saw",
+   "sense": "hand saw",
+   "no_input": "chainsaw",
+   "lookup": "hand saw",
+   "flagged": true,
+   "detail": "nearest caption: \"Wood being sawed by hand\" (cosine 0.80)"
+  },
+  {
+   "i": 1,
+   "clip": "4-102844-B-49.wav",
+   "truth": "hand saw",
+   "sense": "hand saw",
+   "no_input": "chainsaw",
+   "lookup": "hand saw",
+   "flagged": true,
+   "detail": "nearest caption: \"Wood being sawed by hand\" (cosine 0.75)"
+  },
+  {
+   "i": 2,
+   "clip": "4-102844-C-49.wav",
+   "truth": "hand saw",
+   "sense": "hand saw",
+   "no_input": "hand saw",
+   "lookup": "hand saw",
+   "flagged": true,
+   "detail": "nearest caption: \"Wood being sawed by hand\" (cosine 0.76)"
+  },
+  {
+   "i": 3,
+   "clip": "4-102871-A-42.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Sirens mixed with passing traffic\" (cosine 0.74)"
+  },
+  {
+   "i": 4,
+   "clip": "4-107117-A-33.wav",
+   "truth": "none of these",
+   "sense": "chainsaw",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"A door is creaking loudly while moving in both directions\" (cosine 0.67)"
+  },
+  {
+   "i": 5,
+   "clip": "4-107120-A-33.wav",
+   "truth": "none of these",
+   "sense": "chainsaw",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"A door is creaking loudly while moving in both directions\" (cosine 0.60)"
+  },
+  {
+   "i": 6,
+   "clip": "4-107122-A-33.wav",
+   "truth": "none of these",
+   "sense": "chainsaw",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"A door is creaking loudly while moving in both directions\" (cosine 0.66)"
+  },
+  {
+   "i": 7,
+   "clip": "4-108352-A-33.wav",
+   "truth": "none of these",
+   "sense": "chainsaw",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"A door is creaking loudly while moving in both directions\" (cosine 0.56)"
+  },
+  {
+   "i": 8,
+   "clip": "4-111671-A-42.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "engine",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Emergency siren\" (cosine 0.73)"
+  },
+  {
+   "i": 9,
+   "clip": "4-111671-B-42.wav",
+   "truth": "none of these",
+   "sense": "chainsaw",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Various sirens in enclosed space\" (cosine 0.68)"
+  },
+  {
+   "i": 10,
+   "clip": "4-117627-A-25.wav",
+   "truth": "none of these",
+   "sense": "chainsaw",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Loud footsteps over leaves, some banging and rustling\" (cosine 0.58)"
+  },
+  {
+   "i": 11,
+   "clip": "4-117630-A-25.wav",
+   "truth": "none of these",
+   "sense": "chainsaw",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Walking through a stream\" (cosine 0.49)"
+  },
+  {
+   "i": 12,
+   "clip": "4-119647-A-48.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "engine",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Fireworks fly and explode\" (cosine 0.60)"
+  },
+  {
+   "i": 13,
+   "clip": "4-119647-B-48.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "engine",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Fireworks fly and explode\" (cosine 0.62)"
+  },
+  {
+   "i": 14,
+   "clip": "4-119647-C-48.wav",
+   "truth": "none of these",
+   "sense": "chainsaw",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Orchestral music and a large firework firing.\" (cosine 0.58)"
+  },
+  {
+   "i": 15,
+   "clip": "4-119647-D-48.wav",
+   "truth": "none of these",
+   "sense": "chainsaw",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Fireworks fly and explode\" (cosine 0.58)"
+  },
+  {
+   "i": 16,
+   "clip": "4-119648-A-48.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Fireworks fly and explode\" (cosine 0.58)"
+  },
+  {
+   "i": 17,
+   "clip": "4-119648-B-48.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "engine",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Fireworks fly and explode\" (cosine 0.61)"
+  },
+  {
+   "i": 18,
+   "clip": "4-119648-C-48.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Orchestral music and a large firework firing.\" (cosine 0.59)"
+  },
+  {
+   "i": 19,
+   "clip": "4-119648-D-48.wav",
+   "truth": "none of these",
+   "sense": "none of these",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": false,
+   "detail": "nearest caption: \"Fireworks fly and explode\" (cosine 0.64)"
+  },
+  {
+   "i": 20,
+   "clip": "4-119720-A-18.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"A toilet flushes over and over with a few clicks in between\" (cosine 0.63)"
+  },
+  {
+   "i": 21,
+   "clip": "4-120160-A-5.wav",
+   "truth": "none of these",
+   "sense": "chainsaw",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Continuous meowing cat\" (cosine 0.68)"
+  },
+  {
+   "i": 22,
+   "clip": "4-121532-A-42.wav",
+   "truth": "none of these",
+   "sense": "chainsaw",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"A civil defense siren blares loudly in the distance\" (cosine 0.64)"
+  },
+  {
+   "i": 23,
+   "clip": "4-123680-A-18.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "engine",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"A toilet is flushed and takes a long time to swirl down the tube\" (cosine 0.68)"
+  },
+  {
+   "i": 24,
+   "clip": "4-125070-A-19.wav",
+   "truth": "none of these",
+   "sense": "hand saw",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Crickets followed by a thunder clap\" (cosine 0.71)"
+  },
+  {
+   "i": 25,
+   "clip": "4-125071-A-19.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Crickets followed by a thunder clap\" (cosine 0.62)"
+  },
+  {
+   "i": 26,
+   "clip": "4-125072-A-19.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Crickets followed by a thunder clap\" (cosine 0.63)"
+  },
+  {
+   "i": 27,
+   "clip": "4-125072-B-19.wav",
+   "truth": "none of these",
+   "sense": "none of these",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": false,
+   "detail": "nearest caption: \"Lightning strikes and thunder rings out\" (cosine 0.70)"
+  },
+  {
+   "i": 28,
+   "clip": "4-125825-A-46.wav",
+   "truth": "none of these",
+   "sense": "none of these",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": false,
+   "detail": "nearest caption: \"Large church bells ring\" (cosine 0.67)"
+  },
+  {
+   "i": 29,
+   "clip": "4-125825-B-46.wav",
+   "truth": "none of these",
+   "sense": "chainsaw",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Large bell ringing loudly\" (cosine 0.70)"
+  },
+  {
+   "i": 30,
+   "clip": "4-125929-A-40.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"A helicopter whirs overhead and flies around\" (cosine 0.71)"
+  },
+  {
+   "i": 31,
+   "clip": "4-126046-A-18.wav",
+   "truth": "none of these",
+   "sense": "none of these",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": false,
+   "detail": "nearest caption: \"A strong flush of water after using the toilet\" (cosine 0.72)"
+  },
+  {
+   "i": 32,
+   "clip": "4-126532-A-18.wav",
+   "truth": "none of these",
+   "sense": "none of these",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": false,
+   "detail": "nearest caption: \"A strong flush of water after using the toilet\" (cosine 0.73)"
+  },
+  {
+   "i": 33,
+   "clip": "4-128659-A-33.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "engine",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"A door is creaking loudly while moving in both directions\" (cosine 0.39)"
+  },
+  {
+   "i": 34,
+   "clip": "4-130584-A-4.wav",
+   "truth": "none of these",
+   "sense": "none of these",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": false,
+   "detail": "nearest caption: \"Frogs are croaking loudly, and people are speaking in the background\" (cosine 0.78)"
+  },
+  {
+   "i": 35,
+   "clip": "4-130891-A-7.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "engine",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"A bug flies and buzzes, stops and then continues to buzz again\" (cosine 0.63)"
+  },
+  {
+   "i": 36,
+   "clip": "4-132383-A-2.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "engine",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Pigs eating, grunting, and oinks, with a sheep bleating in the background\" (cosine 0.78)"
+  },
+  {
+   "i": 37,
+   "clip": "4-132383-B-2.wav",
+   "truth": "none of these",
+   "sense": "none of these",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": false,
+   "detail": "nearest caption: \"Pigs squealing and oinking\" (cosine 0.75)"
+  },
+  {
+   "i": 38,
+   "clip": "4-132803-A-26.wav",
+   "truth": "none of these",
+   "sense": "none of these",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": false,
+   "detail": "nearest caption: \"A baby laughs at an adult evil laughing\" (cosine 0.60)"
+  },
+  {
+   "i": 39,
+   "clip": "4-132810-A-26.wav",
+   "truth": "none of these",
+   "sense": "none of these",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": false,
+   "detail": "nearest caption: \"Short cuts of a woman laughing\" (cosine 0.61)"
+  },
+  {
+   "i": 40,
+   "clip": "4-132816-A-26.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "engine",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"A small child laughs heartily, accompanied by unusual clucking\" (cosine 0.69)"
+  },
+  {
+   "i": 41,
+   "clip": "4-132839-A-33.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "engine",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"A door is creaking loudly while moving in both directions\" (cosine 0.67)"
+  },
+  {
+   "i": 42,
+   "clip": "4-133047-A-5.wav",
+   "truth": "none of these",
+   "sense": "hand saw",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Cats meowing, one is quieter, in the background, while one is louder, and sounds upset\" (cosine 0.61)"
+  },
+  {
+   "i": 43,
+   "clip": "4-133047-B-5.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "engine",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Domestic dog whimpering\" (cosine 0.56)"
+  },
+  {
+   "i": 44,
+   "clip": "4-133047-C-5.wav",
+   "truth": "none of these",
+   "sense": "none of these",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": false,
+   "detail": "nearest caption: \"Cats meowing, one is quieter, in the background, while one is louder, and sounds upset\" (cosine 0.61)"
+  },
+  {
+   "i": 45,
+   "clip": "4-133674-A-26.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "engine",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Electronic laughter is present\" (cosine 0.57)"
+  },
+  {
+   "i": 46,
+   "clip": "4-133895-A-7.wav",
+   "truth": "none of these",
+   "sense": "none of these",
+   "no_input": "engine",
+   "lookup": "none of these",
+   "flagged": false,
+   "detail": "nearest caption: \"A winged insect is buzzing around\" (cosine 0.66)"
+  },
+  {
+   "i": 47,
+   "clip": "4-135439-A-18.wav",
+   "truth": "none of these",
+   "sense": "hand saw",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"A strong flush of water after using the toilet\" (cosine 0.67)"
+  },
+  {
+   "i": 48,
+   "clip": "4-136381-A-9.wav",
+   "truth": "none of these",
+   "sense": "none of these",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": false,
+   "detail": "nearest caption: \"Wind blowing hard with some birds chirping in the background.\" (cosine 0.40)"
+  },
+  {
+   "i": 49,
+   "clip": "4-138344-A-9.wav",
+   "truth": "none of these",
+   "sense": "none of these",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": false,
+   "detail": "nearest caption: \"Chirping bird with a crow cawing in the distance\" (cosine 0.45)"
+  },
+  {
+   "i": 50,
+   "clip": "4-140034-A-46.wav",
+   "truth": "none of these",
+   "sense": "hand saw",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"A bell is rung close and a church bell rings in the distance\" (cosine 0.68)"
+  },
+  {
+   "i": 51,
+   "clip": "4-141365-A-18.wav",
+   "truth": "none of these",
+   "sense": "hand saw",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"A strong flush of water after using the toilet\" (cosine 0.57)"
+  },
+  {
+   "i": 52,
+   "clip": "4-143118-A-7.wav",
+   "truth": "none of these",
+   "sense": "hand saw",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"A shovel scrapes, and then bees fly around nearby\" (cosine 0.63)"
+  },
+  {
+   "i": 53,
+   "clip": "4-143118-B-7.wav",
+   "truth": "none of these",
+   "sense": "none of these",
+   "no_input": "engine",
+   "lookup": "none of these",
+   "flagged": false,
+   "detail": "nearest caption: \"A fly buzzes as the mic picks up wind and birds chirp in the background\" (cosine 0.66)"
+  },
+  {
+   "i": 54,
+   "clip": "4-144083-A-16.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Oncoming traffic with high wind\" (cosine 0.67)"
+  },
+  {
+   "i": 55,
+   "clip": "4-144083-B-16.wav",
+   "truth": "none of these",
+   "sense": "hand saw",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Gusts of wind with birds chirping and leaves rustling in the background\" (cosine 0.71)"
+  },
+  {
+   "i": 56,
+   "clip": "4-144083-C-16.wav",
+   "truth": "none of these",
+   "sense": "none of these",
+   "no_input": "engine",
+   "lookup": "none of these",
+   "flagged": false,
+   "detail": "nearest caption: \"Gusts of wind with birds chirping and leaves rustling in the background\" (cosine 0.59)"
+  },
+  {
+   "i": 57,
+   "clip": "4-144085-A-16.wav",
+   "truth": "none of these",
+   "sense": "none of these",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": false,
+   "detail": "nearest caption: \"A civil defense siren blares loudly in the distance\" (cosine 0.60)"
+  },
+  {
+   "i": 58,
+   "clip": "4-144468-A-27.wav",
+   "truth": "none of these",
+   "sense": "none of these",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": false,
+   "detail": "nearest caption: \"A person shaves with an electric shaver; a kid talks faintly in the background\" (cosine 0.47)"
+  },
+  {
+   "i": 59,
+   "clip": "4-144468-B-27.wav",
+   "truth": "none of these",
+   "sense": "none of these",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": false,
+   "detail": "nearest caption: \"Water running from a tap while a man speaks ending in a light scrubbing\" (cosine 0.53)"
+  },
+  {
+   "i": 60,
+   "clip": "4-145006-A-18.wav",
+   "truth": "none of these",
+   "sense": "none of these",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": false,
+   "detail": "nearest caption: \"A strong flush of water after using the toilet\" (cosine 0.67)"
+  },
+  {
+   "i": 61,
+   "clip": "4-145081-A-9.wav",
+   "truth": "none of these",
+   "sense": "hand saw",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Wind blowing hard with some birds chirping in the background.\" (cosine 0.54)"
+  },
+  {
+   "i": 62,
+   "clip": "4-146200-A-36.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"An aircraft engines rev loudly\" (cosine 0.71)"
+  },
+  {
+   "i": 63,
+   "clip": "4-147240-A-2.wav",
+   "truth": "none of these",
+   "sense": "none of these",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": false,
+   "detail": "nearest caption: \"Pigs eating, grunting, and oinks, with a sheep bleating in the background\" (cosine 0.71)"
+  },
+  {
+   "i": 64,
+   "clip": "4-147240-B-2.wav",
+   "truth": "none of these",
+   "sense": "none of these",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": false,
+   "detail": "nearest caption: \"Pigs eating, grunting, and oinks, with a sheep bleating in the background\" (cosine 0.72)"
+  },
+  {
+   "i": 65,
+   "clip": "4-147657-A-46.wav",
+   "truth": "none of these",
+   "sense": "none of these",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": false,
+   "detail": "nearest caption: \"Church bells tolling with people speaking in the background\" (cosine 0.75)"
+  },
+  {
+   "i": 66,
+   "clip": "4-147658-A-46.wav",
+   "truth": "none of these",
+   "sense": "chainsaw",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Loud bells ringing\" (cosine 0.77)"
+  },
+  {
+   "i": 67,
+   "clip": "4-149294-A-41.wav",
+   "truth": "chainsaw",
+   "sense": "chainsaw",
+   "no_input": "engine",
+   "lookup": "chainsaw",
+   "flagged": true,
+   "detail": "nearest caption: \"A chainsaw engine running and revving up as it cuts an object\" (cosine 0.66)"
+  },
+  {
+   "i": 68,
+   "clip": "4-149294-B-41.wav",
+   "truth": "chainsaw",
+   "sense": "engine",
+   "no_input": "hand saw",
+   "lookup": "chainsaw",
+   "flagged": true,
+   "detail": "nearest caption: \"A small engine shifts and begins to hum along faster\" (cosine 0.52)"
+  },
+  {
+   "i": 69,
+   "clip": "4-149940-A-5.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "engine",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Two cats growl and scram\" (cosine 0.70)"
+  },
+  {
+   "i": 70,
+   "clip": "4-149940-B-5.wav",
+   "truth": "none of these",
+   "sense": "none of these",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": false,
+   "detail": "nearest caption: \"Cats are caterwauling, thumping occurs, and an electronic device is playing in the background\" (cosine 0.68)"
+  },
+  {
+   "i": 71,
+   "clip": "4-150364-A-46.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "engine",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Loud bells ringing\" (cosine 0.81)"
+  },
+  {
+   "i": 72,
+   "clip": "4-150364-B-46.wav",
+   "truth": "none of these",
+   "sense": "hand saw",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Large bells ringing loudly and melodically\" (cosine 0.82)"
+  },
+  {
+   "i": 73,
+   "clip": "4-151242-A-37.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"The ringing of an alarm on a machine\" (cosine 0.62)"
+  },
+  {
+   "i": 74,
+   "clip": "4-152958-A-18.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "engine",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"A toilet flush heard\" (cosine 0.50)"
+  },
+  {
+   "i": 75,
+   "clip": "4-152995-A-24.wav",
+   "truth": "none of these",
+   "sense": "none of these",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": false,
+   "detail": "nearest caption: \"Person coughs and then laughs as young male faintly speaks in the background\" (cosine 0.54)"
+  },
+  {
+   "i": 76,
+   "clip": "4-154405-A-27.wav",
+   "truth": "none of these",
+   "sense": "none of these",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": false,
+   "detail": "nearest caption: \"A person shaves with an electric shaver; a kid talks faintly in the background\" (cosine 0.54)"
+  },
+  {
+   "i": 77,
+   "clip": "4-154405-B-27.wav",
+   "truth": "none of these",
+   "sense": "none of these",
+   "no_input": "engine",
+   "lookup": "none of these",
+   "flagged": false,
+   "detail": "nearest caption: \"A person shaves with an electric shaver; a kid talks faintly in the background\" (cosine 0.48)"
+  },
+  {
+   "i": 78,
+   "clip": "4-154443-A-24.wav",
+   "truth": "none of these",
+   "sense": "chainsaw",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"A loud sneeze\" (cosine 0.58)"
+  },
+  {
+   "i": 79,
+   "clip": "4-154793-A-4.wav",
+   "truth": "none of these",
+   "sense": "none of these",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": false,
+   "detail": "nearest caption: \"Many frogs are croaking loudly, splashing in water\" (cosine 0.74)"
+  },
+  {
+   "i": 80,
+   "clip": "4-155650-A-24.wav",
+   "truth": "none of these",
+   "sense": "chainsaw",
+   "no_input": "engine",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"A sheep coughing\" (cosine 0.55)"
+  },
+  {
+   "i": 81,
+   "clip": "4-155650-B-24.wav",
+   "truth": "none of these",
+   "sense": "hand saw",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Cough followed by a spray\" (cosine 0.66)"
+  },
+  {
+   "i": 82,
+   "clip": "4-155670-A-26.wav",
+   "truth": "none of these",
+   "sense": "none of these",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": false,
+   "detail": "nearest caption: \"A group of females are laughing at a controlled pace followed by talking\" (cosine 0.68)"
+  },
+  {
+   "i": 83,
+   "clip": "4-156227-A-9.wav",
+   "truth": "none of these",
+   "sense": "none of these",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": false,
+   "detail": "nearest caption: \"Traffic passes in the distance as a rooster crows\" (cosine 0.43)"
+  },
+  {
+   "i": 84,
+   "clip": "4-156827-A-46.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "engine",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Large bells ringing loudly and melodically\" (cosine 0.75)"
+  },
+  {
+   "i": 85,
+   "clip": "4-156843-A-21.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "engine",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Sniffle, sneeze, achoo\" (cosine 0.58)"
+  },
+  {
+   "i": 86,
+   "clip": "4-156844-A-21.wav",
+   "truth": "none of these",
+   "sense": "none of these",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": false,
+   "detail": "nearest caption: \"Female sneezing\" (cosine 0.79)"
+  },
+  {
+   "i": 87,
+   "clip": "4-156993-A-19.wav",
+   "truth": "none of these",
+   "sense": "none of these",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": false,
+   "detail": "nearest caption: \"Rain pours down as thunder booms and then lightning strikes\" (cosine 0.73)"
+  },
+  {
+   "i": 88,
+   "clip": "4-157296-A-24.wav",
+   "truth": "none of these",
+   "sense": "none of these",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": false,
+   "detail": "nearest caption: \"Person coughs and then laughs as young male faintly speaks in the background\" (cosine 0.59)"
+  },
+  {
+   "i": 89,
+   "clip": "4-157297-A-21.wav",
+   "truth": "none of these",
+   "sense": "chainsaw",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"A man making noise up to a sneeze\" (cosine 0.78)"
+  },
+  {
+   "i": 90,
+   "clip": "4-157611-A-41.wav",
+   "truth": "chainsaw",
+   "sense": "engine",
+   "no_input": "chainsaw",
+   "lookup": "chainsaw",
+   "flagged": true,
+   "detail": "nearest caption: \"A motorboat is speeding along fast\" (cosine 0.72)"
+  },
+  {
+   "i": 91,
+   "clip": "4-157611-B-41.wav",
+   "truth": "chainsaw",
+   "sense": "engine",
+   "no_input": "engine",
+   "lookup": "chainsaw",
+   "flagged": true,
+   "detail": "nearest caption: \"Loud constant buzzing and vibrations\" (cosine 0.66)"
+  },
+  {
+   "i": 92,
+   "clip": "4-158653-A-32.wav",
+   "truth": "none of these",
+   "sense": "hand saw",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Continuous typing and tapping\" (cosine 0.66)"
+  },
+  {
+   "i": 93,
+   "clip": "4-159426-A-9.wav",
+   "truth": "none of these",
+   "sense": "chainsaw",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Gusts of wind with birds chirping and leaves rustling in the background\" (cosine 0.39)"
+  },
+  {
+   "i": 94,
+   "clip": "4-159609-A-14.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Birds are chirping at different times as the wind blows\" (cosine 0.65)"
+  },
+  {
+   "i": 95,
+   "clip": "4-159609-B-14.wav",
+   "truth": "none of these",
+   "sense": "chainsaw",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Birds chirp loudly outside\" (cosine 0.66)"
+  },
+  {
+   "i": 96,
+   "clip": "4-160036-A-33.wav",
+   "truth": "none of these",
+   "sense": "chainsaw",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Wood is rustling and being pounded.\" (cosine 0.37)"
+  },
+  {
+   "i": 97,
+   "clip": "4-160036-B-33.wav",
+   "truth": "none of these",
+   "sense": "chainsaw",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Gurgling and clicking underwater\" (cosine 0.46)"
+  },
+  {
+   "i": 98,
+   "clip": "4-160999-A-10.wav",
+   "truth": "none of these",
+   "sense": "chainsaw",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Raindrops fall down very hard nearby as metal clangs\" (cosine 0.66)"
+  },
+  {
+   "i": 99,
+   "clip": "4-161099-A-47.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Airplane engines sound in the distance\" (cosine 0.66)"
+  },
+  {
+   "i": 100,
+   "clip": "4-161099-B-47.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "engine",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"A medium sized aircraft takes off from the airway with the wind blowing in the background\" (cosine 0.75)"
+  },
+  {
+   "i": 101,
+   "clip": "4-161100-A-47.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"A medium sized aircraft takes off from the airway with the wind blowing in the background\" (cosine 0.70)"
+  },
+  {
+   "i": 102,
+   "clip": "4-161103-A-47.wav",
+   "truth": "none of these",
+   "sense": "chainsaw",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"A medium sized aircraft takes off from the airway with the wind blowing in the background\" (cosine 0.67)"
+  },
+  {
+   "i": 103,
+   "clip": "4-161105-A-47.wav",
+   "truth": "none of these",
+   "sense": "chainsaw",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Muffled airplane noise\" (cosine 0.67)"
+  },
+  {
+   "i": 104,
+   "clip": "4-161105-B-47.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Low humming of a distant helicopter\" (cosine 0.71)"
+  },
+  {
+   "i": 105,
+   "clip": "4-161127-A-10.wav",
+   "truth": "none of these",
+   "sense": "chainsaw",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Rain is falling really hard and wind is blowing just as hard\" (cosine 0.71)"
+  },
+  {
+   "i": 106,
+   "clip": "4-161303-A-5.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "engine",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"A cat vocalizing itself while meowing repeatedly\" (cosine 0.57)"
+  },
+  {
+   "i": 107,
+   "clip": "4-161303-B-5.wav",
+   "truth": "none of these",
+   "sense": "none of these",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": false,
+   "detail": "nearest caption: \"Cat meowing three times\" (cosine 0.60)"
+  },
+  {
+   "i": 108,
+   "clip": "4-161519-A-19.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Crickets followed by a thunder clap\" (cosine 0.64)"
+  },
+  {
+   "i": 109,
+   "clip": "4-161579-A-40.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "engine",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"A helicopter passes by overhead\" (cosine 0.70)"
+  },
+  {
+   "i": 110,
+   "clip": "4-161579-B-40.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "engine",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"A helicopter starts in the distance as its blades gain speed and advance\" (cosine 0.69)"
+  },
+  {
+   "i": 111,
+   "clip": "4-163264-A-10.wav",
+   "truth": "none of these",
+   "sense": "chainsaw",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"A stream loudly moves past at a fast pace\" (cosine 0.67)"
+  },
+  {
+   "i": 112,
+   "clip": "4-163606-A-16.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "engine",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Humming of a train moving down the line\" (cosine 0.53)"
+  },
+  {
+   "i": 113,
+   "clip": "4-163608-B-16.wav",
+   "truth": "none of these",
+   "sense": "chainsaw",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Ocean waves crashing and water splashing as wind blows heavily into a microphone during a series of metal creaks\" (cosine 0.61)"
+  },
+  {
+   "i": 114,
+   "clip": "4-163609-A-16.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"The constant drone of an airplane flying\" (cosine 0.53)"
+  },
+  {
+   "i": 115,
+   "clip": "4-163609-B-16.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "engine",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Howling wind blows along with clattering sounds\" (cosine 0.66)"
+  },
+  {
+   "i": 116,
+   "clip": "4-163697-A-13.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "engine",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Crickets are chirping and insects are buzzing\" (cosine 0.45)"
+  },
+  {
+   "i": 117,
+   "clip": "4-164021-A-1.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "engine",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Chickens clucking\" (cosine 0.60)"
+  },
+  {
+   "i": 118,
+   "clip": "4-164064-A-1.wav",
+   "truth": "none of these",
+   "sense": "none of these",
+   "no_input": "engine",
+   "lookup": "none of these",
+   "flagged": false,
+   "detail": "nearest caption: \"A rooster crows and chickens back\" (cosine 0.63)"
+  },
+  {
+   "i": 119,
+   "clip": "4-164064-B-1.wav",
+   "truth": "none of these",
+   "sense": "none of these",
+   "no_input": "engine",
+   "lookup": "none of these",
+   "flagged": false,
+   "detail": "nearest caption: \"A rooster crows and chickens back\" (cosine 0.65)"
+  },
+  {
+   "i": 120,
+   "clip": "4-164064-C-1.wav",
+   "truth": "none of these",
+   "sense": "none of these",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": false,
+   "detail": "nearest caption: \"Chickens clucking\" (cosine 0.54)"
+  },
+  {
+   "i": 121,
+   "clip": "4-164206-A-10.wav",
+   "truth": "none of these",
+   "sense": "chainsaw",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Heavy rain bouncing off loudly, distant thunderclap\" (cosine 0.65)"
+  },
+  {
+   "i": 122,
+   "clip": "4-164243-A-26.wav",
+   "truth": "none of these",
+   "sense": "chainsaw",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"A lady is laughing smoothly at first and suddenly laughter out loudly\" (cosine 0.68)"
+  },
+  {
+   "i": 123,
+   "clip": "4-164661-A-12.wav",
+   "truth": "none of these",
+   "sense": "chainsaw",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"A roaring fire crackles, snaps and pops in a small wind\" (cosine 0.54)"
+  },
+  {
+   "i": 124,
+   "clip": "4-164661-B-12.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Fire crackling and metal rattling for a brief moment\" (cosine 0.57)"
+  },
+  {
+   "i": 125,
+   "clip": "4-164859-A-1.wav",
+   "truth": "none of these",
+   "sense": "chainsaw",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"A rooster crows and chickens back\" (cosine 0.57)"
+  },
+  {
+   "i": 126,
+   "clip": "4-165606-A-45.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"A subway train running on railroad tracks as a muffled train horn blows followed by a woman speaking over an intercom\" (cosine 0.63)"
+  },
+  {
+   "i": 127,
+   "clip": "4-165791-A-45.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "engine",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"A close loud train comes close and then one is chugging along quietly far away\" (cosine 0.60)"
+  },
+  {
+   "i": 128,
+   "clip": "4-165791-B-45.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "engine",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Humming of a train moving down the line\" (cosine 0.58)"
+  },
+  {
+   "i": 129,
+   "clip": "4-165813-A-19.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Thunder is booming\" (cosine 0.73)"
+  },
+  {
+   "i": 130,
+   "clip": "4-165813-B-19.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "engine",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Crickets followed by a thunder clap\" (cosine 0.65)"
+  },
+  {
+   "i": 131,
+   "clip": "4-165823-A-41.wav",
+   "truth": "chainsaw",
+   "sense": "chainsaw",
+   "no_input": "chainsaw",
+   "lookup": "chainsaw",
+   "flagged": true,
+   "detail": "nearest caption: \"Chainsaw running\" (cosine 0.75)"
+  },
+  {
+   "i": 132,
+   "clip": "4-165823-B-41.wav",
+   "truth": "chainsaw",
+   "sense": "chainsaw",
+   "no_input": "engine",
+   "lookup": "chainsaw",
+   "flagged": true,
+   "detail": "nearest caption: \"Chainsaw running\" (cosine 0.73)"
+  },
+  {
+   "i": 133,
+   "clip": "4-165845-A-45.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"A train rattles loudly across tracks as the wheels clack\" (cosine 0.66)"
+  },
+  {
+   "i": 134,
+   "clip": "4-165845-B-45.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"A train rattles loudly across tracks as the wheels clack\" (cosine 0.61)"
+  },
+  {
+   "i": 135,
+   "clip": "4-165933-A-45.wav",
+   "truth": "none of these",
+   "sense": "chainsaw",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"A train rattles loudly across tracks as the wheels clack\" (cosine 0.58)"
+  },
+  {
+   "i": 136,
+   "clip": "4-166661-A-10.wav",
+   "truth": "none of these",
+   "sense": "chainsaw",
+   "no_input": "engine",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Rain falls loudly and rapidly on a surface\" (cosine 0.66)"
+  },
+  {
+   "i": 137,
+   "clip": "4-167063-A-11.wav",
+   "truth": "none of these",
+   "sense": "hand saw",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Ocean waves crashing with light splashing followed by more ocean waves\" (cosine 0.57)"
+  },
+  {
+   "i": 138,
+   "clip": "4-167063-B-11.wav",
+   "truth": "none of these",
+   "sense": "none of these",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": false,
+   "detail": "nearest caption: \"Ocean waves crashing with light splashing followed by more ocean waves\" (cosine 0.63)"
+  },
+  {
+   "i": 139,
+   "clip": "4-167063-C-11.wav",
+   "truth": "none of these",
+   "sense": "chainsaw",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Waves are moving across the water and crashing ashore\" (cosine 0.58)"
+  },
+  {
+   "i": 140,
+   "clip": "4-167077-A-20.wav",
+   "truth": "none of these",
+   "sense": "none of these",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": false,
+   "detail": "nearest caption: \"A baby cries sharply then coughs and begins crying again\" (cosine 0.57)"
+  },
+  {
+   "i": 141,
+   "clip": "4-167077-B-20.wav",
+   "truth": "none of these",
+   "sense": "none of these",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": false,
+   "detail": "nearest caption: \"A small child is wailing and crying in long bursts\" (cosine 0.62)"
+  },
+  {
+   "i": 142,
+   "clip": "4-167077-C-20.wav",
+   "truth": "none of these",
+   "sense": "chainsaw",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"A baby cries and cries until it is sobbing\" (cosine 0.58)"
+  },
+  {
+   "i": 143,
+   "clip": "4-167155-A-32.wav",
+   "truth": "none of these",
+   "sense": "chainsaw",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Short typing pattern on keyboard being repeated a few times\" (cosine 0.74)"
+  },
+  {
+   "i": 144,
+   "clip": "4-167571-A-26.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "engine",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Short cuts of a woman laughing\" (cosine 0.55)"
+  },
+  {
+   "i": 145,
+   "clip": "4-167642-A-21.wav",
+   "truth": "none of these",
+   "sense": "chainsaw",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"A loud sneeze\" (cosine 0.75)"
+  },
+  {
+   "i": 146,
+   "clip": "4-168155-A-15.wav",
+   "truth": "none of these",
+   "sense": "hand saw",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Water droplets are falling\" (cosine 0.47)"
+  },
+  {
+   "i": 147,
+   "clip": "4-168446-A-45.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"A train rattles loudly across tracks as the wheels clack\" (cosine 0.63)"
+  },
+  {
+   "i": 148,
+   "clip": "4-168868-A-17.wav",
+   "truth": "none of these",
+   "sense": "chainsaw",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Water pouring and filling up a container\" (cosine 0.62)"
+  },
+  {
+   "i": 149,
+   "clip": "4-169127-A-41.wav",
+   "truth": "chainsaw",
+   "sense": "chainsaw",
+   "no_input": "chainsaw",
+   "lookup": "chainsaw",
+   "flagged": true,
+   "detail": "nearest caption: \"Chainsaw running\" (cosine 0.75)"
+  },
+  {
+   "i": 150,
+   "clip": "4-169127-B-41.wav",
+   "truth": "chainsaw",
+   "sense": "chainsaw",
+   "no_input": "chainsaw",
+   "lookup": "chainsaw",
+   "flagged": true,
+   "detail": "nearest caption: \"Chainsaw cutting wood\" (cosine 0.77)"
+  },
+  {
+   "i": 151,
+   "clip": "4-169508-A-37.wav",
+   "truth": "none of these",
+   "sense": "hand saw",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"The ringing of an alarm on a machine\" (cosine 0.58)"
+  },
+  {
+   "i": 152,
+   "clip": "4-169726-A-24.wav",
+   "truth": "none of these",
+   "sense": "chainsaw",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"A sheep coughing\" (cosine 0.53)"
+  },
+  {
+   "i": 153,
+   "clip": "4-170078-A-1.wav",
+   "truth": "none of these",
+   "sense": "none of these",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": false,
+   "detail": "nearest caption: \"A rooster crows and chickens back\" (cosine 0.51)"
+  },
+  {
+   "i": 154,
+   "clip": "4-170247-A-12.wav",
+   "truth": "none of these",
+   "sense": "chainsaw",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"A roaring fire crackles, snaps and pops in a small wind\" (cosine 0.70)"
+  },
+  {
+   "i": 155,
+   "clip": "4-170247-B-12.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "engine",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"A roaring fire crackles, snaps and pops in a small wind\" (cosine 0.71)"
+  },
+  {
+   "i": 156,
+   "clip": "4-171207-A-12.wav",
+   "truth": "none of these",
+   "sense": "hand saw",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"A roaring fire crackles, snaps and pops in a small wind\" (cosine 0.59)"
+  },
+  {
+   "i": 157,
+   "clip": "4-171396-A-24.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "engine",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Person coughs and then laughs as young male faintly speaks in the background\" (cosine 0.58)"
+  },
+  {
+   "i": 158,
+   "clip": "4-171519-A-21.wav",
+   "truth": "none of these",
+   "sense": "chainsaw",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Sneeze from a female'\" (cosine 0.76)"
+  },
+  {
+   "i": 159,
+   "clip": "4-171652-A-44.wav",
+   "truth": "engine",
+   "sense": "engine",
+   "no_input": "hand saw",
+   "lookup": "chainsaw",
+   "flagged": true,
+   "detail": "nearest caption: \"A lawn mower engine running\" (cosine 0.67)"
+  },
+  {
+   "i": 160,
+   "clip": "4-171706-A-23.wav",
+   "truth": "none of these",
+   "sense": "chainsaw",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"A sick woman loudly inhales through her mouth followed by a series of mucous slurping\" (cosine 0.44)"
+  },
+  {
+   "i": 161,
+   "clip": "4-171823-A-13.wav",
+   "truth": "none of these",
+   "sense": "none of these",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": false,
+   "detail": "nearest caption: \"Outdoor night ambiance with crickets chirping and insects buzzing\" (cosine 0.52)"
+  },
+  {
+   "i": 162,
+   "clip": "4-172143-A-13.wav",
+   "truth": "none of these",
+   "sense": "none of these",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": false,
+   "detail": "nearest caption: \"Outdoor night ambiance with crickets chirping and insects buzzing\" (cosine 0.55)"
+  },
+  {
+   "i": 163,
+   "clip": "4-172180-A-32.wav",
+   "truth": "none of these",
+   "sense": "chainsaw",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"A person types on a computer keyboard rapidly and quietly\" (cosine 0.71)"
+  },
+  {
+   "i": 164,
+   "clip": "4-172366-A-37.wav",
+   "truth": "none of these",
+   "sense": "none of these",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": false,
+   "detail": "nearest caption: \"An alarm sound from a clock\" (cosine 0.64)"
+  },
+  {
+   "i": 165,
+   "clip": "4-172377-A-17.wav",
+   "truth": "none of these",
+   "sense": "none of these",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": false,
+   "detail": "nearest caption: \"A woman speaks and pours out water\" (cosine 0.52)"
+  },
+  {
+   "i": 166,
+   "clip": "4-172500-A-27.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "engine",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"A domestic animal breathes heavily along with multiple bong sounds\" (cosine 0.65)"
+  },
+  {
+   "i": 167,
+   "clip": "4-172500-B-27.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "engine",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Kid speaking and spray paint can shaking slow motion\" (cosine 0.58)"
+  },
+  {
+   "i": 168,
+   "clip": "4-172500-C-27.wav",
+   "truth": "none of these",
+   "sense": "none of these",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": false,
+   "detail": "nearest caption: \"Snake hissing while in a main faintly speaking in the background\" (cosine 0.48)"
+  },
+  {
+   "i": 169,
+   "clip": "4-172500-D-27.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "engine",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"A domestic animal breathes heavily along with multiple bong sounds\" (cosine 0.63)"
+  },
+  {
+   "i": 170,
+   "clip": "4-172732-A-36.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"A hair dryer operating and blowing air\" (cosine 0.66)"
+  },
+  {
+   "i": 171,
+   "clip": "4-172733-A-36.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"A hair dryer operating and blowing air\" (cosine 0.66)"
+  },
+  {
+   "i": 172,
+   "clip": "4-172734-A-36.wav",
+   "truth": "none of these",
+   "sense": "hand saw",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"A hair dryer operating and blowing air\" (cosine 0.56)"
+  },
+  {
+   "i": 173,
+   "clip": "4-172736-A-36.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "engine",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Humming of a train moving down the line\" (cosine 0.60)"
+  },
+  {
+   "i": 174,
+   "clip": "4-172736-B-36.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "engine",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"A vacuum cleaner operating\" (cosine 0.64)"
+  },
+  {
+   "i": 175,
+   "clip": "4-172742-A-32.wav",
+   "truth": "none of these",
+   "sense": "none of these",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": false,
+   "detail": "nearest caption: \"Continuous typing and tapping\" (cosine 0.60)"
+  },
+  {
+   "i": 176,
+   "clip": "4-173865-A-9.wav",
+   "truth": "none of these",
+   "sense": "chainsaw",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"A bunch of birds chirping and squawking\" (cosine 0.46)"
+  },
+  {
+   "i": 177,
+   "clip": "4-173865-B-9.wav",
+   "truth": "none of these",
+   "sense": "none of these",
+   "no_input": "engine",
+   "lookup": "none of these",
+   "flagged": false,
+   "detail": "nearest caption: \"Chirping bird with a crow cawing in the distance\" (cosine 0.48)"
+  },
+  {
+   "i": 178,
+   "clip": "4-174797-A-15.wav",
+   "truth": "none of these",
+   "sense": "hand saw",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"A splash followed with banging then more splashes\" (cosine 0.64)"
+  },
+  {
+   "i": 179,
+   "clip": "4-174860-A-3.wav",
+   "truth": "none of these",
+   "sense": "hand saw",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Goat baaing in deep tone\" (cosine 0.57)"
+  },
+  {
+   "i": 180,
+   "clip": "4-174860-B-3.wav",
+   "truth": "none of these",
+   "sense": "chainsaw",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Sheep calling out on a farm\" (cosine 0.57)"
+  },
+  {
+   "i": 181,
+   "clip": "4-175000-A-40.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"A helicopter passes by overhead\" (cosine 0.58)"
+  },
+  {
+   "i": 182,
+   "clip": "4-175000-B-40.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "engine",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Low humming of a distant helicopter\" (cosine 0.68)"
+  },
+  {
+   "i": 183,
+   "clip": "4-175000-C-40.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Low humming of a distant helicopter\" (cosine 0.71)"
+  },
+  {
+   "i": 184,
+   "clip": "4-175025-A-34.wav",
+   "truth": "none of these",
+   "sense": "chainsaw",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"A cap gun is being used to fire, noise of pellet hitting metal, metal object shaking also a jingling noise\" (cosine 0.58)"
+  },
+  {
+   "i": 185,
+   "clip": "4-175845-A-43.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "engine",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"A car horn honks several times very loudly nearby, and a vehicle rushes by\" (cosine 0.79)"
+  },
+  {
+   "i": 186,
+   "clip": "4-175846-A-43.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "engine",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"A car horn blares and more join the slow parade of cars beeping\" (cosine 0.62)"
+  },
+  {
+   "i": 187,
+   "clip": "4-175855-A-43.wav",
+   "truth": "none of these",
+   "sense": "chainsaw",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"A car horn honks several times loudly nearby\" (cosine 0.64)"
+  },
+  {
+   "i": 188,
+   "clip": "4-175856-A-43.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "engine",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"A car horn blares and more join the slow parade of cars beeping\" (cosine 0.73)"
+  },
+  {
+   "i": 189,
+   "clip": "4-175945-A-38.wav",
+   "truth": "none of these",
+   "sense": "chainsaw",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"An uneven ticktock\" (cosine 0.66)"
+  },
+  {
+   "i": 190,
+   "clip": "4-176631-A-43.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Humming of passing traffic with horns blowing\" (cosine 0.77)"
+  },
+  {
+   "i": 191,
+   "clip": "4-176638-A-43.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"A car engine runs then a horn honks multiple times\" (cosine 0.80)"
+  },
+  {
+   "i": 192,
+   "clip": "4-176914-A-23.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "engine",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Sniffle, sneeze, achoo\" (cosine 0.52)"
+  },
+  {
+   "i": 193,
+   "clip": "4-177243-A-32.wav",
+   "truth": "none of these",
+   "sense": "none of these",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": false,
+   "detail": "nearest caption: \"Mechanical keyboard typing\" (cosine 0.71)"
+  },
+  {
+   "i": 194,
+   "clip": "4-177250-A-10.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "engine",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Heavy rain bouncing off loudly, distant thunderclap\" (cosine 0.72)"
+  },
+  {
+   "i": 195,
+   "clip": "4-177835-A-24.wav",
+   "truth": "none of these",
+   "sense": "hand saw",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"A sheep coughing\" (cosine 0.55)"
+  },
+  {
+   "i": 196,
+   "clip": "4-178402-A-43.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"A vehicle horn beeps then honks\" (cosine 0.64)"
+  },
+  {
+   "i": 197,
+   "clip": "4-178881-A-45.wav",
+   "truth": "none of these",
+   "sense": "none of these",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": false,
+   "detail": "nearest caption: \"Humming and rustling from a passing train\" (cosine 0.55)"
+  },
+  {
+   "i": 198,
+   "clip": "4-179836-A-34.wav",
+   "truth": "none of these",
+   "sense": "none of these",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": false,
+   "detail": "nearest caption: \"A man and women talk as they open a bottle and it goes pop\" (cosine 0.46)"
+  },
+  {
+   "i": 199,
+   "clip": "4-179984-A-38.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "engine",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Rhythmic metal clicking is ongoing in an otherwise quiet environment\" (cosine 0.67)"
+  },
+  {
+   "i": 200,
+   "clip": "4-180337-A-28.wav",
+   "truth": "none of these",
+   "sense": "none of these",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": false,
+   "detail": "nearest caption: \"Snoring is ongoing and quiet tapping occurs.\" (cosine 0.68)"
+  },
+  {
+   "i": 201,
+   "clip": "4-180380-A-10.wav",
+   "truth": "none of these",
+   "sense": "chainsaw",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Heavy rain, droplets hitting the surface\" (cosine 0.61)"
+  },
+  {
+   "i": 202,
+   "clip": "4-180453-A-17.wav",
+   "truth": "none of these",
+   "sense": "chainsaw",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"A man is speaking and pours something\" (cosine 0.52)"
+  },
+  {
+   "i": 203,
+   "clip": "4-181035-A-38.wav",
+   "truth": "none of these",
+   "sense": "hand saw",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"An uneven ticktock\" (cosine 0.52)"
+  },
+  {
+   "i": 204,
+   "clip": "4-181286-A-10.wav",
+   "truth": "none of these",
+   "sense": "none of these",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": false,
+   "detail": "nearest caption: \"It's raining outside and the drops are rattling against the leaves around, which starts slowly then quickly speeds up\" (cosine 0.71)"
+  },
+  {
+   "i": 205,
+   "clip": "4-181362-A-13.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "engine",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Crickets sing and wind blows\" (cosine 0.61)"
+  },
+  {
+   "i": 206,
+   "clip": "4-181563-A-12.wav",
+   "truth": "none of these",
+   "sense": "chainsaw",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"A roaring fire crackles, snaps and pops in a small wind\" (cosine 0.62)"
+  },
+  {
+   "i": 207,
+   "clip": "4-181599-A-26.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "engine",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"A woman laughs continuously\" (cosine 0.73)"
+  },
+  {
+   "i": 208,
+   "clip": "4-181628-A-17.wav",
+   "truth": "none of these",
+   "sense": "none of these",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": false,
+   "detail": "nearest caption: \"A woman speaks and pours out water\" (cosine 0.50)"
+  },
+  {
+   "i": 209,
+   "clip": "4-181707-A-32.wav",
+   "truth": "none of these",
+   "sense": "hand saw",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Rapid typing from a computer keyboard\" (cosine 0.74)"
+  },
+  {
+   "i": 210,
+   "clip": "4-181708-A-32.wav",
+   "truth": "none of these",
+   "sense": "chainsaw",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Rapid typing on a keyboard\" (cosine 0.73)"
+  },
+  {
+   "i": 211,
+   "clip": "4-181865-A-38.wav",
+   "truth": "none of these",
+   "sense": "hand saw",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Tick locking continuously\" (cosine 0.57)"
+  },
+  {
+   "i": 212,
+   "clip": "4-181955-A-3.wav",
+   "truth": "none of these",
+   "sense": "hand saw",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Sheep calling out on a farm\" (cosine 0.57)"
+  },
+  {
+   "i": 213,
+   "clip": "4-181955-B-3.wav",
+   "truth": "none of these",
+   "sense": "none of these",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": false,
+   "detail": "nearest caption: \"Sheep calling out on a farm\" (cosine 0.49)"
+  },
+  {
+   "i": 214,
+   "clip": "4-181955-C-3.wav",
+   "truth": "none of these",
+   "sense": "hand saw",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Sheep calling out on a farm\" (cosine 0.56)"
+  },
+  {
+   "i": 215,
+   "clip": "4-181999-A-36.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"An increasingly loud sound of an aircraft\" (cosine 0.74)"
+  },
+  {
+   "i": 216,
+   "clip": "4-182034-A-30.wav",
+   "truth": "none of these",
+   "sense": "chainsaw",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Knocking with some light rustling\" (cosine 0.58)"
+  },
+  {
+   "i": 217,
+   "clip": "4-182039-A-30.wav",
+   "truth": "none of these",
+   "sense": "chainsaw",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Knocking with some light rustling\" (cosine 0.55)"
+  },
+  {
+   "i": 218,
+   "clip": "4-182041-A-30.wav",
+   "truth": "none of these",
+   "sense": "chainsaw",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Knocking with some light rustling\" (cosine 0.52)"
+  },
+  {
+   "i": 219,
+   "clip": "4-182314-A-7.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "engine",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Bee buzzing sounds are continuous while a low, muffled, tapping movement is in the background\" (cosine 0.68)"
+  },
+  {
+   "i": 220,
+   "clip": "4-182314-B-7.wav",
+   "truth": "none of these",
+   "sense": "chainsaw",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Bees buzz closely nearby quickly\" (cosine 0.69)"
+  },
+  {
+   "i": 221,
+   "clip": "4-182368-A-12.wav",
+   "truth": "none of these",
+   "sense": "chainsaw",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"A roaring fire crackles, snaps and pops in a small wind\" (cosine 0.55)"
+  },
+  {
+   "i": 222,
+   "clip": "4-182369-A-12.wav",
+   "truth": "none of these",
+   "sense": "hand saw",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"A roaring fire crackles, snaps and pops in a small wind\" (cosine 0.70)"
+  },
+  {
+   "i": 223,
+   "clip": "4-182395-A-0.wav",
+   "truth": "none of these",
+   "sense": "none of these",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": false,
+   "detail": "nearest caption: \"A dog barks multiple times\" (cosine 0.54)"
+  },
+  {
+   "i": 224,
+   "clip": "4-182613-A-11.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "engine",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Waves are moving across the water and crashing ashore\" (cosine 0.72)"
+  },
+  {
+   "i": 225,
+   "clip": "4-182613-B-11.wav",
+   "truth": "none of these",
+   "sense": "chainsaw",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Waves are moving across the water and crashing ashore\" (cosine 0.67)"
+  },
+  {
+   "i": 226,
+   "clip": "4-182795-A-14.wav",
+   "truth": "none of these",
+   "sense": "none of these",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": false,
+   "detail": "nearest caption: \"Birds singing outdoors\" (cosine 0.72)"
+  },
+  {
+   "i": 227,
+   "clip": "4-182839-A-17.wav",
+   "truth": "none of these",
+   "sense": "chainsaw",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Water draining down a pipe\" (cosine 0.63)"
+  },
+  {
+   "i": 228,
+   "clip": "4-183487-A-1.wav",
+   "truth": "none of these",
+   "sense": "none of these",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": false,
+   "detail": "nearest caption: \"A rooster crows and chickens back\" (cosine 0.56)"
+  },
+  {
+   "i": 229,
+   "clip": "4-183882-A-28.wav",
+   "truth": "none of these",
+   "sense": "none of these",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": false,
+   "detail": "nearest caption: \"A person snoring loudly and repetitively\" (cosine 0.76)"
+  },
+  {
+   "i": 230,
+   "clip": "4-183882-B-28.wav",
+   "truth": "none of these",
+   "sense": "none of these",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": false,
+   "detail": "nearest caption: \"Snoring is ongoing and quiet tapping occurs.\" (cosine 0.74)"
+  },
+  {
+   "i": 231,
+   "clip": "4-183992-A-0.wav",
+   "truth": "none of these",
+   "sense": "none of these",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": false,
+   "detail": "nearest caption: \"Dog barking then many dogs barking\" (cosine 0.61)"
+  },
+  {
+   "i": 232,
+   "clip": "4-184235-A-28.wav",
+   "truth": "none of these",
+   "sense": "none of these",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": false,
+   "detail": "nearest caption: \"A individual person snoring peacefully and continuously\" (cosine 0.69)"
+  },
+  {
+   "i": 233,
+   "clip": "4-184237-A-28.wav",
+   "truth": "none of these",
+   "sense": "none of these",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": false,
+   "detail": "nearest caption: \"Snoring followed by silent and then more snoring\" (cosine 0.71)"
+  },
+  {
+   "i": 234,
+   "clip": "4-184434-A-21.wav",
+   "truth": "none of these",
+   "sense": "chainsaw",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Person sneezing\" (cosine 0.81)"
+  },
+  {
+   "i": 235,
+   "clip": "4-184575-A-0.wav",
+   "truth": "none of these",
+   "sense": "chainsaw",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Dog barking then many dogs barking\" (cosine 0.65)"
+  },
+  {
+   "i": 236,
+   "clip": "4-185415-A-21.wav",
+   "truth": "none of these",
+   "sense": "none of these",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": false,
+   "detail": "nearest caption: \"Two sneezes occur\" (cosine 0.63)"
+  },
+  {
+   "i": 237,
+   "clip": "4-185575-A-20.wav",
+   "truth": "none of these",
+   "sense": "hand saw",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Baby sobbing and gurgling\" (cosine 0.76)"
+  },
+  {
+   "i": 238,
+   "clip": "4-185575-B-20.wav",
+   "truth": "none of these",
+   "sense": "chainsaw",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"A baby cries and fusses over tapping and clicking\" (cosine 0.78)"
+  },
+  {
+   "i": 239,
+   "clip": "4-185575-C-20.wav",
+   "truth": "none of these",
+   "sense": "none of these",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": false,
+   "detail": "nearest caption: \"A baby cries and fusses over tapping and clicking\" (cosine 0.77)"
+  },
+  {
+   "i": 240,
+   "clip": "4-185613-A-32.wav",
+   "truth": "none of these",
+   "sense": "none of these",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": false,
+   "detail": "nearest caption: \"Continuous typing and tapping\" (cosine 0.68)"
+  },
+  {
+   "i": 241,
+   "clip": "4-185619-A-21.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "engine",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Sneeze from a female'\" (cosine 0.73)"
+  },
+  {
+   "i": 242,
+   "clip": "4-186518-A-30.wav",
+   "truth": "none of these",
+   "sense": "chainsaw",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Knocking with some light rustling\" (cosine 0.57)"
+  },
+  {
+   "i": 243,
+   "clip": "4-186693-A-17.wav",
+   "truth": "none of these",
+   "sense": "chainsaw",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Water pouring and filling up a container\" (cosine 0.50)"
+  },
+  {
+   "i": 244,
+   "clip": "4-186935-A-44.wav",
+   "truth": "engine",
+   "sense": "engine",
+   "no_input": "engine",
+   "lookup": "engine",
+   "flagged": true,
+   "detail": "nearest caption: \"The sound of an engine of a big vehicle like a bus while in idle\" (cosine 0.63)"
+  },
+  {
+   "i": 245,
+   "clip": "4-186936-A-44.wav",
+   "truth": "engine",
+   "sense": "engine",
+   "no_input": "hand saw",
+   "lookup": "engine",
+   "flagged": true,
+   "detail": "nearest caption: \"Mid frequency engine running, idling and making a continuous tapping sound\" (cosine 0.61)"
+  },
+  {
+   "i": 246,
+   "clip": "4-186938-A-44.wav",
+   "truth": "engine",
+   "sense": "engine",
+   "no_input": "chainsaw",
+   "lookup": "engine",
+   "flagged": true,
+   "detail": "nearest caption: \"An engine chugging loudly and consistently followed by a brief silence\" (cosine 0.60)"
+  },
+  {
+   "i": 247,
+   "clip": "4-186940-A-44.wav",
+   "truth": "engine",
+   "sense": "engine",
+   "no_input": "chainsaw",
+   "lookup": "engine",
+   "flagged": true,
+   "detail": "nearest caption: \"The sound of an engine of a big vehicle like a bus while in idle\" (cosine 0.73)"
+  },
+  {
+   "i": 248,
+   "clip": "4-186962-A-44.wav",
+   "truth": "engine",
+   "sense": "engine",
+   "no_input": "chainsaw",
+   "lookup": "engine",
+   "flagged": true,
+   "detail": "nearest caption: \"An old motorcycle idling while warming up\" (cosine 0.70)"
+  },
+  {
+   "i": 249,
+   "clip": "4-187284-A-30.wav",
+   "truth": "none of these",
+   "sense": "hand saw",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Loud banging on a door\" (cosine 0.36)"
+  },
+  {
+   "i": 250,
+   "clip": "4-187384-A-34.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "engine",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"A cap gun fires against a surface several times\" (cosine 0.55)"
+  },
+  {
+   "i": 251,
+   "clip": "4-187504-A-17.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "engine",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Water pouring and filling up a container\" (cosine 0.49)"
+  },
+  {
+   "i": 252,
+   "clip": "4-187504-B-17.wav",
+   "truth": "none of these",
+   "sense": "hand saw",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"A woman speaks and pours out water\" (cosine 0.43)"
+  },
+  {
+   "i": 253,
+   "clip": "4-187769-A-14.wav",
+   "truth": "none of these",
+   "sense": "none of these",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": false,
+   "detail": "nearest caption: \"Birds tweet and sing as a busy highway is in the background\" (cosine 0.50)"
+  },
+  {
+   "i": 254,
+   "clip": "4-187769-B-14.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "engine",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Birds tweet and sing as a busy highway is in the background\" (cosine 0.57)"
+  },
+  {
+   "i": 255,
+   "clip": "4-188003-A-34.wav",
+   "truth": "none of these",
+   "sense": "chainsaw",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"A person is firing a BB gun and then refills the gun with BB bullets\" (cosine 0.51)"
+  },
+  {
+   "i": 256,
+   "clip": "4-188033-A-38.wav",
+   "truth": "none of these",
+   "sense": "hand saw",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"A tick repeats over and over in a timed manner\" (cosine 0.72)"
+  },
+  {
+   "i": 257,
+   "clip": "4-188191-A-29.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "engine",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"A sick woman loudly inhales through her mouth followed by a series of mucous slurping\" (cosine 0.59)"
+  },
+  {
+   "i": 258,
+   "clip": "4-188191-B-29.wav",
+   "truth": "none of these",
+   "sense": "chainsaw",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"A man is speaking and pours something\" (cosine 0.47)"
+  },
+  {
+   "i": 259,
+   "clip": "4-188191-C-29.wav",
+   "truth": "none of these",
+   "sense": "none of these",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": false,
+   "detail": "nearest caption: \"A man is speaking and pours something\" (cosine 0.50)"
+  },
+  {
+   "i": 260,
+   "clip": "4-188287-A-9.wav",
+   "truth": "none of these",
+   "sense": "none of these",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": false,
+   "detail": "nearest caption: \"Chirping bird with a crow cawing in the distance\" (cosine 0.48)"
+  },
+  {
+   "i": 261,
+   "clip": "4-188293-A-15.wav",
+   "truth": "none of these",
+   "sense": "hand saw",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Water droplets are falling\" (cosine 0.57)"
+  },
+  {
+   "i": 262,
+   "clip": "4-188293-B-15.wav",
+   "truth": "none of these",
+   "sense": "none of these",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": false,
+   "detail": "nearest caption: \"Water droplets are falling\" (cosine 0.59)"
+  },
+  {
+   "i": 263,
+   "clip": "4-188595-A-29.wav",
+   "truth": "none of these",
+   "sense": "chainsaw",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"A sick woman loudly inhales through her mouth followed by a series of mucous slurping\" (cosine 0.49)"
+  },
+  {
+   "i": 264,
+   "clip": "4-188703-A-8.wav",
+   "truth": "none of these",
+   "sense": "none of these",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": false,
+   "detail": "nearest caption: \"Sheep calling out on a farm\" (cosine 0.69)"
+  },
+  {
+   "i": 265,
+   "clip": "4-188703-B-8.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "engine",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Sheep calling out on a farm\" (cosine 0.74)"
+  },
+  {
+   "i": 266,
+   "clip": "4-188703-C-8.wav",
+   "truth": "none of these",
+   "sense": "chainsaw",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Sheep calling out on a farm\" (cosine 0.71)"
+  },
+  {
+   "i": 267,
+   "clip": "4-188703-D-8.wav",
+   "truth": "none of these",
+   "sense": "hand saw",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Sheep calling out on a farm\" (cosine 0.77)"
+  },
+  {
+   "i": 268,
+   "clip": "4-188878-A-30.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "engine",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Knocking with some light rustling\" (cosine 0.70)"
+  },
+  {
+   "i": 269,
+   "clip": "4-189332-A-37.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"An alarm sound from a clock\" (cosine 0.64)"
+  },
+  {
+   "i": 270,
+   "clip": "4-189828-A-22.wav",
+   "truth": "none of these",
+   "sense": "hand saw",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"A crowd giving a round of applause\" (cosine 0.65)"
+  },
+  {
+   "i": 271,
+   "clip": "4-189830-A-22.wav",
+   "truth": "none of these",
+   "sense": "none of these",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": false,
+   "detail": "nearest caption: \"People applaud and people speak at once\" (cosine 0.61)"
+  },
+  {
+   "i": 272,
+   "clip": "4-189832-A-22.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "engine",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Large group of people clapping\" (cosine 0.77)"
+  },
+  {
+   "i": 273,
+   "clip": "4-189832-B-22.wav",
+   "truth": "none of these",
+   "sense": "none of these",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": false,
+   "detail": "nearest caption: \"Large group of people clapping\" (cosine 0.77)"
+  },
+  {
+   "i": 274,
+   "clip": "4-189833-A-22.wav",
+   "truth": "none of these",
+   "sense": "none of these",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": false,
+   "detail": "nearest caption: \"Large group of people clapping\" (cosine 0.72)"
+  },
+  {
+   "i": 275,
+   "clip": "4-189836-A-22.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "engine",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"People clapping and faintly talking\" (cosine 0.60)"
+  },
+  {
+   "i": 276,
+   "clip": "4-189838-A-22.wav",
+   "truth": "none of these",
+   "sense": "chainsaw",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Multiple people are applauding in unison followed by a man in the background yelling something\" (cosine 0.66)"
+  },
+  {
+   "i": 277,
+   "clip": "4-191015-A-43.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"A motorcycle engine is running, and traffic noise is present, with car horns beeping intermittently\" (cosine 0.70)"
+  },
+  {
+   "i": 278,
+   "clip": "4-191246-A-7.wav",
+   "truth": "none of these",
+   "sense": "hand saw",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Bees buzz closely nearby quickly\" (cosine 0.62)"
+  },
+  {
+   "i": 279,
+   "clip": "4-191246-B-7.wav",
+   "truth": "none of these",
+   "sense": "none of these",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": false,
+   "detail": "nearest caption: \"A shovel scrapes, and then bees fly around nearby\" (cosine 0.76)"
+  },
+  {
+   "i": 280,
+   "clip": "4-191297-A-28.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Snoring is ongoing and quiet tapping occurs.\" (cosine 0.70)"
+  },
+  {
+   "i": 281,
+   "clip": "4-191327-A-38.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "engine",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"A machine ticks very slowly\" (cosine 0.76)"
+  },
+  {
+   "i": 282,
+   "clip": "4-191687-A-0.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Dog barking then many dogs barking\" (cosine 0.55)"
+  },
+  {
+   "i": 283,
+   "clip": "4-192068-A-31.wav",
+   "truth": "none of these",
+   "sense": "chainsaw",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"A person presses several keyboard keys at the same time\" (cosine 0.62)"
+  },
+  {
+   "i": 284,
+   "clip": "4-192236-A-0.wav",
+   "truth": "none of these",
+   "sense": "none of these",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": false,
+   "detail": "nearest caption: \"Mans voice speaking foreign language puppy barking man speaking again puppy barking and growling\" (cosine 0.58)"
+  },
+  {
+   "i": 285,
+   "clip": "4-193480-A-40.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "engine",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"A helicopter is flying in the distance\" (cosine 0.74)"
+  },
+  {
+   "i": 286,
+   "clip": "4-193480-B-40.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"A helicopter gets louder as it comes closer\" (cosine 0.71)"
+  },
+  {
+   "i": 287,
+   "clip": "4-194246-A-13.wav",
+   "truth": "none of these",
+   "sense": "none of these",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": false,
+   "detail": "nearest caption: \"Outdoor night ambiance with crickets chirping and insects buzzing\" (cosine 0.63)"
+  },
+  {
+   "i": 288,
+   "clip": "4-194680-A-36.wav",
+   "truth": "none of these",
+   "sense": "hand saw",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"A machine works while wood hits\" (cosine 0.59)"
+  },
+  {
+   "i": 289,
+   "clip": "4-194711-A-38.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Ticking of a small machine\" (cosine 0.70)"
+  },
+  {
+   "i": 290,
+   "clip": "4-194754-A-0.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "engine",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Multiple dogs bark, traffic in the distance\" (cosine 0.63)"
+  },
+  {
+   "i": 291,
+   "clip": "4-194808-A-29.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"A man moaning and hissing as footsteps slowly walk on a hard surface\" (cosine 0.54)"
+  },
+  {
+   "i": 292,
+   "clip": "4-194979-A-25.wav",
+   "truth": "none of these",
+   "sense": "none of these",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": false,
+   "detail": "nearest caption: \"Loud footsteps over leaves, some banging and rustling\" (cosine 0.56)"
+  },
+  {
+   "i": 293,
+   "clip": "4-194981-A-25.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Rhythmic clopping is ongoing, then rhythmic heavy breathing also occurs\" (cosine 0.64)"
+  },
+  {
+   "i": 294,
+   "clip": "4-195305-A-31.wav",
+   "truth": "none of these",
+   "sense": "hand saw",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Clicking on a keyboard with people speaking in the distance\" (cosine 0.57)"
+  },
+  {
+   "i": 295,
+   "clip": "4-195451-A-44.wav",
+   "truth": "engine",
+   "sense": "engine",
+   "no_input": "hand saw",
+   "lookup": "engine",
+   "flagged": true,
+   "detail": "nearest caption: \"An engine chugging continuously and revving lightly and briefly\" (cosine 0.70)"
+  },
+  {
+   "i": 296,
+   "clip": "4-195497-A-11.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "engine",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Ocean waves crashing with light splashing followed by more ocean waves\" (cosine 0.54)"
+  },
+  {
+   "i": 297,
+   "clip": "4-195497-B-11.wav",
+   "truth": "none of these",
+   "sense": "none of these",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": false,
+   "detail": "nearest caption: \"Ocean waves crashing with light splashing followed by more ocean waves\" (cosine 0.61)"
+  },
+  {
+   "i": 298,
+   "clip": "4-195707-A-13.wav",
+   "truth": "none of these",
+   "sense": "none of these",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": false,
+   "detail": "nearest caption: \"Crickets are chirping and insects are buzzing\" (cosine 0.68)"
+  },
+  {
+   "i": 299,
+   "clip": "4-195805-A-13.wav",
+   "truth": "none of these",
+   "sense": "hand saw",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Crickets sing and wind blows\" (cosine 0.58)"
+  },
+  {
+   "i": 300,
+   "clip": "4-196671-A-8.wav",
+   "truth": "none of these",
+   "sense": "chainsaw",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Sheep calling out on a farm\" (cosine 0.68)"
+  },
+  {
+   "i": 301,
+   "clip": "4-196671-B-8.wav",
+   "truth": "none of these",
+   "sense": "none of these",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": false,
+   "detail": "nearest caption: \"Sheep calling out on a farm\" (cosine 0.70)"
+  },
+  {
+   "i": 302,
+   "clip": "4-196672-A-8.wav",
+   "truth": "none of these",
+   "sense": "hand saw",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Sheep baaing and walking through the grass\" (cosine 0.73)"
+  },
+  {
+   "i": 303,
+   "clip": "4-197103-A-6.wav",
+   "truth": "none of these",
+   "sense": "none of these",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": false,
+   "detail": "nearest caption: \"Chickens clucking\" (cosine 0.56)"
+  },
+  {
+   "i": 304,
+   "clip": "4-197454-A-28.wav",
+   "truth": "none of these",
+   "sense": "none of these",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": false,
+   "detail": "nearest caption: \"A person snoring loudly and repetitively\" (cosine 0.72)"
+  },
+  {
+   "i": 305,
+   "clip": "4-197454-B-28.wav",
+   "truth": "none of these",
+   "sense": "chainsaw",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"'A person snoring almost wheezing continuously\" (cosine 0.71)"
+  },
+  {
+   "i": 306,
+   "clip": "4-197871-A-15.wav",
+   "truth": "none of these",
+   "sense": "chainsaw",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Dripping water followed by brief silence\" (cosine 0.56)"
+  },
+  {
+   "i": 307,
+   "clip": "4-198025-A-23.wav",
+   "truth": "none of these",
+   "sense": "chainsaw",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"A sick woman loudly inhales through her mouth followed by a series of mucous slurping\" (cosine 0.47)"
+  },
+  {
+   "i": 308,
+   "clip": "4-198360-A-49.wav",
+   "truth": "hand saw",
+   "sense": "hand saw",
+   "no_input": "chainsaw",
+   "lookup": "hand saw",
+   "flagged": true,
+   "detail": "nearest caption: \"Sanding and vibrating on wood\" (cosine 0.78)"
+  },
+  {
+   "i": 309,
+   "clip": "4-198360-B-49.wav",
+   "truth": "hand saw",
+   "sense": "hand saw",
+   "no_input": "hand saw",
+   "lookup": "hand saw",
+   "flagged": true,
+   "detail": "nearest caption: \"Wood being sawed by hand\" (cosine 0.77)"
+  },
+  {
+   "i": 310,
+   "clip": "4-198360-C-49.wav",
+   "truth": "hand saw",
+   "sense": "chainsaw",
+   "no_input": "chainsaw",
+   "lookup": "hand saw",
+   "flagged": true,
+   "detail": "nearest caption: \"Repeative scraping followed by clanking\" (cosine 0.82)"
+  },
+  {
+   "i": 311,
+   "clip": "4-198841-A-37.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "engine",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"An alarm sound from a clock\" (cosine 0.70)"
+  },
+  {
+   "i": 312,
+   "clip": "4-198962-A-25.wav",
+   "truth": "none of these",
+   "sense": "none of these",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": false,
+   "detail": "nearest caption: \"Footsteps on a wooden floor, followed by a knock on a door\" (cosine 0.53)"
+  },
+  {
+   "i": 313,
+   "clip": "4-198962-B-25.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "engine",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Footsteps on a wooden floor, followed by a knock on a door\" (cosine 0.44)"
+  },
+  {
+   "i": 314,
+   "clip": "4-198965-A-38.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "engine",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Tick locking of a large clock\" (cosine 0.65)"
+  },
+  {
+   "i": 315,
+   "clip": "4-199261-A-0.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"A dog yipping repeatedly\" (cosine 0.61)"
+  },
+  {
+   "i": 316,
+   "clip": "4-200330-A-6.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "engine",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Chickens clucking\" (cosine 0.69)"
+  },
+  {
+   "i": 317,
+   "clip": "4-200330-B-6.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "engine",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Pecking noise followed by quacking and a rooster crowing\" (cosine 0.74)"
+  },
+  {
+   "i": 318,
+   "clip": "4-201300-A-31.wav",
+   "truth": "none of these",
+   "sense": "hand saw",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Clicking of keys being pressed on keyboard\" (cosine 0.67)"
+  },
+  {
+   "i": 319,
+   "clip": "4-201800-A-31.wav",
+   "truth": "none of these",
+   "sense": "none of these",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": false,
+   "detail": "nearest caption: \"A person presses several keyboard keys at the same time\" (cosine 0.57)"
+  },
+  {
+   "i": 320,
+   "clip": "4-201988-A-44.wav",
+   "truth": "engine",
+   "sense": "engine",
+   "no_input": "hand saw",
+   "lookup": "engine",
+   "flagged": true,
+   "detail": "nearest caption: \"An engine idles roughly and deeply\" (cosine 0.62)"
+  },
+  {
+   "i": 321,
+   "clip": "4-202298-A-31.wav",
+   "truth": "none of these",
+   "sense": "chainsaw",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"A person presses several keyboard keys at the same time\" (cosine 0.56)"
+  },
+  {
+   "i": 322,
+   "clip": "4-202749-A-13.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "engine",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Outdoor night ambiance with crickets chirping and insects buzzing\" (cosine 0.61)"
+  },
+  {
+   "i": 323,
+   "clip": "4-204115-A-39.wav",
+   "truth": "none of these",
+   "sense": "none of these",
+   "no_input": "engine",
+   "lookup": "none of these",
+   "flagged": false,
+   "detail": "nearest caption: \"Glass breaking and shattering\" (cosine 0.61)"
+  },
+  {
+   "i": 324,
+   "clip": "4-204119-A-39.wav",
+   "truth": "none of these",
+   "sense": "hand saw",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Glass breaking and shattering\" (cosine 0.57)"
+  },
+  {
+   "i": 325,
+   "clip": "4-204121-A-39.wav",
+   "truth": "none of these",
+   "sense": "chainsaw",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Glass breaking and shattering\" (cosine 0.62)"
+  },
+  {
+   "i": 326,
+   "clip": "4-204123-A-39.wav",
+   "truth": "none of these",
+   "sense": "none of these",
+   "no_input": "engine",
+   "lookup": "none of these",
+   "flagged": false,
+   "detail": "nearest caption: \"Glass breaking and shattering\" (cosine 0.56)"
+  },
+  {
+   "i": 327,
+   "clip": "4-204202-A-29.wav",
+   "truth": "none of these",
+   "sense": "none of these",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": false,
+   "detail": "nearest caption: \"A sick woman loudly inhales through her mouth followed by a series of mucous slurping\" (cosine 0.57)"
+  },
+  {
+   "i": 328,
+   "clip": "4-204612-A-31.wav",
+   "truth": "none of these",
+   "sense": "hand saw",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"A cap gun fires against a surface several times\" (cosine 0.54)"
+  },
+  {
+   "i": 329,
+   "clip": "4-204618-A-11.wav",
+   "truth": "none of these",
+   "sense": "none of these",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": false,
+   "detail": "nearest caption: \"Waves are splashing followed by applause\" (cosine 0.64)"
+  },
+  {
+   "i": 330,
+   "clip": "4-204683-A-31.wav",
+   "truth": "none of these",
+   "sense": "none of these",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": false,
+   "detail": "nearest caption: \"A clock ticks very slowly\" (cosine 0.63)"
+  },
+  {
+   "i": 331,
+   "clip": "4-204684-A-37.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "engine",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"The ringing of an alarm on a machine\" (cosine 0.61)"
+  },
+  {
+   "i": 332,
+   "clip": "4-204777-A-39.wav",
+   "truth": "none of these",
+   "sense": "chainsaw",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Glass breaking and shattering\" (cosine 0.68)"
+  },
+  {
+   "i": 333,
+   "clip": "4-204777-B-39.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "engine",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Glass breaking and shattering\" (cosine 0.69)"
+  },
+  {
+   "i": 334,
+   "clip": "4-204777-C-39.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "engine",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Glass breaking and shattering\" (cosine 0.66)"
+  },
+  {
+   "i": 335,
+   "clip": "4-204830-A-6.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "engine",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Chickens clucking\" (cosine 0.73)"
+  },
+  {
+   "i": 336,
+   "clip": "4-205526-A-23.wav",
+   "truth": "none of these",
+   "sense": "chainsaw",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Heavy breathing with rustling and clip clops\" (cosine 0.52)"
+  },
+  {
+   "i": 337,
+   "clip": "4-205526-B-23.wav",
+   "truth": "none of these",
+   "sense": "none of these",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": false,
+   "detail": "nearest caption: \"The sound resulting from obstructed respiratory airways during breathing while sleeping\" (cosine 0.56)"
+  },
+  {
+   "i": 338,
+   "clip": "4-205738-A-22.wav",
+   "truth": "none of these",
+   "sense": "none of these",
+   "no_input": "engine",
+   "lookup": "none of these",
+   "flagged": false,
+   "detail": "nearest caption: \"Multiple people clapping\" (cosine 0.69)"
+  },
+  {
+   "i": 339,
+   "clip": "4-207116-A-23.wav",
+   "truth": "none of these",
+   "sense": "hand saw",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"The breathy, wheezing exhalations of a snorer include two exhalations that increase in volume\" (cosine 0.54)"
+  },
+  {
+   "i": 340,
+   "clip": "4-207124-A-0.wav",
+   "truth": "none of these",
+   "sense": "chainsaw",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Two dogs with barking and growling\" (cosine 0.58)"
+  },
+  {
+   "i": 341,
+   "clip": "4-208021-A-1.wav",
+   "truth": "none of these",
+   "sense": "none of these",
+   "no_input": "engine",
+   "lookup": "none of these",
+   "flagged": false,
+   "detail": "nearest caption: \"A rooster crows and chickens back\" (cosine 0.55)"
+  },
+  {
+   "i": 342,
+   "clip": "4-209536-A-37.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"The ringing of an alarm on a machine\" (cosine 0.69)"
+  },
+  {
+   "i": 343,
+   "clip": "4-209698-A-37.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "engine",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"An old style ringing telephone\" (cosine 0.67)"
+  },
+  {
+   "i": 344,
+   "clip": "4-210000-A-23.wav",
+   "truth": "none of these",
+   "sense": "none of these",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": false,
+   "detail": "nearest caption: \"The sound resulting from obstructed respiratory airways during breathing while sleeping\" (cosine 0.54)"
+  },
+  {
+   "i": 345,
+   "clip": "4-210000-B-23.wav",
+   "truth": "none of these",
+   "sense": "none of these",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": false,
+   "detail": "nearest caption: \"The sound resulting from obstructed respiratory airways during breathing while sleeping\" (cosine 0.55)"
+  },
+  {
+   "i": 346,
+   "clip": "4-210309-A-31.wav",
+   "truth": "none of these",
+   "sense": "chainsaw",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"An object is clicking\" (cosine 0.55)"
+  },
+  {
+   "i": 347,
+   "clip": "4-210593-A-29.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "engine",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Burping then clicking and gurgling noise\" (cosine 0.54)"
+  },
+  {
+   "i": 348,
+   "clip": "4-211502-A-30.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "engine",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Loud banging on a door\" (cosine 0.50)"
+  },
+  {
+   "i": 349,
+   "clip": "4-212604-A-15.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Water is gently falling and something is clicking\" (cosine 0.57)"
+  },
+  {
+   "i": 350,
+   "clip": "4-212604-B-15.wav",
+   "truth": "none of these",
+   "sense": "hand saw",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Something is tapping and water is splashing down into a basin\" (cosine 0.47)"
+  },
+  {
+   "i": 351,
+   "clip": "4-212604-C-15.wav",
+   "truth": "none of these",
+   "sense": "chainsaw",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Something is tapping and water is splashing down into a basin\" (cosine 0.50)"
+  },
+  {
+   "i": 352,
+   "clip": "4-212698-A-39.wav",
+   "truth": "none of these",
+   "sense": "hand saw",
+   "no_input": "engine",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Glass breaking and shattering\" (cosine 0.53)"
+  },
+  {
+   "i": 353,
+   "clip": "4-212728-A-34.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"A popping noise followed by a sequence of spraying sounds\" (cosine 0.48)"
+  },
+  {
+   "i": 354,
+   "clip": "4-213193-A-29.wav",
+   "truth": "none of these",
+   "sense": "chainsaw",
+   "no_input": "engine",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"A camera is placed underwater.\" (cosine 0.54)"
+  },
+  {
+   "i": 355,
+   "clip": "4-213915-A-3.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "engine",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Sheep calling out on a farm\" (cosine 0.52)"
+  },
+  {
+   "i": 356,
+   "clip": "4-213915-B-3.wav",
+   "truth": "none of these",
+   "sense": "none of these",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": false,
+   "detail": "nearest caption: \"Sheep calling out on a farm\" (cosine 0.55)"
+  },
+  {
+   "i": 357,
+   "clip": "4-213915-C-3.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "engine",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Sheep calling out on a farm\" (cosine 0.54)"
+  },
+  {
+   "i": 358,
+   "clip": "4-215635-A-34.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"A cap gun is being used to fire, noise of pellet hitting metal, metal object shaking also a jingling noise\" (cosine 0.45)"
+  },
+  {
+   "i": 359,
+   "clip": "4-216211-A-14.wav",
+   "truth": "none of these",
+   "sense": "none of these",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": false,
+   "detail": "nearest caption: \"Insects buzz loudly as a person makes noise\" (cosine 0.52)"
+  },
+  {
+   "i": 360,
+   "clip": "4-216349-A-34.wav",
+   "truth": "none of these",
+   "sense": "none of these",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": false,
+   "detail": "nearest caption: \"A cap gun is being used to fire, noise of pellet hitting metal, metal object shaking also a jingling noise\" (cosine 0.46)"
+  },
+  {
+   "i": 361,
+   "clip": "4-218199-A-35.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Water is falling while loud rhythmic grinding goes on\" (cosine 0.52)"
+  },
+  {
+   "i": 362,
+   "clip": "4-218199-B-35.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"A constant chug, hiss and metal on metal clank\" (cosine 0.50)"
+  },
+  {
+   "i": 363,
+   "clip": "4-218199-C-35.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"A screechy loud machine runs relentlessly the whole time\" (cosine 0.51)"
+  },
+  {
+   "i": 364,
+   "clip": "4-218199-D-35.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "engine",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Helicopter rotors start up and accelerate\" (cosine 0.60)"
+  },
+  {
+   "i": 365,
+   "clip": "4-218199-E-35.wav",
+   "truth": "none of these",
+   "sense": "hand saw",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Water running into a sink and down a drain while a machine runs simultaneously\" (cosine 0.49)"
+  },
+  {
+   "i": 366,
+   "clip": "4-218199-F-35.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "engine",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"An appliance motor is running, and rhythmic clattering is occurring\" (cosine 0.60)"
+  },
+  {
+   "i": 367,
+   "clip": "4-218199-G-35.wav",
+   "truth": "none of these",
+   "sense": "chainsaw",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Water is falling while loud rhythmic grinding goes on\" (cosine 0.42)"
+  },
+  {
+   "i": 368,
+   "clip": "4-218199-H-35.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"A small motor is humming louder and softer the entire time\" (cosine 0.63)"
+  },
+  {
+   "i": 369,
+   "clip": "4-218304-A-25.wav",
+   "truth": "none of these",
+   "sense": "hand saw",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Crunching of feet on the ground while birds chirp lightly in the background\" (cosine 0.47)"
+  },
+  {
+   "i": 370,
+   "clip": "4-218304-B-25.wav",
+   "truth": "none of these",
+   "sense": "chainsaw",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Loud footsteps over leaves, some banging and rustling\" (cosine 0.49)"
+  },
+  {
+   "i": 371,
+   "clip": "4-223125-A-14.wav",
+   "truth": "none of these",
+   "sense": "none of these",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": false,
+   "detail": "nearest caption: \"Lots of little birdies squabble and chirp while the hum of voices far away talk softly\" (cosine 0.64)"
+  },
+  {
+   "i": 372,
+   "clip": "4-223127-A-14.wav",
+   "truth": "none of these",
+   "sense": "none of these",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": false,
+   "detail": "nearest caption: \"Birds singing outdoors\" (cosine 0.73)"
+  },
+  {
+   "i": 373,
+   "clip": "4-232495-A-6.wav",
+   "truth": "none of these",
+   "sense": "none of these",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": false,
+   "detail": "nearest caption: \"Chickens clucking\" (cosine 0.70)"
+  },
+  {
+   "i": 374,
+   "clip": "4-234644-A-2.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "engine",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Pigs eating, grunting, and oinks, with a sheep bleating in the background\" (cosine 0.76)"
+  },
+  {
+   "i": 375,
+   "clip": "4-234879-A-6.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Chickens clucking\" (cosine 0.68)"
+  },
+  {
+   "i": 376,
+   "clip": "4-244318-A-6.wav",
+   "truth": "none of these",
+   "sense": "chainsaw",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Chickens clucking\" (cosine 0.69)"
+  },
+  {
+   "i": 377,
+   "clip": "4-250864-A-8.wav",
+   "truth": "none of these",
+   "sense": "chainsaw",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Sheep calling out on a farm\" (cosine 0.76)"
+  },
+  {
+   "i": 378,
+   "clip": "4-250869-A-2.wav",
+   "truth": "none of these",
+   "sense": "chainsaw",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"A man out of breath, then a pig screams\" (cosine 0.71)"
+  },
+  {
+   "i": 379,
+   "clip": "4-250869-B-2.wav",
+   "truth": "none of these",
+   "sense": "chainsaw",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"A pig oinking, followed by a pig screaming\" (cosine 0.70)"
+  },
+  {
+   "i": 380,
+   "clip": "4-250869-C-2.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "engine",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Squealing frog cooking\" (cosine 0.72)"
+  },
+  {
+   "i": 381,
+   "clip": "4-251645-A-49.wav",
+   "truth": "hand saw",
+   "sense": "hand saw",
+   "no_input": "chainsaw",
+   "lookup": "hand saw",
+   "flagged": true,
+   "detail": "nearest caption: \"Someone uses a manual saw on wood\" (cosine 0.69)"
+  },
+  {
+   "i": 382,
+   "clip": "4-251645-B-49.wav",
+   "truth": "hand saw",
+   "sense": "hand saw",
+   "no_input": "engine",
+   "lookup": "hand saw",
+   "flagged": true,
+   "detail": "nearest caption: \"Someone uses a manual saw on wood\" (cosine 0.68)"
+  },
+  {
+   "i": 383,
+   "clip": "4-251959-A-47.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Several vehicles accelerating then passing by at a high rate\" (cosine 0.61)"
+  },
+  {
+   "i": 384,
+   "clip": "4-253649-A-6.wav",
+   "truth": "none of these",
+   "sense": "chainsaw",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Chickens clucking\" (cosine 0.57)"
+  },
+  {
+   "i": 385,
+   "clip": "4-255371-A-47.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Aircraft passing by with a little human chatter and a hand clap in the background\" (cosine 0.71)"
+  },
+  {
+   "i": 386,
+   "clip": "4-261068-A-30.wav",
+   "truth": "none of these",
+   "sense": "chainsaw",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Several continuous taps followed by brief silence\" (cosine 0.49)"
+  },
+  {
+   "i": 387,
+   "clip": "4-264453-A-34.wav",
+   "truth": "none of these",
+   "sense": "chainsaw",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"A person is firing a BB gun and then refills the gun with BB bullets\" (cosine 0.52)"
+  },
+  {
+   "i": 388,
+   "clip": "4-59579-A-20.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "engine",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"A baby cries and cries until it is sobbing\" (cosine 0.67)"
+  },
+  {
+   "i": 389,
+   "clip": "4-59579-B-20.wav",
+   "truth": "none of these",
+   "sense": "chainsaw",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"Baby squeals of laughter\" (cosine 0.63)"
+  },
+  {
+   "i": 390,
+   "clip": "4-67358-A-42.wav",
+   "truth": "none of these",
+   "sense": "chainsaw",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"A loud siren is sounding continuously\" (cosine 0.74)"
+  },
+  {
+   "i": 391,
+   "clip": "4-80761-A-42.wav",
+   "truth": "none of these",
+   "sense": "engine",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"A civil defense siren blares loudly in the distance\" (cosine 0.58)"
+  },
+  {
+   "i": 392,
+   "clip": "4-90014-A-42.wav",
+   "truth": "none of these",
+   "sense": "chainsaw",
+   "no_input": "engine",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"An emergence siren is triggered moving closer and then further\" (cosine 0.66)"
+  },
+  {
+   "i": 393,
+   "clip": "4-90014-B-42.wav",
+   "truth": "none of these",
+   "sense": "chainsaw",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"An emergence siren is triggered moving closer and then further\" (cosine 0.68)"
+  },
+  {
+   "i": 394,
+   "clip": "4-99193-A-4.wav",
+   "truth": "none of these",
+   "sense": "none of these",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": false,
+   "detail": "nearest caption: \"A frog is croaking vigorously near the mic and many other frogs croak in the distance\" (cosine 0.70)"
+  },
+  {
+   "i": 395,
+   "clip": "4-99193-B-4.wav",
+   "truth": "none of these",
+   "sense": "chainsaw",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": true,
+   "detail": "nearest caption: \"A frog is croaking vigorously near the mic and many other frogs croak in the distance\" (cosine 0.71)"
+  },
+  {
+   "i": 396,
+   "clip": "4-99644-A-4.wav",
+   "truth": "none of these",
+   "sense": "none of these",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": false,
+   "detail": "nearest caption: \"A frog is croaking vigorously near the mic and many other frogs croak in the distance\" (cosine 0.66)"
+  },
+  {
+   "i": 397,
+   "clip": "4-99644-B-4.wav",
+   "truth": "none of these",
+   "sense": "none of these",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": false,
+   "detail": "nearest caption: \"Multiple frogs are croaking\" (cosine 0.73)"
+  },
+  {
+   "i": 398,
+   "clip": "4-99644-C-4.wav",
+   "truth": "none of these",
+   "sense": "none of these",
+   "no_input": "hand saw",
+   "lookup": "none of these",
+   "flagged": false,
+   "detail": "nearest caption: \"A frog is croaking vigorously near the mic and many other frogs croak in the distance\" (cosine 0.74)"
+  },
+  {
+   "i": 399,
+   "clip": "4-99644-D-4.wav",
+   "truth": "none of these",
+   "sense": "none of these",
+   "no_input": "chainsaw",
+   "lookup": "none of these",
+   "flagged": false,
+   "detail": "nearest caption: \"A frog is croaking vigorously near the mic and many other frogs croak in the distance\" (cosine 0.67)"
+  }
+ ],
+ "seconds": 15.86
+}
