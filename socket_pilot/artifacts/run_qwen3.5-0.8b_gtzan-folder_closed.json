@@ -1,0 +1,367 @@
+{
+  "id": "53337f15e7fa",
+  "origin": "cli",
+  "recorded": "2026-11-14T18:54:21+00:00",
+  "request": {
+    "model": "qwen3.5-0.8b",
+    "dataset": "gtzan-folder",
+    "modality": "audio",
+    "scope": "closed"
+  },
+  "status": "done",
+  "events": [
+    {
+      "step": "inspect",
+      "status": "start",
+      "message": "Loading the base model qwen3.5-0.8b and the labelled set gtzan-folder.",
+      "data": {},
+      "t": 0.0
+    },
+    {
+      "step": "inspect",
+      "status": "ok",
+      "message": "Qwen3.5 0.8B (local) reads text and image natively, but not audio; it is open-weight. genres (folder, 10 labels): 10 labels, 300 examples to fit on, 100 held out.",
+      "data": {
+        "model": {
+          "name": "qwen3.5-0.8b",
+          "label": "Qwen3.5 0.8B (local)",
+          "native": [
+            "text",
+            "image"
+          ],
+          "open_weights": true,
+          "available": true,
+          "note": ""
+        },
+        "dataset": {
+          "name": "gtzan-folder",
+          "title": "genres (folder, 10 labels)",
+          "labels": [
+            "blues",
+            "classical",
+            "country",
+            "disco",
+            "hiphop",
+            "jazz",
+            "metal",
+            "pop",
+            "reggae",
+            "rock"
+          ],
+          "n_fit": 300,
+          "n_dev": 100,
+          "n_test": 100
+        }
+      },
+      "t": 1.727
+    },
+    {
+      "step": "plan",
+      "status": "start",
+      "message": "Asking the llm planner which bridges to try for closed-scope audio.",
+      "data": {},
+      "t": 1.727
+    },
+    {
+      "step": "plan",
+      "status": "ok",
+      "message": "Bridges to try, in order: text, vector. The planner proposed text; vector added so every available bridge is verified.",
+      "data": {
+        "planner": "llm",
+        "kinds": [
+          "text",
+          "vector"
+        ]
+      },
+      "t": 2.885
+    },
+    {
+      "step": "fit",
+      "status": "start",
+      "message": "Building the text bridge, which names the closest of the 10 labels.",
+      "data": {
+        "kind": "text"
+      },
+      "t": 2.885
+    },
+    {
+      "step": "fit",
+      "status": "ok",
+      "message": "Built text:gtzan-folder in 0.0 s.",
+      "data": {
+        "kind": "text",
+        "bridge": "text:gtzan-folder",
+        "seconds": 0.0,
+        "layer": null,
+        "dev_accuracy": null
+      },
+      "t": 2.885
+    },
+    {
+      "step": "fit",
+      "status": "start",
+      "message": "Fitting the vector bridge on 300 labelled examples of genres (folder, 10 labels).",
+      "data": {
+        "kind": "vector"
+      },
+      "t": 2.885
+    },
+    {
+      "step": "fit",
+      "status": "ok",
+      "message": "Built vector:gtzan-folder in 12.9 s. It writes after block 1, chosen on dev questions (block 0: 81.0%, block 1: 83.0%, block 2: 81.0%, block 3: 58.0%, block 4: 49.0%).",
+      "data": {
+        "kind": "vector",
+        "bridge": "vector:gtzan-folder",
+        "seconds": 12.88,
+        "layer": 1,
+        "dev_accuracy": {
+          "0": 0.81,
+          "1": 0.83,
+          "2": 0.81,
+          "3": 0.58,
+          "4": 0.49
+        }
+      },
+      "t": 15.763
+    },
+    {
+      "step": "verify",
+      "status": "start",
+      "message": "Scoring text:gtzan-folder on held-out genres (folder, 10 labels) examples against controls.",
+      "data": {
+        "bridge": "text:gtzan-folder"
+      },
+      "t": 15.763
+    },
+    {
+      "step": "verify",
+      "status": "ok",
+      "message": "text:gtzan-folder scored 48.0% on 100 held-out questions (chance 20.0%); controls: swapped input 19.0%, no input 17.0%, nearest-example lookup 84.0%, specialist alone 59.0%.",
+      "data": {
+        "card": {
+          "model": "qwen3.5-0.8b",
+          "modality": "audio",
+          "dataset": "gtzan-folder",
+          "scope": "closed",
+          "bridge": "text:gtzan-folder",
+          "kind": "text",
+          "n": 100,
+          "chance": 0.2,
+          "accuracy": 0.48,
+          "controls": {
+            "swapped": 0.19,
+            "no_input": 0.17,
+            "lookup": 0.84,
+            "specialist_alone": 0.59
+          },
+          "verdict": "candidate",
+          "reason": "",
+          "created": "2026-11-14T18:54:43+00:00",
+          "interval": [
+            0.3846,
+            0.5768
+          ]
+        }
+      },
+      "t": 21.817
+    },
+    {
+      "step": "verify",
+      "status": "start",
+      "message": "Scoring vector:gtzan-folder on held-out genres (folder, 10 labels) examples against controls, including text:gtzan-folder.",
+      "data": {
+        "bridge": "vector:gtzan-folder"
+      },
+      "t": 21.817
+    },
+    {
+      "step": "verify",
+      "status": "ok",
+      "message": "vector:gtzan-folder scored 77.0% on 100 held-out questions (chance 20.0%); controls: swapped input 16.0%, no input 17.0%, nearest-example lookup 84.0%, specialist alone 59.0%, text bridge 48.0%.",
+      "data": {
+        "card": {
+          "model": "qwen3.5-0.8b",
+          "modality": "audio",
+          "dataset": "gtzan-folder",
+          "scope": "closed",
+          "bridge": "vector:gtzan-folder",
+          "kind": "vector",
+          "n": 100,
+          "chance": 0.2,
+          "accuracy": 0.77,
+          "controls": {
+            "swapped": 0.16,
+            "no_input": 0.17,
+            "lookup": 0.84,
+            "specialist_alone": 0.59,
+            "text_bridge": 0.48
+          },
+          "verdict": "candidate",
+          "reason": "",
+          "created": "2026-11-14T18:54:51+00:00",
+          "interval": [
+            0.6785,
+            0.8416
+          ]
+        }
+      },
+      "t": 29.675
+    },
+    {
+      "step": "decide",
+      "status": "start",
+      "message": "Asking the llm planner to choose among 2 verified candidates.",
+      "data": {},
+      "t": 29.675
+    },
+    {
+      "step": "decide",
+      "status": "ok",
+      "message": "Install vector:gtzan-folder because its accuracy is 77% with swapped control at 16%, satisfying the required margin (77% >= 26%). The text bridge is weaker at 48% accuracy with 19% swapped, so it does not beat the stronger verified candidate.",
+      "data": {
+        "install": "vector:gtzan-folder",
+        "cards": [
+          {
+            "model": "qwen3.5-0.8b",
+            "modality": "audio",
+            "dataset": "gtzan-folder",
+            "scope": "closed",
+            "bridge": "text:gtzan-folder",
+            "kind": "text",
+            "n": 100,
+            "chance": 0.2,
+            "accuracy": 0.48,
+            "controls": {
+              "swapped": 0.19,
+              "no_input": 0.17,
+              "lookup": 0.84,
+              "specialist_alone": 0.59
+            },
+            "verdict": "rejected",
+            "reason": "text:gtzan-folder scored 48.0% on 100 held-out questions (chance 20.0%); controls: swapped input 19.0%, no input 17.0%, nearest-example lookup 84.0%, specialist alone 59.0%. vector:gtzan-folder was installed instead: Install vector:gtzan-folder because its accuracy is 77% with swapped control at 16%, satisfying the required margin (77% >= 26%). The text bridge is weaker at 48% accuracy with 19% swapped, so it does not beat the stronger verified candidate.",
+            "created": "2026-11-14T18:54:43+00:00",
+            "interval": [
+              0.3846,
+              0.5768
+            ]
+          },
+          {
+            "model": "qwen3.5-0.8b",
+            "modality": "audio",
+            "dataset": "gtzan-folder",
+            "scope": "closed",
+            "bridge": "vector:gtzan-folder",
+            "kind": "vector",
+            "n": 100,
+            "chance": 0.2,
+            "accuracy": 0.77,
+            "controls": {
+              "swapped": 0.16,
+              "no_input": 0.17,
+              "lookup": 0.84,
+              "specialist_alone": 0.59,
+              "text_bridge": 0.48
+            },
+            "verdict": "installed",
+            "reason": "Install vector:gtzan-folder because its accuracy is 77% with swapped control at 16%, satisfying the required margin (77% >= 26%). The text bridge is weaker at 48% accuracy with 19% swapped, so it does not beat the stronger verified candidate.",
+            "created": "2026-11-14T18:54:51+00:00",
+            "interval": [
+              0.6785,
+              0.8416
+            ]
+          }
+        ]
+      },
+      "t": 30.858
+    },
+    {
+      "step": "install",
+      "status": "start",
+      "message": "Installing vector:gtzan-folder for Qwen3.5 0.8B (local).",
+      "data": {
+        "bridge": "vector:gtzan-folder",
+        "replaced": null
+      },
+      "t": 30.859
+    },
+    {
+      "step": "install",
+      "status": "ok",
+      "message": "Installed vector:gtzan-folder; Qwen3.5 0.8B (local) can now take audio input in chat.",
+      "data": {
+        "bridge": "vector:gtzan-folder",
+        "replaced": null
+      },
+      "t": 30.869
+    },
+    {
+      "step": "done",
+      "status": "ok",
+      "message": "Qwen3.5 0.8B (local) can now take audio input through vector:gtzan-folder: it scored 77.0% on 100 held-out questions, against 20.0% chance. This sense covers the 10 categories of genres (folder, 10 labels) only; a clip outside them will be given the nearest of those labels.",
+      "data": {
+        "installed": "vector:gtzan-folder"
+      },
+      "t": 30.869
+    }
+  ],
+  "cards": [
+    {
+      "model": "qwen3.5-0.8b",
+      "modality": "audio",
+      "dataset": "gtzan-folder",
+      "scope": "closed",
+      "bridge": "text:gtzan-folder",
+      "kind": "text",
+      "n": 100,
+      "chance": 0.2,
+      "accuracy": 0.48,
+      "controls": {
+        "swapped": 0.19,
+        "no_input": 0.17,
+        "lookup": 0.84,
+        "specialist_alone": 0.59
+      },
+      "verdict": "rejected",
+      "reason": "text:gtzan-folder scored 48.0% on 100 held-out questions (chance 20.0%); controls: swapped input 19.0%, no input 17.0%, nearest-example lookup 84.0%, specialist alone 59.0%. vector:gtzan-folder was installed instead: Install vector:gtzan-folder because its accuracy is 77% with swapped control at 16%, satisfying the required margin (77% >= 26%). The text bridge is weaker at 48% accuracy with 19% swapped, so it does not beat the stronger verified candidate.",
+      "created": "2026-11-14T18:54:43+00:00",
+      "interval": [
+        0.3846,
+        0.5768
+      ]
+    },
+    {
+      "model": "qwen3.5-0.8b",
+      "modality": "audio",
+      "dataset": "gtzan-folder",
+      "scope": "closed",
+      "bridge": "vector:gtzan-folder",
+      "kind": "vector",
+      "n": 100,
+      "chance": 0.2,
+      "accuracy": 0.77,
+      "controls": {
+        "swapped": 0.16,
+        "no_input": 0.17,
+        "lookup": 0.84,
+        "specialist_alone": 0.59,
+        "text_bridge": 0.48
+      },
+      "verdict": "installed",
+      "reason": "Install vector:gtzan-folder because its accuracy is 77% with swapped control at 16%, satisfying the required margin (77% >= 26%). The text bridge is weaker at 48% accuracy with 19% swapped, so it does not beat the stronger verified candidate.",
+      "created": "2026-11-14T18:54:51+00:00",
+      "interval": [
+        0.6785,
+        0.8416
+      ]
+    }
+  ],
+  "installed": "vector:gtzan-folder",
+  "error": null,
+  "seconds": 30.87,
+  "machine": {
+    "platform": "macOS-27.0-arm64-arm-64bit",
+    "python": "3.12.12",
+    "machine": "arm64"
+  }
+}
