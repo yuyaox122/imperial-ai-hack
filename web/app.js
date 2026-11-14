@@ -1,10 +1,10 @@
 "use strict";
 
 /*
- * Sense harness interface ("Sensorium" in the team Figma file): top bar, chat, agent run and report card.
- * Talks only to the HTTP API documented in server/app.py. No framework, no build step.
- * Every part is drawn from a component on the Figma "Design system" page; design/figma-notes.md maps them.
- * Only data the API returns is shown: nothing here is a placeholder number.
+ * Sense harness interface ("Sensorium" in the team Figma file): top bar, chat, sense graph, agent run
+ * and report card. Talks only to the HTTP API documented in server/app.py. No framework, no build step.
+ * The layout follows the Figma screens 01 to 03 and every part is a component from the Figma
+ * "Design system" page; design/figma-notes.md maps them. Only data the API returns is shown.
  */
 
 const POLL_MS = 700;
@@ -12,23 +12,50 @@ const MAX_POLL_RETRIES = 5;
 
 const CONTROL_LABELS = {
   swapped: "Swapped audio",
-  no_input: "No audio",
-  lookup: "Nearest-example lookup",
+  no_input: "No input",
+  lookup: "Nearest-clip lookup",
   text_bridge: "Text bridge",
   unseen_classes: "Unseen categories",
+  specialist_alone: "Specialist alone, no LLM",
 };
+/* How each control is drawn in the report card, as in the Figma screens: the lookup and the specialist
+   alone are references, the text bridge a fallback, the rest controls. Unknown controls are controls. */
+const CONTROL_ROLES = {
+  lookup: { kind: "reference", tag: "reference" },
+  specialist_alone: { kind: "reference", tag: "reference" },
+  text_bridge: { kind: "candidate", tag: "fallback" },
+};
+const CONTROL_ORDER = ["lookup", "specialist_alone", "text_bridge", "unseen_classes", "no_input", "swapped"];
 const KIND_LABELS = { native: "Native", text: "Text", tool: "Tool", image: "Image", vector: "Vector" };
+/* What each bridge kind is, from the bridge table in README.md; shown as a node subtitle. */
+const KIND_NOTES = {
+  vector: "Closed-form map into early layers",
+  text: "Description into the prompt",
+  tool: "Specialist as a tool",
+  image: "Input rendered as an image",
+  native: "The model reads it as is",
+};
+const KIND_PORTS = {
+  vector: ["embedding", "states"],
+  text: ["label", "prompt"],
+  tool: ["call", "result"],
+  image: ["render", "pixels"],
+  native: ["input", "input"],
+};
+const KIND_WIRE = { vector: "embedding", text: "text", tool: "text", image: "image", native: "input" };
 const VERDICT_LABELS = { installed: "installed", rejected: "refused", candidate: "candidate" };
 const SCOPE_LABELS = { closed: "These categories only", open: "Any sound" };
 const SCOPE_HINTS = {
   closed: "The agent checks that the model tells these labels apart on held-out clips.",
   open: "The agent also tests labels it never fitted on, and refuses a bridge that only knows the labels it was shown.",
 };
+const RULE_TEXT =
+  "The agent scores each candidate bridge on held-out clips against swapped audio, no audio, a nearest-example lookup and the text bridge. It installs the best bridge that beats those controls, or installs nothing and says why.";
 const STATUS_WORDS = { start: "started", ok: "succeeded", fail: "failed", info: "note" };
 const JOB_WORDS = { running: "Running", done: "Finished", failed: "Failed", lost: "Disconnected" };
 
-/* The six steps of the agent loop, in the order of the Figma "Agent step" strip. Unknown steps from the
-   server are shown after these. Before a run each card explains what the step will do. */
+/* The six steps of the agent loop, in the order of the Figma Agent step strip. Unknown steps from the
+   server are shown after these. Before a run each card says what the step will do. */
 const STEPS = [
   { key: "inspect", title: "Check the base model", idle: "Read what the model accepts and whether its weights are open." },
   { key: "plan", title: "Choose bridges", idle: "Choose which bridges to try." },
@@ -56,6 +83,8 @@ const state = {
   senses: [], // the last /api/senses answer for state.model
   usedBridges: new Set(), // bridges a chat reply has used; their top-bar chip stops being "new"
   reportBridge: null, // which card the report panel shows
+  reportCard: null, // the card it shows, for Export report
+  showLog: false,
 };
 
 const player = new Audio();
@@ -124,6 +153,25 @@ const ICONS = {
     "M7.99992 14.6667C11.6818 14.6667 14.6666 11.6819 14.6666 8C14.6666 4.3181 11.6818 1.33333 7.99992 1.33333C4.31802 1.33333 1.33325 4.3181 1.33325 8C1.33325 11.6819 4.31802 14.6667 7.99992 14.6667Z",
     "M8 10.6667V8",
     "M8 5.33333H8.00667",
+  ],
+  file: [
+    "M10.0001 1.33333H4.00008C3.64646 1.33333 3.30732 1.4738 3.05727 1.72385C2.80722 1.9739 2.66675 2.31304 2.66675 2.66666V13.3333C2.66675 13.687 2.80722 14.0261 3.05727 14.2761C3.30732 14.5262 3.64646 14.6667 4.00008 14.6667H12.0001C12.3537 14.6667 12.6928 14.5262 12.9429 14.2761C13.1929 14.0261 13.3334 13.687 13.3334 13.3333V4.66666L10.0001 1.33333Z",
+    "M9.33325 1.33333V3.99999C9.33325 4.35362 9.47373 4.69276 9.72378 4.9428C9.97383 5.19285 10.313 5.33333 10.6666 5.33333H13.3333",
+  ],
+  plug: [
+    "M8 14.6667V11.3333",
+    "M6 5.33333V1.33333",
+    "M10 5.33333V1.33333",
+    "M12 5.33333V8.66666C12 9.37391 11.719 10.0522 11.219 10.5523C10.7189 11.0524 10.0406 11.3333 9.33333 11.3333H6.66667C5.95942 11.3333 5.28115 11.0524 4.78105 10.5523C4.28095 10.0522 4 9.37391 4 8.66666V5.33333H12Z",
+  ],
+  database: [
+    "M8 5.33333C11.3137 5.33333 14 4.4379 14 3.33333C14 2.22876 11.3137 1.33333 8 1.33333C4.68629 1.33333 2 2.22876 2 3.33333C2 4.4379 4.68629 5.33333 8 5.33333Z",
+    "M2 3.33333V12.6667C2 13.1971 2.63214 13.7058 3.75736 14.0809C4.88258 14.4559 6.4087 14.6667 8 14.6667C9.5913 14.6667 11.1174 14.4559 12.2426 14.0809C13.3679 13.7058 14 13.1971 14 12.6667V3.33333",
+    "M2 8C2 8.53043 2.63214 9.03914 3.75736 9.41421C4.88258 9.78929 6.4087 10 8 10C9.5913 10 11.1174 9.78929 12.2426 9.41421C13.3679 9.03914 14 8.53043 14 8",
+  ],
+  "shield-check": [
+    "M13.3334 8.66667C13.3334 12 11.0001 13.6667 8.22675 14.6333C8.08152 14.6826 7.92377 14.6802 7.78008 14.6267C5.00008 13.6667 2.66675 12 2.66675 8.66667V4C2.66675 3.82319 2.73699 3.65362 2.86201 3.5286C2.98703 3.40358 3.1566 3.33334 3.33341 3.33334C4.66675 3.33334 6.33341 2.53334 7.49341 1.52C7.63465 1.39934 7.81432 1.33304 8.00008 1.33304C8.18585 1.33304 8.36551 1.39934 8.50675 1.52C9.67342 2.54 11.3334 3.33334 12.6667 3.33334C12.8436 3.33334 13.0131 3.40358 13.1382 3.5286C13.2632 3.65362 13.3334 3.82319 13.3334 4V8.66667Z",
+    "M6 8.00001L7.33333 9.33334L10 6.66667",
   ],
 };
 
@@ -251,12 +299,18 @@ const seconds = (t) => (toNumber(t) === null ? "" : `${t < 0.1 ? t.toFixed(2) : 
 const capitalise = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : "");
 const humanise = (key) => capitalise(String(key).replace(/_/g, " "));
 const kindLabel = (kind) => KIND_LABELS[kind] || capitalise(kind || "unknown");
+const verdictKind = (card) => (card.verdict === "installed" ? "installed" : card.verdict === "rejected" ? "refused" : "candidate");
+const bestCard = (cards) => cards.reduce((a, c) => (a && toNumber(a.accuracy) >= toNumber(c.accuracy) ? a : c), null);
+const NUMBER_WORDS = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"];
+const numberWord = (n) => NUMBER_WORDS[n] || String(n);
 
 const currentModel = () => state.models.find((m) => m.name === state.model) || null;
 const currentDataset = () => state.datasets.find((d) => d.name === state.dataset) || null;
 const modelLabel = (name) => (state.models.find((m) => m.name === name) || {}).label || name || "the model";
 const datasetTitle = (name) => (state.datasets.find((d) => d.name === name) || {}).title || name || "";
 const jobRunning = () => Boolean(state.job && state.job.status === "running");
+/** The job to draw for the current model: the latest run, if it was for this model. */
+const modelJob = () => (state.job && (!state.job.request || state.job.request.model === state.model) ? state.job : null);
 
 // ---------------------------------------------------------------- API
 
@@ -340,6 +394,25 @@ function syncControls() {
   $("senses-model").textContent = label || "the model";
 }
 
+// ---------------------------------------------------------------- the New sense popover
+
+function openFit(anchor) {
+  const pop = $("fit-popover");
+  pop.hidden = false;
+  pop.dataset.anchor = anchor === $("add-sense-button") ? "report" : "top";
+  $("new-sense-button").setAttribute("aria-expanded", "true");
+  const target = $("dataset-select").disabled ? $("run-button") : $("dataset-select");
+  target.focus();
+}
+
+function closeFit(returnFocus) {
+  const pop = $("fit-popover");
+  if (pop.hidden) return;
+  pop.hidden = true;
+  $("new-sense-button").setAttribute("aria-expanded", "false");
+  if (returnFocus) $(pop.dataset.anchor === "report" ? "add-sense-button" : "new-sense-button").focus();
+}
+
 // ---------------------------------------------------------------- models and the top bar
 
 async function loadModels() {
@@ -392,6 +465,7 @@ function setModel(name) {
   renderModelInfo();
   syncControls();
   if (changed && name) noteInThread(`Now talking to ${modelLabel(name)}.`);
+  renderGraph();
   loadSenses();
 }
 
@@ -407,7 +481,6 @@ function renderModelInfo() {
     info.textContent = `Accepts ${native} natively. ${weights}${model.note ? ` ${model.note}` : ""}`;
     $("model-label").textContent = model.label;
     $("model-weights").textContent = model.open_weights ? "Open weights" : "Closed weights";
-    $("crumb-model").textContent = model.label;
     picker.classList.toggle("is-closed", !model.open_weights);
     picker.title = info.textContent;
   } else {
@@ -420,7 +493,6 @@ function renderModelInfo() {
       $("model-label").textContent = $("model-error").hidden ? "Loading models…" : "Models could not be loaded";
     }
     $("model-weights").textContent = "";
-    $("crumb-model").textContent = "Sense harness";
     picker.classList.remove("is-closed");
     picker.removeAttribute("title");
   }
@@ -428,7 +500,7 @@ function renderModelInfo() {
   renderDropModalities();
 }
 
-/** Sense chips in the top bar (Figma 19:279): native, new (amber until used in chat), refused. */
+/** Sense chips in the top bar (Figma 19:279): native, new (amber until used in chat), checking, refused. */
 function renderChips() {
   const list = $("sense-chips");
   const model = currentModel();
@@ -436,33 +508,28 @@ function renderChips() {
     list.replaceChildren();
     return;
   }
-  const chips = (model.native || []).map((m) =>
-    h("li", { class: "chip", title: `${capitalise(m)}: native` },
-      h("span", { class: "dot", style: `--dot: ${modalityColour(m)}` }),
-      h("span", { class: "chip-label", text: capitalise(m) }),
-      h("span", { class: "chip-meta", text: "native" })),
-  );
+  const chip = (cls, modality, meta, extra, title) =>
+    h("li", { class: `chip ${cls}`.trim(), title },
+      h("span", { class: "dot", style: `--dot: ${cls === "chip--refused" ? "var(--color-status-danger)" : modalityColour(modality)}` }),
+      h("span", { class: "chip-label", text: capitalise(modality) }),
+      h("span", { class: "chip-meta", text: meta }),
+      extra);
+  const chips = (model.native || []).map((m) => chip("", m, "native", null, `${capitalise(m)}: native`));
   for (const sense of state.senses) {
     const card = senseCard(sense);
     const fresh = !state.usedBridges.has(sense.bridge);
     const acc = toNumber(card.accuracy);
     const meta = [kindLabel(card.kind).toLowerCase(), acc !== null ? pct(acc) : null].filter(Boolean).join(" · ");
-    chips.push(
-      h("li", { class: fresh ? "chip chip--new" : "chip", title: `${capitalise(sense.modality)}: ${sense.bridge}` },
-        h("span", { class: "dot", style: `--dot: ${modalityColour(sense.modality)}` }),
-        h("span", { class: "chip-label", text: capitalise(sense.modality) }),
-        h("span", { class: "chip-meta", text: meta }),
-        fresh ? h("span", { class: "badge-new", text: "NEW" }) : null),
-    );
+    chips.push(chip(fresh ? "chip--new" : "", sense.modality, meta, fresh ? h("span", { class: "badge-new", text: "NEW" }) : null, `${capitalise(sense.modality)}: ${sense.bridge}`));
+  }
+  const job = modelJob();
+  const target = job && job.request ? job.request.modality : null;
+  if (job && job.status === "running" && target && !state.senses.some((s) => s.modality === target)) {
+    chips.push(chip("", target, "checking…", null, `The agent is giving ${modelLabel(state.model)} a ${target} sense`));
   }
   const refused = refusedRun();
   if (refused && !state.senses.some((s) => s.modality === refused.modality)) {
-    chips.push(
-      h("li", { class: "chip chip--refused", title: `${capitalise(refused.modality)}: the agent installed no bridge` },
-        h("span", { class: "dot", style: "--dot: var(--color-status-danger)" }),
-        h("span", { class: "chip-label", text: capitalise(refused.modality) }),
-        h("span", { class: "chip-meta", text: "refused" })),
-    );
+    chips.push(chip("chip--refused", refused.modality, "refused", null, `${capitalise(refused.modality)}: the agent installed no bridge`));
   }
   list.replaceChildren(...chips);
 }
@@ -492,6 +559,7 @@ async function loadSenses() {
     renderChips();
     renderDropModalities();
     renderReport();
+    renderGraph();
     return;
   }
   list.setAttribute("aria-busy", "true");
@@ -523,11 +591,19 @@ function senseCard(sense) {
 
 /** The latest finished run for this model that installed nothing, as {modality, dataset, best card}. */
 function refusedRun() {
-  const job = state.job;
-  if (!job || job.status !== "done" || job.installed || !job.request || job.request.model !== state.model) return null;
-  const cards = [...job.cards.values()];
-  const best = cards.reduce((a, c) => (a && toNumber(a.accuracy) >= toNumber(c.accuracy) ? a : c), null);
+  const job = modelJob();
+  if (!job || job.status !== "done" || job.installed || !job.request) return null;
+  const best = bestCard([...job.cards.values()]);
   return { modality: job.request.modality || (best && best.modality) || "audio", dataset: job.request.dataset, best };
+}
+
+/** The first bridge the planner asked for, when the run refused it and installed another one instead. */
+function fallbackRun(job) {
+  if (!job || job.status !== "done" || !job.installed) return null;
+  const kinds = planKinds(job);
+  const first = [...job.cards.values()].find((c) => c.kind === kinds[0]);
+  if (!first || first.bridge === job.installed || first.verdict !== "rejected") return null;
+  return { refused: first, installed: job.cards.get(job.installed) || null };
 }
 
 /** Senses on the model (Figma Sense row, 22:327): native, installed, and a run that installed nothing. */
@@ -546,7 +622,7 @@ function renderSenses(senses) {
   }
   for (const sense of senses) rows.push(senseItem(sense));
   if (!senses.length) {
-    rows.push(h("li", { class: "sense-empty", text: `${modelLabel(state.model)} has no installed senses yet. Run the agent to give it one.` }));
+    rows.push(h("li", { class: "sense-empty", text: `${modelLabel(state.model)} has no installed senses yet. Press Add a sense to run the agent.` }));
   }
   const refused = refusedRun();
   if (refused) {
@@ -554,7 +630,7 @@ function renderSenses(senses) {
     rows.push(
       h("li", { class: "sense-row sense-row--refused" },
         h("span", { class: "dot", style: "--dot: var(--color-status-danger)" }),
-        h("button", { type: "button", class: "sense-text", onclick: () => selectReport(refused.best && refused.best.bridge) },
+        h("button", { type: "button", class: "sense-text", "data-bridge": refused.best ? refused.best.bridge : "", onclick: () => selectReport(refused.best && refused.best.bridge) },
           h("span", { class: "sense-title", text: capitalise(refused.modality) }),
           h("span", { class: "sense-sub", text: `Nothing installed for ${datasetTitle(refused.dataset)}` })),
         acc !== null ? h("span", { class: "sense-value", text: pct(acc) }) : null,
@@ -567,6 +643,7 @@ function renderSenses(senses) {
   renderChips();
   renderDropModalities();
   renderReport();
+  renderGraph();
 }
 
 function senseItem(sense) {
@@ -583,9 +660,9 @@ function senseItem(sense) {
   const sub = [`${kindLabel(card.kind)} bridge`, datasetTitle(card.dataset)].filter(Boolean).join(" · ");
   return h(
     "li",
-    { class: `sense-row sense-row--on${state.reportBridge === sense.bridge ? " is-selected" : ""}` },
+    { class: "sense-row sense-row--on" },
     h("span", { class: "dot", style: `--dot: ${modalityColour(sense.modality)}` }),
-    h("button", { type: "button", class: "sense-text", title: `Show the report card of ${sense.bridge}`, onclick: () => selectReport(sense.bridge) },
+    h("button", { type: "button", class: "sense-text", "data-bridge": sense.bridge, title: `Show the report card of ${sense.bridge}`, onclick: () => selectReport(sense.bridge) },
       h("span", { class: "sense-title", text: capitalise(sense.modality) }),
       h("span", { class: "sense-sub", text: sub })),
     acc !== null ? h("span", { class: "sense-value", text: pct(acc) }) : null,
@@ -615,20 +692,18 @@ async function removeSense(sense, button, errorEl) {
 
 /** Cards the report panel can show: this model's latest run, then its installed senses. */
 function reportCards() {
-  const job = state.job;
-  const fromRun = job && job.cards.size && (!job.request || job.request.model === state.model) ? [...job.cards.values()] : [];
+  const job = modelJob();
+  const fromRun = job ? [...job.cards.values()] : [];
   const seen = new Set(fromRun.map((c) => c.bridge));
-  const fromSenses = state.senses.map(senseCard).filter((c) => !seen.has(c.bridge));
-  return { fromRun, all: [...fromRun, ...fromSenses] };
+  return [...fromRun, ...state.senses.map(senseCard).filter((c) => !seen.has(c.bridge))];
 }
 
 function selectReport(bridge) {
   if (!bridge) return;
   state.reportBridge = bridge;
   renderReport();
-  for (const row of document.querySelectorAll(".sense-row--on")) row.classList.remove("is-selected");
+  renderGraph();
   const heading = $("report-heading");
-  heading.setAttribute("tabindex", "-1");
   heading.focus({ preventScroll: true });
   heading.scrollIntoView({ block: "nearest" });
 }
@@ -637,8 +712,28 @@ function selectReport(bridge) {
 function renderReport() {
   const el = $("report");
   const verdictTag = $("report-verdict");
-  const { fromRun, all } = reportCards();
+  const all = reportCards();
+  const job = modelJob();
+  const exportButton = $("export-button");
+  state.reportCard = null;
+  exportButton.disabled = true;
+
   if (!all.length) {
+    if (job && job.status === "running") {
+      // Screen 01: the agent is still verifying and no card has arrived.
+      setTag(verdictTag, "verifying", "accent");
+      const kinds = planKinds(job);
+      el.replaceChildren(
+        h("p", {
+          class: "report-sub",
+          text: [`${capitalise(job.request ? job.request.modality : "")} → ${modelLabel(state.model)}`, kinds.length ? `candidates: ${kinds.map((k) => `${k} bridge`).join(", ")}` : null]
+            .filter(Boolean)
+            .join(" · "),
+        }),
+        h("p", { class: "note note--accent" }, icon("info", 14), h("span", { text: RULE_TEXT })),
+      );
+      return;
+    }
     verdictTag.hidden = true;
     el.replaceChildren(
       h("p", {
@@ -650,74 +745,65 @@ function renderReport() {
     );
     return;
   }
-  const card =
-    all.find((c) => c.bridge === state.reportBridge) || all.find((c) => c.verdict === "installed") || all[all.length - 1];
+  const card = all.find((c) => c.bridge === state.reportBridge) || all.find((c) => c.verdict === "installed") || all[all.length - 1];
   state.reportBridge = card.bridge;
-  const verdict = VERDICT_LABELS[card.verdict] ? card.verdict : "candidate";
-  const kind = verdict === "installed" ? "installed" : verdict === "rejected" ? "refused" : "candidate";
+  state.reportCard = card;
+  exportButton.disabled = false;
+  const kind = verdictKind(card);
   if (kind === "installed") setTag(verdictTag, "Installed", "installed", "check");
   else if (kind === "refused") setTag(verdictTag, "Refused", "refused", "ban");
-  else setTag(verdictTag, "Candidate", "neutral");
+  else setTag(verdictTag, "candidate", "neutral");
 
   const chance = toNumber(card.chance);
   const n = toNumber(card.n);
   const acc = toNumber(card.accuracy);
   const dataset = state.datasets.find((d) => d.name === card.dataset);
   const nLabels = dataset && Array.isArray(dataset.labels) ? dataset.labels.length : null;
+  const layer = job ? fitData(job, card.bridge).layer : null;
+  const context = [
+    `${capitalise(card.modality)} → ${modelLabel(card.model || state.model)}`,
+    `${kindLabel(card.kind).toLowerCase()} bridge`,
+    toNumber(layer) !== null ? `block ${layer}` : null,
+    datasetTitle(card.dataset),
+  ].filter(Boolean);
+  const interval = Array.isArray(card.interval) && card.interval.length === 2 ? card.interval.map(toNumber) : null;
+  const headlineNote = [
+    chance !== null && chance > 0 ? `${capitalise(numberWord(Math.round(1 / chance)))}-option questions` : null,
+    chance !== null ? `chance ${pct(chance)}` : null,
+    interval && interval[0] !== null && interval[1] !== null
+      ? `95% CI ${(interval[0] * 100).toFixed(1)}–${(interval[1] * 100).toFixed(1)}`
+      : null,
+  ].filter(Boolean);
   const scope =
     card.scope === "closed"
-      ? `Scope: ${nLabels ? `these ${nLabels} categories only` : "these categories only"}`
+      ? `Scope: ${nLabels ? `the ${nLabels} categories it was fitted on` : "the categories it was fitted on"}.`
       : card.scope === "open"
-        ? "Scope: any sound, also tested on categories it was not fitted on"
-        : null;
-  const facts = [
-    chance !== null && chance > 0 ? `${Math.round(1 / chance)}-option questions · chance ${pct(chance)}, marked by the tick` : null,
-    scope,
-  ].filter(Boolean);
+        ? "Scope: any sound, also tested on categories it was not fitted on."
+        : "";
 
-  const parts = [
-    h("p", {
-      class: "report-sub",
-      text: [`${capitalise(card.modality)} → ${modelLabel(card.model || state.model)}`, `${kindLabel(card.kind)} bridge`, datasetTitle(card.dataset)]
-        .filter(Boolean)
-        .join(" · "),
-      title: card.bridge,
-    }),
-    h("div", { class: "display" },
-      h("span", { class: `display-value display-value--${kind}`, text: acc === null ? "n/a" : pct(acc) }),
-      h("span", { class: "display-caption", text: n !== null ? `on ${n} held-out questions` : "held-out accuracy" })),
-    facts.length ? h("p", { class: "report-chance", text: facts.join(". ") + "." }) : null,
+  const controls = Object.entries(card.controls || {}).sort(
+    ([a], [b]) => (CONTROL_ORDER.indexOf(a) + 1 || 99) - (CONTROL_ORDER.indexOf(b) + 1 || 99),
+  );
+  el.replaceChildren(
+    h("p", { class: "report-sub", text: context.join(" · "), title: card.bridge }),
+    h("div", { class: "headline" },
+      h("div", { class: "display" },
+        h("span", { class: `display-value display-value--${kind}`, text: acc === null ? "n/a" : pct(acc) }),
+        h("span", { class: "display-caption", text: n !== null ? `on ${n} held-out questions` : "held-out accuracy" })),
+      headlineNote.length ? h("p", { class: "report-chance", text: headlineNote.join(" · ") }) : null),
     h("div", { class: "metrics" },
-      metricRow(`${kindLabel(card.kind)} bridge`, acc, kind, chance, VERDICT_LABELS[verdict]),
-      Object.entries(card.controls || {}).map(([key, value]) => metricRow(CONTROL_LABELS[key] || humanise(key), value, "control", chance, "control"))),
-    card.reason
-      ? h("p", { class: kind === "installed" ? "note note--installed" : "note" }, icon("info", 14), h("span", { text: card.reason }))
-      : null,
-  ];
-
-  if (fromRun.length > 1) {
-    parts.push(
-      h("div", { class: "section-head" }, h("h3", { text: "Bridges in this run" }), h("span", { class: "t-caption", text: "Choose one to see its card" })),
-      h("div", { class: "metrics" },
-        fromRun.map((c) => {
-          const v = VERDICT_LABELS[c.verdict] ? c.verdict : "candidate";
-          const k = v === "installed" ? "installed" : v === "rejected" ? "refused" : "candidate";
-          return h(
-            "button",
-            { type: "button", class: "bridge-pick", "aria-pressed": String(c.bridge === card.bridge), onclick: () => selectReport(c.bridge) },
-            metricRow(c.bridge, c.accuracy, k, toNumber(c.chance), VERDICT_LABELS[v]),
-          );
-        })),
-    );
-  }
-  el.replaceChildren(...parts);
-  for (const row of document.querySelectorAll(".sense-row--on")) {
-    const button = row.querySelector(".sense-text");
-    row.classList.toggle("is-selected", Boolean(button && button.title.endsWith(` ${card.bridge}`)));
-  }
+      metricRow(`${kindLabel(card.kind)} bridge`, acc, kind, chance, VERDICT_LABELS[card.verdict] || "candidate"),
+      controls.map(([key, value]) => {
+        const role = CONTROL_ROLES[key] || { kind: "control", tag: "control" };
+        return metricRow(CONTROL_LABELS[key] || humanise(key), value, role.kind, chance, role.tag);
+      })),
+    h("p", { class: kind === "refused" ? "note note--danger" : "note" },
+      icon("info", 14),
+      h("span", { text: [scope, card.reason].filter(Boolean).join(" ") || "The agent gave no reason for this card." })),
+  );
 }
 
-/** Metric row (Figma 22:126): label and verdict tag, value, a bar, and the chance tick. */
+/** Metric row (Figma 22:126): label and tag, value, a bar, and the chance tick. */
 function metricRow(label, value, kind, chance, tagLabel) {
   const v = toNumber(value);
   const tone = kind === "installed" ? "installed" : kind === "refused" ? "refused" : "neutral";
@@ -734,6 +820,274 @@ function metricRow(label, value, kind, chance, tagLabel) {
       h("div", { class: "fill", style: `width: ${v === null ? 0 : clamp01(v) * 100}%` }),
       chance !== null ? h("div", { class: "tick", style: `left: ${clamp01(chance) * 100}%` }) : null),
   );
+}
+
+/** Export report: the card on screen, as the API returned it, saved as JSON. */
+function exportReport() {
+  const card = state.reportCard;
+  if (!card) return;
+  const blob = new Blob([JSON.stringify(card, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = h("a", { href: url, download: `report-${String(card.bridge || "card").replace(/[^\w.-]+/g, "_")}.json` });
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+// ---------------------------------------------------------------- sense graph
+
+/** Bridge kinds the planner chose, then any kind that shows up in fit events or cards. */
+function planKinds(job) {
+  const kinds = [];
+  const plan = job.steps.get("plan");
+  if (plan) for (const e of plan.events) if (Array.isArray((e.data || {}).kinds)) kinds.splice(0, kinds.length, ...e.data.kinds);
+  const fit = job.steps.get("fit");
+  if (fit) for (const e of fit.events) if (e.data && e.data.kind && !kinds.includes(e.data.kind)) kinds.push(e.data.kind);
+  for (const c of job.cards.values()) if (c.kind && !kinds.includes(c.kind)) kinds.push(c.kind);
+  return kinds;
+}
+
+/** What the fit events say about a bridge (by name) or a kind: {bridge, seconds, layer, started, built}. */
+function fitData(job, bridgeOrKind) {
+  const out = { bridge: null, seconds: null, layer: null, started: false, built: false };
+  const fit = job.steps.get("fit");
+  if (!fit) return out;
+  for (const e of fit.events) {
+    const d = e.data || {};
+    if (d.bridge !== bridgeOrKind && d.kind !== bridgeOrKind) continue;
+    if (e.status === "start") out.started = true;
+    if (e.status === "ok") {
+      out.built = true;
+      out.bridge = d.bridge || out.bridge;
+      out.seconds = toNumber(d.seconds);
+      out.layer = toNumber(d.layer);
+    }
+  }
+  return out;
+}
+
+/** Whether the verify step has started on a bridge and not finished it yet. */
+function verifying(job, bridge) {
+  const verify = job.steps.get("verify");
+  if (!verify || job.status !== "running" || !bridge) return false;
+  let open = false;
+  for (const e of verify.events) {
+    if ((e.data || {}).bridge === bridge && e.status === "start") open = true;
+    const c = cardFrom(e.data);
+    if (c && c.bridge === bridge) open = false;
+  }
+  return open;
+}
+
+/** One port row (Figma 19:294): labels inside, dots on the node edge, tagged for wiring. */
+function portRow(inLabel, outLabel, ids, colours, extraClass = "") {
+  return h("div", { class: `port-row ${extraClass}`.trim() },
+    h("span", { class: "port-label", text: inLabel || "" }),
+    outLabel ? h("span", { class: "port-label", text: outLabel }) : null,
+    ids.in ? h("span", { class: "port port--in", "data-port": ids.in, style: `--port: ${colours.in || "var(--color-modality-input)"}` }) : null,
+    ids.out ? h("span", { class: "port port--out", "data-port": ids.out, style: `--port: ${colours.out || "var(--color-modality-input)"}` }) : null);
+}
+
+/** Graph node (Figma 23:487): header tile and title, port rows, footer chip and status, badge. */
+function graphNode({ nodeState = "default", iconEl, title, subtitle, ports, footer, status, statusTone, badge, onclick, pressed }) {
+  const tagName = onclick ? "button" : "div";
+  const attrs = { class: `node node--${nodeState}${pressed ? " is-selected" : ""}` };
+  if (onclick) Object.assign(attrs, { type: "button", onclick, "aria-pressed": String(Boolean(pressed)) });
+  return h(tagName, attrs,
+    badge || null,
+    h("span", { class: "node-head" },
+      h("span", { class: "node-tile" }, iconEl),
+      h("span", { class: "node-text" },
+        h("span", { class: "node-title", text: title }),
+        subtitle ? h("span", { class: "node-sub", text: subtitle }) : null)),
+    ports && ports.length ? h("span", { class: "node-ports" }, ports) : null,
+    footer || status
+      ? h("span", { class: "node-foot" },
+          footer ? h("span", { class: "node-chip", text: footer }) : h("span"),
+          status ? h("span", { class: "node-status" }, h("span", { class: "dot", style: `--dot: ${statusTone || "var(--color-status-success)"}` }), status) : null)
+      : null);
+}
+
+/** The sense graph from real data: labelled set → candidate bridges with the held-out check → base model. */
+function renderGraph() {
+  const canvas = $("graph-canvas");
+  const model = currentModel();
+  const job = modelJob();
+  const datasetName = job && job.request ? job.request.dataset : state.dataset;
+  const dataset = state.datasets.find((d) => d.name === datasetName) || null;
+  const modality = (job && job.request && job.request.modality) || (dataset && dataset.modality) || "audio";
+  $("graph-sub").textContent = model ? `${capitalise(modality)} → ${model.label}` : "";
+  if (!model) {
+    canvas.replaceChildren(h("p", { class: "graph-empty", text: "Choose a base model to see how a sense reaches it." }));
+    return;
+  }
+
+  // Column 1: the labelled examples the agent fits and verifies on.
+  const cards = job ? [...job.cards.values()] : [];
+  const n = cards.length ? toNumber(cards[0].n) : null;
+  const scopeInput = document.querySelector('input[name="scope"]:checked');
+  const scope = job && job.request ? job.request.scope : scopeInput ? scopeInput.value : "closed";
+  const dataNode = dataset
+    ? graphNode({
+        iconEl: icon("database"),
+        title: dataset.title,
+        subtitle: `${(dataset.labels || []).length} labels · ${dataset.n} ${dataset.modality || "audio"} clips`,
+        ports: [
+          portRow("", "examples to fit", { out: "data-fit" }, { out: "var(--color-modality-data)" }),
+          portRow("", n !== null ? `${n} held out` : "held out", { out: "data-held" }, { out: "var(--color-modality-data)" }),
+        ],
+        footer: dataset.name,
+        status: scope === "open" ? "any sound" : "these labels only",
+        statusTone: "var(--color-text-muted)",
+      })
+    : h("p", { class: "graph-empty", text: "No labelled set is chosen." });
+
+  // Column 2: the candidate bridges and the held-out check, inside the bridge group.
+  const group = h("div", { class: "bridge-group" }, h("div", { class: "group-head" }, icon("plug", 13), h("span", { text: "Candidate bridges" })));
+  if (!job) {
+    group.append(h("p", { class: "group-empty", text: "The agent chooses which bridges to try when it runs. Press New sense to start." }));
+  } else {
+    const kinds = planKinds(job);
+    if (!kinds.length) group.append(h("p", { class: "group-empty", text: job.status === "running" ? "Planning…" : "No bridge was tried." }));
+    for (const kind of kinds) {
+      const fd = fitData(job, kind);
+      const card = cards.find((c) => c.kind === kind) || null;
+      const bridge = (card && card.bridge) || fd.bridge;
+      let nodeState = "default";
+      let status = "queued";
+      let tone = "var(--color-text-muted)";
+      if (card) {
+        nodeState = card.verdict === "installed" ? "installed" : card.verdict === "rejected" ? "refused" : "default";
+        status = pct(card.accuracy);
+        tone = nodeState === "refused" ? "var(--color-status-danger)" : "var(--color-status-success)";
+      } else if (job.status === "running" && ((fd.started && !fd.built) || verifying(job, bridge))) {
+        nodeState = "running";
+        status = fd.built ? "testing" : "fitting";
+        tone = "var(--color-accent-default)";
+      } else if (fd.built) {
+        status = job.status === "running" ? "built" : "not verified";
+      } else if (job.status !== "running") {
+        nodeState = "skipped";
+        status = "not built";
+      }
+      const ports = KIND_PORTS[kind] || ["input", "output"];
+      const wire = `var(--color-modality-${KIND_WIRE[kind] || "input"})`;
+      const badge =
+        nodeState === "installed" ? tag("Installed", "installed", "check")
+        : nodeState === "refused" ? tag("Refused", "refused", "ban")
+        : nodeState === "running" ? tag("running", "accent")
+        : nodeState === "skipped" ? tag("skipped")
+        : null;
+      group.append(
+        graphNode({
+          nodeState,
+          iconEl: icon("plug"),
+          title: `${kindLabel(kind)} bridge`,
+          subtitle: [KIND_NOTES[kind], fd.layer !== null ? `block ${fd.layer}` : null].filter(Boolean).join(" · "),
+          ports: [portRow(ports[0], ports[1], { in: `bridge-in-${kind}`, out: `bridge-out-${kind}` }, { in: "var(--color-modality-data)", out: wire })],
+          footer: fd.seconds !== null ? `fit ${seconds(fd.seconds)}` : bridge || kind,
+          status,
+          statusTone: tone,
+          badge: badge ? h("span", { class: "node-badge" }, badge) : null,
+          onclick: card ? () => selectReport(card.bridge) : null,
+          pressed: Boolean(card && card.bridge === state.reportBridge),
+        }),
+      );
+    }
+    const nControls = cards.reduce((m, c) => Math.max(m, Object.keys(c.controls || {}).length), 0);
+    const checking = job.status === "running" && job.steps.has("verify") && !job.steps.has("decide");
+    group.append(
+      h("div", { class: `held-check${checking ? " is-running" : ""}` },
+        h("span", { class: "port port--in", "data-port": "held-in", style: "--port: var(--color-modality-data)" }),
+        icon(checking ? "loader" : "shield-check", 14),
+        h("span", { class: "held-text" },
+          h("span", { class: "held-title", text: "Held-out check" }),
+          h("span", {
+            class: "held-sub",
+            text: cards.length
+              ? `${n !== null ? `${n} questions` : "held-out questions"} · ${nControls} controls · ${cards.length} of ${kinds.length} scored`
+              : checking ? "scoring…" : "not started",
+          }))),
+    );
+  }
+
+  // Column 3: the base model, with what it reads natively and the sense being added.
+  const sense = state.senses.find((s) => s.modality === modality) || null;
+  const refused = refusedRun();
+  let targetState = "no sense";
+  if (sense) targetState = state.usedBridges.has(sense.bridge) ? "installed" : "new";
+  else if (job && job.status === "running") targetState = "pending";
+  else if (refused && refused.modality === modality) targetState = "refused";
+  const natives = model.native || [];
+  const modelPorts = [
+    portRow(`${modality} · ${targetState}`, "reply", { in: "model-in-target", out: "model-out" },
+      { in: modalityColour(modality), out: "var(--color-accent-default)" },
+      `port-row--target port-row--${targetState.replace(/\s+/g, "-")}`),
+    ...natives.map((m) => portRow(`${m} · native`, "", { in: `model-in-${m}` }, { in: modalityColour(m) })),
+  ];
+  const modelNode = graphNode({
+    nodeState: "model",
+    iconEl: icon("cpu"),
+    title: model.label,
+    subtitle: `Base model · ${model.open_weights ? "open" : "closed"} weights`,
+    ports: modelPorts,
+    footer: model.name,
+    status: model.available ? "ready" : "unavailable",
+    statusTone: model.available ? "var(--color-status-success)" : "var(--color-status-danger)",
+  });
+  modelNode.dataset.installedKind = sense ? sense.kind : "";
+
+  const svg = document.createElementNS(SVG_NS, "svg");
+  svg.setAttribute("class", "wires");
+  svg.setAttribute("aria-hidden", "true");
+  canvas.replaceChildren(
+    svg,
+    h("div", { class: "graph-col" }, dataNode),
+    h("div", { class: "graph-col graph-col--bridges" }, group),
+    h("div", { class: "graph-col" }, modelNode),
+  );
+  drawWires();
+}
+
+/** Draw the wires between port dots as curves, coloured by the data that flows. */
+function drawWires() {
+  const canvas = $("graph-canvas");
+  const svg = canvas.querySelector("svg.wires");
+  if (!svg || canvas.hidden) return;
+  svg.replaceChildren();
+  const box = canvas.getBoundingClientRect();
+  const at = (id) => {
+    const el = canvas.querySelector(`[data-port="${id}"]`);
+    if (!el) return null;
+    const r = el.getBoundingClientRect();
+    return { x: r.left + r.width / 2 - box.left + canvas.scrollLeft, y: r.top + r.height / 2 - box.top + canvas.scrollTop };
+  };
+  const wire = (from, to, colour, dashed, faint) => {
+    const a = at(from);
+    const b = at(to);
+    if (!a || !b) return;
+    const dx = Math.max(24, (b.x - a.x) / 2);
+    const path = document.createElementNS(SVG_NS, "path");
+    path.setAttribute("d", `M${a.x},${a.y} C${a.x + dx},${a.y} ${b.x - dx},${b.y} ${b.x},${b.y}`);
+    path.setAttribute("class", `wire${dashed ? " wire--dashed" : ""}${faint ? " wire--faint" : ""}`);
+    path.style.stroke = colour;
+    svg.append(path);
+  };
+  svg.setAttribute("width", String(canvas.scrollWidth));
+  svg.setAttribute("height", String(canvas.scrollHeight));
+  const job = modelJob();
+  if (!job) return;
+  const modelNode = canvas.querySelector(".node[data-installed-kind]");
+  const installedKind = modelNode ? modelNode.dataset.installedKind : "";
+  for (const kind of planKinds(job)) {
+    const card = [...job.cards.values()].find((c) => c.kind === kind);
+    const refused = Boolean(card && card.verdict === "rejected");
+    const into = (card && card.verdict === "installed") || (!card && installedKind === kind);
+    wire("data-fit", `bridge-in-${kind}`, "var(--color-modality-data)", false, false);
+    wire(`bridge-out-${kind}`, "model-in-target", refused ? "var(--color-status-danger)" : `var(--color-modality-${KIND_WIRE[kind] || "input"})`, !into, refused);
+  }
+  wire("data-held", "held-in", "var(--color-modality-data)", true, false);
 }
 
 // ---------------------------------------------------------------- datasets and samples
@@ -785,6 +1139,7 @@ function setDataset(name) {
   }
   $("samples-source").textContent = dataset ? dataset.title : "";
   syncControls();
+  renderGraph();
   loadSamples();
 }
 
@@ -845,17 +1200,25 @@ function sampleItem(sample) {
 
 /** Update one sample's play and attach controls in place, so keyboard focus stays put. */
 function syncSampleItem(id) {
+  if (id === null || id === undefined) return;
   const ref = state.sampleRefs.get(id);
-  if (!ref) return;
   const attached = state.attachedSamples.has(id);
   const playing = state.playing === id;
-  ref.item.classList.toggle("is-attached", attached);
-  ref.item.classList.toggle("is-playing", playing);
-  ref.attach.setAttribute("aria-pressed", String(attached));
-  ref.attach.textContent = attached ? "Attached" : "Attach";
-  ref.attach.setAttribute("aria-label", `${attached ? "Detach" : "Attach"} ${ref.name}`);
-  ref.play.replaceChildren(icon(playing ? "stop" : "play", 14));
-  ref.play.setAttribute("aria-label", `${playing ? "Stop" : "Play"} ${ref.name}`);
+  if (ref) {
+    ref.item.classList.toggle("is-attached", attached);
+    ref.item.classList.toggle("is-playing", playing);
+    ref.attach.setAttribute("aria-pressed", String(attached));
+    ref.attach.textContent = attached ? "Attached" : "Attach";
+    ref.attach.setAttribute("aria-label", `${attached ? "Detach" : "Attach"} ${ref.name}`);
+    ref.play.replaceChildren(icon(playing ? "stop" : "play", 14));
+    ref.play.setAttribute("aria-label", `${playing ? "Stop" : "Play"} ${ref.name}`);
+  }
+  // Play buttons on attachments already sent in the chat follow the same clip.
+  for (const b of document.querySelectorAll("[data-play-sample]")) {
+    if (b.dataset.playSample !== id) continue;
+    b.replaceChildren(icon(playing ? "stop" : "play", 14));
+    b.setAttribute("aria-label", `${playing ? "Stop" : "Play"} ${b.dataset.name || "clip"}`);
+  }
 }
 
 function toggleSample(sample) {
@@ -967,7 +1330,7 @@ async function sendMessage(event) {
   for (const file of files) form.append("files", file, file.name);
   for (const sample of samples) form.append("sample_ids", sample.id);
 
-  const turn = appendTurn(model, message, [...files.map((f) => f.name), ...samples.map((s) => s.name || s.id)]);
+  const turn = appendTurn(model, message, files, samples);
   state.chatting = true;
   syncControls();
   try {
@@ -993,8 +1356,34 @@ async function sendMessage(event) {
   }
 }
 
-/** A user bubble and the model's answer under a name line (Figma Chat message, 22:204). */
-function appendTurn(model, message, fileNames) {
+/** A user turn (attachments above the bubble) and the model's answer under a name line (Figma 22:204). */
+function appendTurn(model, message, files, samples) {
+  const modality = (currentDataset() || {}).modality || "audio";
+  const fileModality = (f) => (f.type && f.type.startsWith("audio") ? "audio" : "other");
+  const sent = [
+    ...samples.map((s) =>
+      h("li", { class: "attachment" },
+        h("span", { class: "tile", style: `color: ${modalityColour(modality)}` }, modalityIcon(modality, 16)),
+        h("span", { class: "attachment-text" },
+          h("span", { class: "attachment-name", text: s.name || s.id }),
+          h("span", { class: "attachment-meta", text: `${capitalise(modality)} · sample · ${s.label || ""}`.replace(/ · $/, "") })),
+        h("button", {
+          type: "button",
+          class: "icon-button",
+          "data-play-sample": s.id,
+          "data-name": s.name || s.id,
+          "aria-label": `Play ${s.name || s.id}`,
+          onclick: () => togglePlay(s),
+        }, icon(state.playing === s.id ? "stop" : "play", 14))),
+    ),
+    ...files.map((f) =>
+      h("li", { class: "attachment" },
+        h("span", { class: "tile", style: `color: ${modalityColour(fileModality(f))}` }, modalityIcon(fileModality(f), 16)),
+        h("span", { class: "attachment-text" },
+          h("span", { class: "attachment-name", text: f.name }),
+          h("span", { class: "attachment-meta", text: `${f.type ? capitalise(f.type.split("/")[0]) : "File"} · upload` }))),
+    ),
+  ];
   const reply = h("div", { class: "msg-body" }, h("p", { class: "msg-text pending", text: "Waiting for the model" }));
   const tags = h("span", { class: "name-line-tags" });
   const root = h(
@@ -1002,8 +1391,8 @@ function appendTurn(model, message, fileNames) {
     { class: "turn" },
     h("div", { class: "msg msg--user" },
       h("span", { class: "sr-only", text: "You:" }),
-      h("p", { class: "bubble", text: message }),
-      fileNames.length ? h("ul", { class: "msg-files", "aria-label": "Attached files" }, fileNames.map((n) => h("li", {}, tag(n)))) : null),
+      sent.length ? h("ul", { class: "msg-files", "aria-label": "Attached files" }, sent) : null,
+      h("p", { class: "bubble", text: message })),
     h("div", { class: "msg msg--model" },
       h("div", { class: "name-line" }, icon("cpu", 14), h("span", { class: "name", text: model.label }), tags),
       reply),
@@ -1032,7 +1421,10 @@ function fillReply(turn, result) {
       changed = true;
     }
   }
-  if (changed) renderChips();
+  if (changed) {
+    renderChips();
+    renderGraph();
+  }
   scrollToEnd($("thread"));
 }
 
@@ -1055,26 +1447,39 @@ function postAgentResult(job, data) {
   const cards = [...job.cards.values()];
   const modality = capitalise((job.request && job.request.modality) || (cards[0] && cards[0].modality) || "sense");
   const installedCard = cards.find((c) => c.bridge === data.installed) || null;
-  const best = cards.reduce((a, c) => (a && toNumber(a.accuracy) >= toNumber(c.accuracy) ? a : c), null);
+  const fallback = fallbackRun(job);
   let result;
   if (job.status === "failed") {
-    result = resultCard("refused", "The run failed", "", data.error || "The server gave no error text. Check the server log, then run the agent again.", null);
+    result = resultCard("refused", "The run failed", "", data.error || "The server gave no error text. Check the server log, then run the agent again.", null, null);
+  } else if (fallback) {
+    // Screen 03: the first bridge was refused and the agent installed another one instead.
+    const r = fallback.refused;
+    const i = fallback.installed;
+    const body = [r.reason, i ? `Installed the ${kindLabel(i.kind).toLowerCase()} bridge instead: ${pct(i.accuracy)}.` : null].filter(Boolean).join(" ");
+    result = resultCard("refused", `${kindLabel(r.kind)} bridge refused`, pct(r.accuracy), body, r.bridge, "See why →");
   } else if (data.installed) {
     const c = installedCard;
     const facts = c
       ? [`${kindLabel(c.kind)} bridge`, datasetTitle(c.dataset), toNumber(c.n) !== null ? `${c.n} held-out questions` : null, toNumber(c.chance) !== null ? `chance ${pct(c.chance)}` : null]
       : [data.installed];
-    result = resultCard("installed", `${modality} installed`, c && toNumber(c.accuracy) !== null ? pct(c.accuracy) : "", facts.filter(Boolean).join(" · "), data.installed);
+    result = resultCard("installed", `${modality} installed`, c && toNumber(c.accuracy) !== null ? pct(c.accuracy) : "", facts.filter(Boolean).join(" · "), data.installed, null);
   } else {
+    const best = bestCard(cards);
     result = resultCard(
       "refused",
       `${modality} refused`,
       best && toNumber(best.accuracy) !== null ? pct(best.accuracy) : "",
-      best ? `Best candidate: ${best.bridge}. No bridge passed its checks; its report card gives the reason.` : "No candidate passed its checks.",
+      best && best.reason ? best.reason : "No candidate passed its checks.",
       best && best.bridge,
+      "See why →",
     );
   }
-  const text = job.doneMessage || (job.status === "failed" ? "" : "");
+  const earlier = job.doneData || {};
+  const text = [
+    job.doneMessage,
+    data.installed && earlier.replaced ? `It replaced the earlier ${earlier.replaced} sense.` : null,
+    !data.installed && earlier.kept ? `Chat keeps using the earlier ${earlier.kept} sense.` : null,
+  ].filter(Boolean).join(" ");
   const msg = h(
     "article",
     { class: "turn msg msg--agent" },
@@ -1090,7 +1495,7 @@ function postAgentResult(job, data) {
   scrollToEnd($("thread"));
 }
 
-function resultCard(verdict, title, value, body, bridge) {
+function resultCard(verdict, title, value, body, bridge, linkText) {
   return h(
     "div",
     { class: `result result--${verdict}` },
@@ -1098,7 +1503,7 @@ function resultCard(verdict, title, value, body, bridge) {
       h("span", { class: "result-title" }, icon(verdict === "installed" ? "check-circle" : "ban", 16), title),
       value ? h("span", { class: "result-value", text: value }) : null),
     body ? h("p", { class: "result-body", text: body }) : null,
-    bridge ? h("button", { type: "button", class: "link-button", text: "Open report card →", onclick: () => selectReport(bridge) }) : null,
+    bridge ? h("button", { type: "button", class: "link-button", text: linkText || "Open report card →", onclick: () => selectReport(bridge) }) : null,
   );
 }
 
@@ -1157,6 +1562,7 @@ async function runAgent(event) {
     });
     if (!result || !result.job_id) throw new Error("The server accepted the run but returned no job_id, so it cannot be followed.");
     state.starting = false;
+    closeFit(false);
     startJob(result.job_id, request, false);
   } catch (err) {
     showError(errorEl, err);
@@ -1186,11 +1592,15 @@ function startJob(id, request, resumed) {
   state.reportBridge = null;
   store.set("sessionStorage", "sense.job", id);
   $("timeline").replaceChildren();
-  $("trace-log").hidden = false;
+  $("log-count").textContent = "";
+  $("log-button").disabled = false;
   $("trace-outcome").replaceChildren();
   showError($("trace-error"), null);
   renderTraceHead();
   renderSteps();
+  renderGraph();
+  renderReport();
+  renderChips();
   syncControls();
   poll(state.job);
 }
@@ -1217,6 +1627,7 @@ async function poll(job) {
     showError($("trace-error"), new Error(`The trace stopped updating. ${err.message}`));
     renderTraceHead();
     renderSteps();
+    renderGraph();
     syncControls();
     return;
   }
@@ -1240,8 +1651,8 @@ function applyJob(job, data) {
     job.cards.clear();
     job.cardJson.clear();
   }
-  const log = $("timeline");
-  const follow = log.closest("details").open && nearEnd($("trace-panel").closest(".center"));
+  const logView = $("log-view");
+  const follow = !logView.hidden && nearEnd(logView);
   let cardsChanged = false;
   for (const event of events.slice(job.seen)) {
     appendEvent(job, event);
@@ -1253,8 +1664,9 @@ function applyJob(job, data) {
   for (const card of Array.isArray(data.cards) ? data.cards : []) cardsChanged = upsertCard(job, card) || cardsChanged;
   renderTraceHead();
   renderSteps();
-  if (cardsChanged) renderReport();
-  if (follow) scrollToEnd($("trace-panel").closest(".center"));
+  renderGraph();
+  if (cardsChanged || job.status === "running") renderReport();
+  if (follow) scrollToEnd(logView);
 }
 
 /** True when the reader is at (or close to) the bottom, so new trace lines should keep it there. */
@@ -1262,7 +1674,7 @@ function nearEnd(el) {
   return el.scrollHeight - el.scrollTop - el.clientHeight < 120;
 }
 
-/** Record one trace event: a line in the full trace, and its step's card. */
+/** Record one trace event: a line in the full log, and its step's card. */
 function appendEvent(job, event) {
   const status = STATUS_WORDS[event.status] ? event.status : "info";
   const step = event.step || "step";
@@ -1274,16 +1686,14 @@ function appendEvent(job, event) {
       mark,
       h("span", { class: "event-message" }, h("span", { class: "sr-only", text: `${STATUS_WORDS[status]}: ` }), event.message || "")),
   );
-  $("log-count").textContent = `(${$("timeline").children.length} events)`;
+  $("log-count").textContent = `(${$("timeline").children.length})`;
 
   if (step === "done") {
     job.doneMessage = event.message || "";
+    job.doneData = event.data || {}; // "replaced" or "kept": the sense installed before this run
     return;
   }
-  if (step === "error") {
-    job.errorMessage = event.message || "";
-    return;
-  }
+  if (step === "error") return;
   let s = job.steps.get(step);
   if (!s) {
     s = { events: [], open: 0 };
@@ -1329,12 +1739,14 @@ function finishJob(job, data) {
     outcome.replaceChildren();
   }
   const cards = [...job.cards.values()];
+  const fallback = fallbackRun(job);
   const installedCard = cards.find((c) => c.bridge === job.installed);
-  const best = cards.reduce((a, c) => (a && toNumber(a.accuracy) >= toNumber(c.accuracy) ? a : c), null);
-  state.reportBridge = installedCard ? installedCard.bridge : best ? best.bridge : null;
+  const best = bestCard(cards);
+  state.reportBridge = fallback ? fallback.refused.bridge : installedCard ? installedCard.bridge : best ? best.bridge : null;
   renderTraceHead();
   renderSteps();
   renderReport();
+  renderGraph();
   postAgentResult(job, data);
   syncControls();
   loadSenses();
@@ -1347,7 +1759,7 @@ function stepStatus(key, s, job) {
     if (job.status === "running") return "running";
     if (job.status === "failed" || job.status === "lost") return "refused";
   }
-  if (key === "decide" && job.status === "done" && !job.installed) return "refused"; // the agent declined to install
+  if (key === "decide" && job.status === "done" && (!job.installed || fallbackRun(job))) return "refused"; // the agent declined a bridge
   return "done";
 }
 
@@ -1389,6 +1801,7 @@ function renderSteps() {
   const job = state.job;
   const extra = job ? [...job.steps.keys()].filter((k) => !STEP_INDEX[k]) : [];
   const keys = [...STEPS.map((s) => s.key), ...extra];
+  $("steps").style.setProperty("--steps", String(keys.length));
   $("steps").replaceChildren(
     ...keys.map((key, i) => {
       const def = STEP_INDEX[key] || { title: humanise(key), idle: "" };
@@ -1404,7 +1817,7 @@ function renderSteps() {
         { class: `step step--${status}`, title: last && last.message ? last.message : undefined },
         h("div", { class: "step-head" },
           h("span", { class: "step-num" }, icon(STEP_ICONS[status], 14), h("span", { class: "t-overline", text: `Step ${i + 1}` })),
-          h("span", { class: "step-time", text: time !== null && Number.isFinite(time) ? seconds(time) : "" })),
+          h("span", { class: "step-time", text: status === "running" ? "running" : time !== null && Number.isFinite(time) ? seconds(time) : "" })),
         h("p", { class: "step-title", text: def.title }),
         h("p", { class: "step-desc", text: desc }),
         h("p", { class: "step-code", text: stepCode(key, s), title: stepCode(key, s) }),
@@ -1419,19 +1832,24 @@ function renderTraceHead() {
   const pill = $("trace-status");
   if (!job) {
     pill.hidden = true;
-    $("trace-request").textContent = "Not run yet. Each step below fills in from the agent's trace as it works.";
+    $("trace-request").textContent = "Not run yet. Press New sense to start the agent.";
     $("trace-elapsed").textContent = "";
     return;
   }
-  if (job.status === "running") setTag(pill, "Running", "accent");
-  else if (job.status === "failed") setTag(pill, "Failed", "danger");
-  else if (job.status === "lost") setTag(pill, JOB_WORDS.lost, "warning");
-  else if (job.installed) setTag(pill, "Sense installed", "success", "check");
-  else if (job.status === "done") setTag(pill, "Nothing installed", "danger", "ban");
-  else setTag(pill, JOB_WORDS[job.status] || capitalise(job.status), "neutral");
+  if (job.status === "running") setTag(pill, "running", "accent");
+  else if (job.status === "failed") setTag(pill, "failed", "danger");
+  else if (job.status === "lost") setTag(pill, JOB_WORDS.lost.toLowerCase(), "warning");
+  else if (fallbackRun(job)) setTag(pill, "refused · fallback installed", "warning");
+  else if (job.installed) setTag(pill, "sense installed", "success");
+  else if (job.status === "done") setTag(pill, "refused", "danger");
+  else setTag(pill, (JOB_WORDS[job.status] || job.status).toLowerCase(), "neutral");
   const req = job.request;
+  const reached = [...job.steps.keys()].filter((k) => STEP_INDEX[k]).length;
   $("trace-request").textContent = req
-    ? `${modelLabel(req.model)} · ${datasetTitle(req.dataset)} · ${(SCOPE_LABELS[req.scope] || req.scope || "").toLowerCase()}`
+    ? [
+        `${modelLabel(req.model)} · ${datasetTitle(req.dataset)} · ${(SCOPE_LABELS[req.scope] || req.scope || "").toLowerCase()}`,
+        job.status === "running" ? `step ${Math.max(1, reached)} of ${STEPS.length}` : `${reached} steps`,
+      ].join(" · ")
     : "Resuming the last run…";
   $("trace-elapsed").textContent = job.elapsed !== null ? seconds(job.elapsed) : "";
 }
@@ -1441,12 +1859,25 @@ function resetTrace() {
   state.job = null;
   store.set("sessionStorage", "sense.job", null);
   $("timeline").replaceChildren();
-  $("trace-log").hidden = true;
+  $("log-count").textContent = "";
+  $("log-button").disabled = true;
+  setLogVisible(false);
   $("trace-outcome").replaceChildren();
   renderTraceHead();
   renderSteps();
+  renderGraph();
   renderReport();
   syncControls();
+}
+
+/** Full log: swaps the sense graph for every event of the run, as the server sent them. */
+function setLogVisible(show) {
+  state.showLog = show;
+  $("log-view").hidden = !show;
+  $("graph-canvas").hidden = show;
+  $("log-button").setAttribute("aria-pressed", String(show));
+  if (show) scrollToEnd($("log-view"));
+  else drawWires();
 }
 
 // ---------------------------------------------------------------- start
@@ -1459,16 +1890,31 @@ function updateScopeHint() {
 function bindEvents() {
   $("model-select").addEventListener("change", (e) => setModel(e.target.value));
   $("dataset-select").addEventListener("change", (e) => setDataset(e.target.value));
-  for (const radio of document.querySelectorAll('input[name="scope"]')) radio.addEventListener("change", updateScopeHint);
+  for (const radio of document.querySelectorAll('input[name="scope"]')) {
+    radio.addEventListener("change", () => {
+      updateScopeHint();
+      if (!modelJob()) renderGraph();
+    });
+  }
   $("fit-form").addEventListener("submit", runAgent);
   $("chat-form").addEventListener("submit", sendMessage);
 
-  // "New sense" in the top bar leads to the form that starts the agent.
-  $("new-sense-button").addEventListener("click", () => {
-    $("fit-form").scrollIntoView({ block: "nearest", behavior: "smooth" });
-    const target = $("dataset-select").disabled ? $("run-button") : $("dataset-select");
-    target.focus({ preventScroll: true });
+  // New sense (top bar) and Add a sense (report footer) open the form that starts the agent.
+  $("new-sense-button").addEventListener("click", (e) => ($("fit-popover").hidden ? openFit(e.currentTarget) : closeFit(true)));
+  $("add-sense-button").addEventListener("click", (e) => openFit(e.currentTarget));
+  $("fit-close").addEventListener("click", () => closeFit(true));
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !$("fit-popover").hidden) closeFit(true);
   });
+  document.addEventListener("mousedown", (e) => {
+    const pop = $("fit-popover");
+    if (pop.hidden || pop.contains(e.target)) return;
+    if (e.target.closest("#new-sense-button, #add-sense-button")) return;
+    closeFit(false);
+  });
+
+  $("log-button").addEventListener("click", () => setLogVisible(!state.showLog));
+  $("export-button").addEventListener("click", exportReport);
 
   const box = $("message");
   box.addEventListener("input", () => autosize(box));
@@ -1501,6 +1947,9 @@ function bindEvents() {
     chat.classList.remove("is-dropping");
     addFiles(e.dataTransfer.files);
   });
+
+  if ("ResizeObserver" in window) new ResizeObserver(() => drawWires()).observe($("graph-canvas"));
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(drawWires);
 }
 
 function init() {
@@ -1509,7 +1958,9 @@ function init() {
   updateScopeHint();
   renderAttachments();
   renderSamples("Choose a labelled set to see its sample clips.");
+  renderTraceHead();
   renderSteps();
+  renderGraph();
   renderReport();
   syncControls();
   loadModels();

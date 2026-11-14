@@ -14,13 +14,13 @@
   <script src="/static/app.js" defer></script>
 </head>
 <body>
-  <!-- Top bar: Figma "Design system" › Top bar (23:492) -->
+  <!-- Figma "Screens & prototype": 01 · Agent at work (31:721), 02 · Sense installed (27:51), 03 · Sense refused (32:1205) -->
+
+  <!-- Top bar (23:492) -->
   <header class="topbar">
     <div class="brand">
       <span class="logo" aria-hidden="true" data-icon="sparkles"></span>
       <h1 class="brand-name">Sensorium</h1>
-      <span class="crumb-sep" aria-hidden="true">/</span>
-      <span id="crumb-model" class="crumb">Sense harness</span>
     </div>
 
     <div id="model-picker" class="model-picker">
@@ -39,12 +39,45 @@
     </div>
 
     <div class="actions">
-      <button id="new-sense-button" class="btn btn--primary" type="button"><span data-icon="plus"></span>New sense</button>
+      <button id="new-sense-button" class="btn btn--primary" type="button" aria-haspopup="dialog" aria-controls="fit-popover" aria-expanded="false"><span data-icon="plus"></span>New sense</button>
     </div>
   </header>
 
+  <!-- New sense: the form that starts the agent, opened from New sense or Add a sense -->
+  <div id="fit-popover" class="popover" role="dialog" aria-labelledby="fit-heading" hidden>
+    <form id="fit-form" novalidate>
+      <div class="popover-head">
+        <h2 id="fit-heading">Give <span id="fit-model">the model</span> a sense</h2>
+        <button id="fit-close" class="icon-button" type="button" aria-label="Close"><span data-icon="x"></span></button>
+      </div>
+      <p id="model-info" class="hint"></p>
+      <div class="field">
+        <label class="t-overline" for="dataset-select">Labelled examples</label>
+        <select id="dataset-select" class="select" disabled>
+          <option value="">Loading labelled sets…</option>
+        </select>
+        <p id="dataset-info" class="hint"></p>
+        <div id="dataset-error" class="error" role="alert" hidden></div>
+      </div>
+      <fieldset class="field">
+        <legend class="t-overline">Scope</legend>
+        <div class="segmented">
+          <input type="radio" id="scope-closed" name="scope" value="closed" checked>
+          <label for="scope-closed">These categories only</label>
+          <input type="radio" id="scope-open" name="scope" value="open">
+          <label for="scope-open">Any sound</label>
+        </div>
+        <p id="scope-hint" class="hint"></p>
+      </fieldset>
+      <div class="popover-actions">
+        <button id="run-button" class="btn btn--soft" type="submit" disabled><span data-icon="sparkles"></span><span id="run-label">Run agent</span></button>
+      </div>
+      <div id="fit-error" class="error" role="alert" hidden></div>
+    </form>
+  </div>
+
   <main class="workspace">
-    <!-- 1. Chat: Chat message (22:204), Result card (22:229), Chat parts (22:233) -->
+    <!-- Chat panel: Chat message (22:204), Result card (22:229), Attachment, Composer and Drop zone (22:233) -->
     <section class="panel panel--chat" id="chat-panel" aria-labelledby="chat-heading">
       <div class="panel-head">
         <h2 id="chat-heading">Chat</h2>
@@ -62,88 +95,72 @@
           </div>
         </div>
       </div>
-
-      <div class="samples">
-        <div class="samples-head">
-          <h3 class="t-overline">Sample clips</h3>
-          <span id="samples-source" class="samples-source"></span>
+      <div class="chat-footer">
+        <div class="samples">
+          <div class="samples-head">
+            <h3 class="t-overline">Sample clips</h3>
+            <span id="samples-source" class="samples-source"></span>
+          </div>
+          <ul id="samples-list" class="samples-list"></ul>
+          <div id="samples-error" class="error" role="alert" hidden></div>
         </div>
-        <ul id="samples-list" class="samples-list"></ul>
-        <div id="samples-error" class="error" role="alert" hidden></div>
+        <form id="chat-form" class="composer-form" novalidate>
+          <ul id="attachments" class="attachments" aria-label="Files attached to the next message" hidden></ul>
+          <div class="composer">
+            <label class="sr-only" for="message">Message</label>
+            <textarea id="message" rows="1" placeholder="Ask about the attached clip…"></textarea>
+            <label class="icon-button file-button" title="Attach audio">
+              <span data-icon="paperclip"></span>
+              <span class="sr-only">Attach audio</span>
+              <input id="file-input" class="sr-only" type="file" accept=".wav,.mp3,.flac,.ogg,.opus,.aif,.aiff,.au" multiple>
+            </label>
+            <button id="send-button" class="send" type="submit" disabled aria-label="Send"><span data-icon="arrow-up"></span></button>
+          </div>
+          <div id="chat-error" class="error" role="alert" hidden></div>
+        </form>
       </div>
-
-      <form id="chat-form" class="composer-form" novalidate>
-        <ul id="attachments" class="attachments" aria-label="Files attached to the next message" hidden></ul>
-        <div class="composer">
-          <label class="sr-only" for="message">Message</label>
-          <textarea id="message" rows="1" placeholder="Ask about the attached clip…"></textarea>
-          <label class="icon-button file-button" title="Attach audio">
-            <span data-icon="paperclip"></span>
-            <span class="sr-only">Attach audio</span>
-            <input id="file-input" class="sr-only" type="file" accept="audio/*" multiple>
-          </label>
-          <button id="send-button" class="send" type="submit" disabled aria-label="Send"><span data-icon="arrow-up"></span></button>
-        </div>
-        <p class="hint composer-hint">Enter sends. Shift+Enter adds a line.</p>
-        <div id="chat-error" class="error" role="alert" hidden></div>
-      </form>
     </section>
 
-    <!-- 2. The agent: fit form, then the run as Agent step cards (22:177) -->
+    <!-- Centre: Sense graph (Node 23:487, Port row 19:294) and Agent run (Agent step 22:177) -->
     <section class="center" aria-label="Agent">
-      <form id="fit-form" class="card fit-card" novalidate>
-        <div class="card-head">
-          <h2 id="fit-heading">Give <span id="fit-model">the model</span> a sense</h2>
+      <section class="graph" aria-labelledby="graph-heading">
+        <div class="graph-toolbar">
+          <h2 id="graph-heading" class="graph-title">Sense graph</h2>
+          <span id="graph-sub" class="panel-sub"></span>
+          <ul class="legend" aria-label="Wire colours">
+            <li><span class="dot" style="--dot: var(--color-modality-audio)"></span>Audio</li>
+            <li><span class="dot" style="--dot: var(--color-modality-embedding)"></span>Embedding</li>
+            <li><span class="dot" style="--dot: var(--color-modality-text)"></span>Text</li>
+            <li><span class="dot" style="--dot: var(--color-modality-data)"></span>Data</li>
+          </ul>
         </div>
-        <p id="model-info" class="hint"></p>
-        <div id="model-error" class="error" role="alert" hidden></div>
-        <div class="fit-fields">
-          <div class="field">
-            <label class="t-overline" for="dataset-select">Labelled examples</label>
-            <select id="dataset-select" class="select" disabled>
-              <option value="">Loading labelled sets…</option>
-            </select>
-            <p id="dataset-info" class="hint"></p>
-            <div id="dataset-error" class="error" role="alert" hidden></div>
-          </div>
-          <fieldset class="field">
-            <legend class="t-overline">Scope</legend>
-            <div class="segmented">
-              <input type="radio" id="scope-closed" name="scope" value="closed" checked>
-              <label for="scope-closed">These categories only</label>
-              <input type="radio" id="scope-open" name="scope" value="open">
-              <label for="scope-open">Any sound</label>
-            </div>
-            <p id="scope-hint" class="hint"></p>
-          </fieldset>
-          <div class="fit-actions">
-            <button id="run-button" class="btn btn--soft" type="submit" disabled><span data-icon="sparkles"></span><span id="run-label">Run agent</span></button>
-          </div>
+        <div id="model-error" class="error graph-error" role="alert" hidden></div>
+        <div id="graph-canvas" class="graph-canvas"></div>
+        <div id="log-view" class="log-view" hidden>
+          <ol id="timeline" class="timeline" aria-label="Every event of the run"></ol>
         </div>
-        <div id="fit-error" class="error" role="alert" hidden></div>
-      </form>
+      </section>
 
-      <section id="trace-panel" class="card run-card" aria-labelledby="trace-heading">
+      <section id="trace-panel" class="run" aria-labelledby="trace-heading">
         <div class="run-head">
           <h2 id="trace-heading">Agent run</h2>
           <span id="trace-status" class="tag" hidden></span>
-          <span id="trace-request" class="run-meta">Not run yet. Each step below fills in from the agent's trace as it works.</span>
-          <span id="trace-elapsed" class="run-elapsed num"></span>
+          <span id="trace-request" class="run-meta">Not run yet.</span>
+          <span id="trace-elapsed" class="run-meta num"></span>
+          <span class="run-actions">
+            <button id="log-button" class="btn btn--secondary" type="button" aria-pressed="false" aria-controls="log-view" disabled><span data-icon="file"></span>Full log <span id="log-count" class="num"></span></button>
+          </span>
         </div>
         <ol id="steps" class="steps" aria-label="Steps of the agent run"></ol>
         <div id="trace-outcome" aria-live="polite"></div>
         <div id="trace-error" class="error" role="alert" hidden></div>
-        <details id="trace-log" class="log" hidden>
-          <summary>Full trace <span id="log-count"></span></summary>
-          <ol id="timeline" class="timeline"></ol>
-        </details>
       </section>
     </section>
 
-    <!-- 3. Report card: Metric row (22:126), Sense row (22:327), Tag (19:235) -->
+    <!-- Report panel: Metric row (22:126), Sense row (22:327), Tag (19:235), Button (19:260) -->
     <aside class="panel panel--report" id="report-panel" aria-labelledby="report-heading">
       <div class="panel-head">
-        <h2 id="report-heading">Report card</h2>
+        <h2 id="report-heading" tabindex="-1">Report card</h2>
         <span id="report-verdict" class="tag" hidden></span>
       </div>
       <div class="panel-scroll">
@@ -156,6 +173,10 @@
           <ul id="senses-list" class="sense-rows"></ul>
           <div id="senses-error" class="error" role="alert" hidden></div>
         </div>
+      </div>
+      <div class="report-footer">
+        <button id="export-button" class="btn btn--secondary" type="button" disabled><span data-icon="download"></span>Export report</button>
+        <button id="add-sense-button" class="btn btn--primary" type="button" aria-haspopup="dialog" aria-controls="fit-popover"><span data-icon="plus"></span>Add a sense</button>
       </div>
     </aside>
   </main>
