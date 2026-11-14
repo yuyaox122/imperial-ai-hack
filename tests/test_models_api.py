@@ -248,6 +248,22 @@ def test_turning_the_cache_off_sends_every_request(api, monkeypatch, tmp_path, o
     assert not (tmp_path / "home" / "api_cache").exists()
 
 
+def test_turning_the_cache_off_ignores_answers_already_on_disk(api, monkeypatch, tmp_path):
+    create = api.client.chat.completions.create
+    item = ChoiceItem("Which sound?", ["cat", "dog"])
+    create.return_value = completion("B")
+    assert api.module.OpenAIChatModel().choose([item]) == [1]
+    [path] = cache_files(tmp_path)
+
+    monkeypatch.setenv("SENSE_API_CACHE", "0")
+    create.return_value = completion("A")  # a fresh answer that differs from the cached one
+    model = api.module.OpenAIChatModel()
+    assert model.choose([item]) == [0]
+    assert create.call_count == 2
+    assert model.usage()["cache_hits"] == 0
+    assert json.loads(path.read_text())["answer"] == "B"  # the cache is neither read nor written while off
+
+
 @pytest.mark.parametrize("value", [None, "", "1", "yes", "on", "true"])
 def test_cache_is_on_by_default(monkeypatch, value):
     if value is None:
@@ -277,6 +293,20 @@ def test_an_unreadable_cache_file_is_asked_again_and_replaced(api, tmp_path):
     path.write_text("{not json")
     assert api.module.OpenAIChatModel().choose([item]) == [1]
     assert api.client.chat.completions.create.call_count == 2
+    assert json.loads(path.read_text())["answer"] == "B"
+
+
+@pytest.mark.parametrize("stored", ["Z", "C", "b", "", None, 1, ["B"]])
+def test_a_cached_answer_that_is_not_an_option_is_asked_again_and_replaced(api, tmp_path, stored):
+    item = ChoiceItem("Which sound?", ["cat", "dog"])  # only A and B are options
+    api.client.chat.completions.create.return_value = completion("B")
+    api.module.OpenAIChatModel().choose([item])
+    [path] = cache_files(tmp_path)
+    path.write_text(json.dumps({"answer": stored, "model": "gpt-5.4-mini", "created": "2026-01-01T00:00:00+00:00"}))
+    model = api.module.OpenAIChatModel()
+    assert model.choose([item]) == [1]
+    assert api.client.chat.completions.create.call_count == 2
+    assert model.usage()["cache_hits"] == 0
     assert json.loads(path.read_text())["answer"] == "B"
 
 

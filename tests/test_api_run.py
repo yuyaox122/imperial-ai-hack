@@ -132,17 +132,34 @@ def test_unseen_classes_uses_the_resolved_number(env, monkeypatch, info, expecte
     assert caps == [expected, expected]
 
 
-@pytest.mark.parametrize("value", ["0", "-5", "ten", "2.5"])
-def test_a_bad_api_verify_items_setting_is_refused(env, monkeypatch, value):
+@pytest.mark.parametrize("value, message", [
+    ("0", "positive whole number"),
+    ("-5", "positive whole number"),
+    ("ten", "positive whole number"),
+    ("2.5", "positive whole number"),
+    ("1", "at least 10"),  # one item leaves the swapped-input control no example of another label
+    ("9", "at least 10"),
+])
+def test_a_bad_api_verify_items_setting_is_refused(env, monkeypatch, value, message):
     monkeypatch.setenv("SENSE_API_VERIFY_ITEMS", value)
     with pytest.raises(ValueError, match="SENSE_API_VERIFY_ITEMS"):
         config.api_verify_items()
-    with pytest.raises(ValueError, match="positive whole number"):
+    with pytest.raises(ValueError, match=message):
         text_card(FakeModel(api_info()), big_set())
     assert text_card(FakeModel(open_info()), big_set()).n == 200  # an open-weight model never reads it
 
 
-@pytest.mark.parametrize("value, expected", [(None, 50), ("", 50), (" 7 ", 7), ("120", 120)])
+@pytest.mark.parametrize("name", ["esc50", "gtzan"])
+def test_the_smallest_api_verify_items_setting_verifies_whatever_the_seed(env, monkeypatch, name):
+    monkeypatch.setenv("SENSE_API_VERIFY_ITEMS", str(config.API_VERIFY_MIN_ITEMS))
+    dataset = datasets.load_labelled_set(name)
+    model = FakeModel(api_info())
+    for seed in range(50):
+        card = text_card(model, dataset, seed=seed)
+        assert card.n == config.API_VERIFY_MIN_ITEMS and "swapped" in card.controls
+
+
+@pytest.mark.parametrize("value, expected", [(None, 50), ("", 50), (" 10 ", 10), ("120", 120)])
 def test_api_verify_items_values(env, monkeypatch, value, expected):
     if value is not None:
         monkeypatch.setenv("SENSE_API_VERIFY_ITEMS", value)

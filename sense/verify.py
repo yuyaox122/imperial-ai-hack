@@ -17,9 +17,10 @@ The card comes back with verdict "candidate"; the planner decides.
 
 max_items None scores at most 200 held-out examples for an open-weight model, and at most
 config.api_verify_items() (SENSE_API_VERIFY_ITEMS, default 50) for a model that is not open-weight, such as an
-API model: there every question, and each control's copy of it, is a paid request (sense.models_api caches the
-answers, so a repeat run is free). Fewer items give a wider interval: the card's `n` says how many were scored
-and its `interval` how certain the accuracy is. An explicit max_items is used as given.
+API model: there each question is asked three times (the bridge, swapped input and no input), each a paid
+request; the lookup and specialist-alone controls ask nothing (sense.models_api caches the answers, so verifying
+the same questions again asks the API nothing). Fewer items give a wider interval: the card's `n` says how many
+were scored and its `interval` how certain the accuracy is. An explicit max_items is used as given.
 """
 
 from __future__ import annotations

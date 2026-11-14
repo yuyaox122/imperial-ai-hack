@@ -9,7 +9,8 @@ Choice answers are single letters at temperature zero, returned as option indice
 in input order. A malformed answer fails verification rather than inventing a score.
 
 Answer cache. Every multiple-choice answer that passes that check is kept on disk, so a repeat agent run gets
-the same answers without asking the API again: reproducible, and free. Each answer is one file,
+the same verification answers without asking the API again (the LLM planner's requests, which do not go through
+this module, and chat() replies are not cached). Each answer is one file,
 <SENSE_HOME>/api_cache/<model id>/<key[:2]>/<key>.json holding {"answer", "model", "created"}, where the key is
 the sha256 of canonical JSON of the model id, the system instruction, the user message content exactly as sent
 (image data included) and the token limit; changing any of them asks the API again. Files are written to a
