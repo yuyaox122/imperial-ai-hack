@@ -99,3 +99,40 @@ def test_triage_rows_match_their_tables_and_replace_the_batch(installed):
     statements = [s for s, _ in sql.calls]
     assert statements[0].startswith("DELETE FROM workspace.sensorium.triage_batches WHERE batch_id = :batch_id")
     assert sum(s.startswith("INSERT INTO workspace.sensorium.triage_clips") for s in statements) == -(-len(clips) // 50)
+
+
+@pytest.mark.parametrize("question", triage.QUESTIONS)
+def test_every_question_gives_targets_or_none_on_the_dev_fold(installed, question):
+    record = triage.run(question=question, fold="dev")
+    assert record["question"] == question and record["batch"]["source"] == "esc50 fold 4 (dev)"
+    assert all(c[m] in (*triage.TARGETS, triage.NONE) for c in record["clips"] for m in triage.METHODS)
+    assert ("reply" in record["clips"][0]) == (question == "chat")
+    batches, clips = sink.triage_rows(record)
+    assert {b["question"] for b in batches} == {question}
+    assert all(set(c) == columns("triage_clips") for c in clips)
+
+
+def test_ranger_question_reproduces_the_first_record_layout(installed):
+    """The original four-way question keeps "none of these" last, as in the 0.8B record of PR #56."""
+    assert triage._options(0, 3)[-1] == triage.NONE
+    assert sorted(triage._options(0, 3, shuffle_none=True)) == sorted([*triage.TARGETS, triage.NONE])
+
+
+def test_named_target_reads_variants_and_takes_the_first():
+    assert triage._named_target("A chain saw cutting wood") == "chainsaw"
+    assert triage._named_target("Engines idling, then a handsaw") == "engine"
+    assert triage._named_target("Birds chirping in a forest") == triage.NONE
+    assert triage._named_target("sawing") == triage.NONE
+
+
+def test_compare_lists_each_question(installed):
+    records = [triage.run(question=q, fold="dev", limit=20) for q in ("neutral", "yesno")]
+    out = triage.compare(records)
+    assert "neutral" in out and "yesno" in out and "precision" in out
+
+
+def test_a_record_from_before_the_variants_reads_as_ranger(installed):
+    record = triage.run(question="ranger", limit=10)
+    record["question"] = triage.RANGER  # what the first 0.8B record (PR #56) holds
+    assert {b["question"] for b in sink.triage_rows(record)[0]} == {"ranger"}
+    assert "question 'ranger'" in triage.table(record)

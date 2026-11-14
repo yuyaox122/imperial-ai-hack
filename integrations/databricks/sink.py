@@ -38,11 +38,11 @@ DDL = {
     "trace_events": """run_id STRING, i BIGINT, t DOUBLE, step STRING, status STRING, message STRING,
         data_json STRING""",
     "triage_batches": """batch_id STRING, recorded TIMESTAMP, task STRING, user STRING, model STRING, bridge STRING,
-        kind STRING, source STRING, has_truth BOOLEAN, method STRING, n BIGINT, flagged BIGINT, listen_fraction DOUBLE,
+        kind STRING, question STRING, source STRING, has_truth BOOLEAN, method STRING, n BIGINT, flagged BIGINT, listen_fraction DOUBLE,
         threats BIGINT, caught BIGINT, named_right BIGINT, recall DOUBLE, recall_low DOUBLE, recall_high DOUBLE,
         precision DOUBLE, false_alarm_rate DOUBLE, summary_json STRING, note STRING""",
     "triage_clips": """batch_id STRING, i BIGINT, clip STRING, truth STRING, answer STRING, flagged BOOLEAN,
-        no_input STRING, lookup STRING, detail STRING""",
+        no_input STRING, lookup STRING, detail STRING, reply STRING""",
 }
 
 
@@ -195,7 +195,7 @@ def triage_rows(record: dict) -> tuple[list[dict[str, Any]], list[dict[str, Any]
         batches.append({
             "batch_id": record["id"], "recorded": record["recorded"], "task": record["task"], "user": record["user"],
             "model": record["model"], "bridge": record["sense"].get("bridge"), "kind": record["sense"].get("kind"),
-            "source": batch["source"], "has_truth": bool(batch["has_truth"]), "method": method, "n": int(r["n"]),
+            "question": question_name(record), "source": batch["source"], "has_truth": bool(batch["has_truth"]), "method": method, "n": int(r["n"]),
             "flagged": int(r["flagged"]), "listen_fraction": _float(r.get("listen_fraction")),
             "threats": r.get("threats"), "caught": r.get("caught"), "named_right": r.get("named_right"),
             "recall": _float(r.get("recall")), "recall_low": _float(interval[0]), "recall_high": _float(interval[1]),
@@ -204,10 +204,18 @@ def triage_rows(record: dict) -> tuple[list[dict[str, Any]], list[dict[str, Any]
         })
     clips = [
         {"batch_id": record["id"], "i": int(c["i"]), "clip": c["clip"], "truth": c["truth"], "answer": c["sense"],
-         "flagged": bool(c["flagged"]), "no_input": c["no_input"], "lookup": c["lookup"], "detail": c.get("detail", "")}
+         "flagged": bool(c["flagged"]), "no_input": c["no_input"], "lookup": c["lookup"], "detail": c.get("detail", ""),
+         "reply": c.get("reply")}
         for c in record["clips"]
     ]
     return batches, clips
+
+
+def question_name(record: dict) -> str:
+    """eval.triage's name for how the model was asked. Records written before the question variants hold the
+    ranger question's full text instead."""
+    q = record.get("question") or "ranger"
+    return "ranger" if " " in q else q
 
 
 def write_triage(record: dict, sql: conn.SQL, *, mlflow_runs: bool = True) -> dict[str, int]:
@@ -234,6 +242,7 @@ def log_triage_mlflow(record: dict, batches: list[dict[str, Any]]) -> int:
     with mlflow.start_run(run_name=f"triage · {record['sense'].get('bridge')} · {record['id']}"):
         mlflow.set_tags({"sensorium_triage_id": record["id"], "task": record["task"]})
         mlflow.log_params({"model": record["model"], "bridge": record["sense"].get("bridge"),
+                           "question": question_name(record),
                            "source": record["batch"]["source"], "n": record["batch"]["n"]})
         metrics = {}
         for row in batches:
