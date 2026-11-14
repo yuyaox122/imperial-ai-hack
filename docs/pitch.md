@@ -39,7 +39,7 @@ Name the team: Yuyao (lead, data platform, demo), Michael (harness and verificat
 ## Sponsor lines (one sentence each, only to the matching judge)
 
 - **Databricks:** "Every agent run, report card, trace event and triage flag is a Delta table in Unity Catalog, with an MLflow run per verified bridge. An install is backed by a pass row in `report_cards`." Show the `report_cards` table.
-- **Figma:** "We designed the interface in Figma first: variables with code syntax, 18 components and 10 variant sets, and the web app is built from them." Show the design-system page, then the same screen in the app.
+- **Figma:** "Figma and the build run one loop: Henad's 131 variables carry their CSS names as code syntax, `web/style.css` declares the same names, and the running app was captured back into Figma, where its parts became components. Every part that shows a verdict has a Refused variant." Lead with the **★ Playable proof** page (https://www.figma.com/design/9DxXU1h0aHjw8Mc8vUwl8O/Imperial-AI-Hackathon?node-id=78-1027): press Play, let the judge pick A (music genres, installed) or B (any sound, refused, then the text bridge). It is a Figma prototype of the verdict: 10 states, smart animate, after-delay timers, real numbers. Then the **★ Pitch** page (node 70-76), P02 for how we used Figma.
 
 ## Slides
 

@@ -7,7 +7,7 @@ match a card in Databricks or a record in `socket_pilot/artifacts/`.
 - **Name:** Sensorium
 - **Tagline:** An agent that gives a model a sense it doesn't have, proves the sense works, and installs it. If the proof fails, it refuses.
 - **Track:** Autonomous Agents. **Sponsor prizes:** Databricks, Figma[, Linkup: only if the discovery step lands].
-- **Links:** GitHub `yuyaox122/imperial-ai-hack` (public by 10:30), demo video [TODO], Figma file https://www.figma.com/design/9DxXU1h0aHjw8Mc8vUwl8O [TODO: the owner (Michael) sets "anyone with the link can view" before submitting].
+- **Links:** GitHub `yuyaox122/imperial-ai-hack` (public by 10:30), demo video [TODO], Figma pitch page https://www.figma.com/design/9DxXU1h0aHjw8Mc8vUwl8O/Imperial-AI-Hackathon?node-id=70-76 [TODO: the owner (Michael) sets "anyone with the link can view" before submitting].
 
 ## Inspiration
 
@@ -41,7 +41,7 @@ For an API model (`gpt-5.4-mini`), which has no hidden states to write into, the
 
 - **Harness (`sense/`):** contracts for base models, specialists, bridges, report cards and installed senses. Qwen3.5 runs through Transformers, with forward hooks that write vectors into placeholder tokens. CLAP is the frozen audio and text encoder. Verification gives every card a Wilson interval.
 - **Agent (`agent/`):** a fit, verify, decide, install loop with a visible trace. An LLM planner proposes which bridges to try and which to install, and a rule planner holds the acceptance bars, so the model can't install a bridge that fails them.
-- **Interface (`web/`, `server/`):** a chat harness with a model picker, file drop, sense graph, report-card inspector and replay of recorded runs, built from our Figma design system (variables with code syntax, 18 components, 10 variant sets).
+- **Interface (`web/`, `server/`):** a chat harness with a model picker, file drop, sense graph, report-card inspector and replay of recorded runs, designed in Figma: a first pass in our own design system (variables with code syntax, 18 components, 10 variant sets), then the shipped Henad redesign, whose 131 variables carry the CSS names in `web/style.css` and whose parts were captured back from the running build as components; the graph node, callout, agent step, metric row and status badge each have a Refused variant.
 - **Databricks (`integrations/databricks/`):** every agent run, report card and trace event goes into Delta tables in Unity Catalog. Each run record is copied to a Volume, and each verified bridge is an MLflow run with its controls as metrics. A sense install is backed by a pass row in `report_cards`. Triage flags go to `triage_batches` and `triage_clips`. The writer runs as a listener on the agent's job stream, off the run's thread.
 - **Fake mode:** `SENSE_FAKE=1` swaps in a deterministic model, encoder and data, so 400+ tests and the whole interface run in seconds without weights.
 
