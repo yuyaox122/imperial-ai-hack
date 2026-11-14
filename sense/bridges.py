@@ -10,6 +10,16 @@ Public surface (do not rename):
       ('audio: sounds like "rock"'). Without: the nearest caption from datasets.caption_bank().
   load_bridge(directory) -> Bridge
       Reload a bridge saved with Bridge.save.
+  describe(bridge) -> dict
+      Facts for the agent's trace, as plain JSON values: {"name", "kind", "modality", "model", "specialist",
+      "fit_seconds", "fit_seconds_by_layer", "layer", "dev_accuracy", "n_fit", "source", "n_phrases"}, with None
+      where a bridge has no such fact. Layer-keyed dicts have string keys, so they survive a JSON round trip.
+  availability(model_info, modality) -> list[dict]
+      [{"kind", "available", "why"}] for native, text, tool, image and vector, in that order, without loading
+      anything.
+
+A vector bridge records fit_seconds (the whole fit, including the layer sweep and its dev scoring) and
+fit_seconds_by_layer (the closed-form fit of each candidate block alone, keyed by block).
 
 Every bridge implements contracts.Bridge: from_embedding, prepare, save. `name` is "vector:<dataset>",
 "text:<dataset>" or "text:captions".
@@ -26,7 +36,7 @@ from pathlib import Path
 
 import numpy as np
 
-from sense.contracts import BaseModel, Bridge, ChoiceItem, LabelledSet, OpenModel, SenseInput
+from sense.contracts import BaseModel, Bridge, ChoiceItem, LabelledSet, ModelInfo, OpenModel, SenseInput
 
 LAMBDAS = [1e-2, 1e-1, 1.0, 10.0, 1e2, 1e3, 1e4, 1e5, 1e6]
 LAYER_CANDIDATES = range(5)  # blocks 0-4: Qwen3.5 reads the slots up to about block 4
@@ -102,6 +112,7 @@ class VectorBridge:
         dev_accuracy: dict[int, float] | None = None,
         n_fit: int = 0,
         fit_seconds: float = 0.0,
+        fit_seconds_by_layer: dict[int, float] | None = None,
     ):
         self.modality = modality
         self.model_name = model_name
@@ -115,6 +126,7 @@ class VectorBridge:
         self.dev_accuracy = dev_accuracy or {}
         self.n_fit = n_fit
         self.fit_seconds = fit_seconds
+        self.fit_seconds_by_layer = fit_seconds_by_layer or {}  # closed-form fit of each candidate block, no scoring
 
     def vectors(self, emb: np.ndarray) -> np.ndarray:
         """[n, dim] specialist embeddings -> [n, hidden] vectors for the slots: ridge map, then norm match."""
@@ -165,6 +177,7 @@ class VectorBridge:
             "dev_accuracy": {str(k): v for k, v in self.dev_accuracy.items()},
             "n_fit": self.n_fit,
             "fit_seconds": self.fit_seconds,
+            "fit_seconds_by_layer": {str(k): v for k, v in self.fit_seconds_by_layer.items()},
         }
         np.savez(
             directory / "bridge.npz",
@@ -191,6 +204,7 @@ class VectorBridge:
             dev_accuracy={int(k): v for k, v in meta.get("dev_accuracy", {}).items()},
             n_fit=int(meta.get("n_fit", 0)),
             fit_seconds=float(meta.get("fit_seconds", 0.0)),
+            fit_seconds_by_layer={int(k): float(v) for k, v in meta.get("fit_seconds_by_layer", {}).items()},
         )
 
 
@@ -213,6 +227,7 @@ def _fit_at(model: OpenModel, dataset: LabelledSet, idx: np.ndarray, layer: int)
     W = np.linalg.solve(X.T @ X + lam * np.eye(X.shape[1]), X.T @ (T - mu_t))
     rho = float(np.linalg.norm(T - mu_t, axis=1).mean())
     seen = sorted({int(c) for c in dataset.y[idx]})
+    seconds = round(time.time() - start, 2)  # the closed-form fit of this block only, without dev scoring
     return VectorBridge(
         modality=dataset.modality,
         model_name=model.info.name,
@@ -227,7 +242,8 @@ def _fit_at(model: OpenModel, dataset: LabelledSet, idx: np.ndarray, layer: int)
         rho=rho,
         label_targets=targets[seen].astype(np.float32),
         n_fit=len(idx),
-        fit_seconds=round(time.time() - start, 2),
+        fit_seconds=seconds,
+        fit_seconds_by_layer={layer: seconds},
     )
 
 
@@ -263,12 +279,15 @@ def fit_vector_bridge(model: BaseModel, dataset: LabelledSet, idx: np.ndarray, l
         raise ValueError(f"Dataset {dataset.name} has no dev examples to choose the layer on; pass a layer.")
     start = time.time()
     best, scores = None, {}
+    fit_times: dict[int, float] = {}
     for candidate in [L for L in LAYER_CANDIDATES if L < model.n_layers]:
         bridge = _fit_at(model, dataset, idx, candidate)
+        fit_times[candidate] = bridge.fit_seconds
         scores[candidate] = round(_dev_accuracy(model, bridge, dataset), 4)
         if best is None or scores[candidate] > scores[best.layer]:  # ties keep the earlier block
             best = bridge
     best.dev_accuracy = scores
+    best.fit_seconds_by_layer = fit_times
     best.fit_seconds = round(time.time() - start, 2)
     return best
 
@@ -355,3 +374,77 @@ def load_bridge(directory: Path) -> Bridge:
     if meta.get("kind") == "text":
         return TextBridge.load(directory, meta)
     raise ValueError(f"{meta_path} names an unknown bridge kind {meta.get('kind')!r}.")
+
+
+# ----------------------------------------------------------------------------- facts for the agent's trace
+def _str_keys(scores: dict | None) -> dict[str, float] | None:
+    """{2: 0.85} -> {"2": 0.85}, so that the dict comes back unchanged from a JSON round trip."""
+    return None if scores is None else {str(k): float(v) for k, v in scores.items()}
+
+
+def describe(bridge: Bridge) -> dict:
+    """What the trace should say about a built bridge, as plain JSON values; None where the bridge has no such
+    fact (a text bridge has no layer and no fit timing, a vector bridge has no phrases). `source` is the data
+    the bridge was built from: the dataset name, or "captions" for the caption-bank text bridge."""
+    from sense import specialists
+
+    try:
+        specialist = specialists.describe(bridge.modality)
+    except ValueError:  # no specialist for this modality: the bridge does not use one
+        specialist = None
+    layer = getattr(bridge, "layer", None)
+    n_fit = getattr(bridge, "n_fit", None)
+    fit_seconds = getattr(bridge, "fit_seconds", None)
+    phrases = getattr(bridge, "phrases", None)
+    return {
+        "name": bridge.name,
+        "kind": bridge.kind,
+        "modality": bridge.modality,
+        "model": bridge.model_name,
+        "specialist": specialist,
+        "fit_seconds": None if fit_seconds is None else float(fit_seconds),
+        "fit_seconds_by_layer": _str_keys(getattr(bridge, "fit_seconds_by_layer", None)),
+        "layer": None if layer is None else int(layer),
+        "dev_accuracy": _str_keys(getattr(bridge, "dev_accuracy", None)),
+        "n_fit": None if n_fit is None else int(n_fit),
+        "source": getattr(bridge, "source", None) or getattr(bridge, "dataset", None),
+        "n_phrases": None if phrases is None else len(phrases),
+    }
+
+
+def availability(model_info: ModelInfo, modality: str) -> list[dict]:
+    """For each bridge kind, in the order native, text, tool, image, vector: whether it could carry `modality` into
+    the model, and why or why not in one plain clause. Loads no model and no specialist."""
+    from sense import specialists
+
+    label = model_info.label
+    try:
+        specialist = specialists.describe(modality)["label"]
+    except ValueError:  # no specialist is known for this modality
+        specialist = None
+    native = modality in model_info.native
+    if specialist is None:
+        text_why = f"there is no {modality} specialist to describe the input in words"
+    else:
+        text_why = f"{specialist} can describe the {modality} in words for the prompt"
+    if not model_info.open_weights:
+        vector_why = f"{label} is not open-weight: an API exposes no hidden states to write into"
+    elif specialist is None:
+        vector_why = f"there is no {modality} specialist to give an embedding to write into {label}"
+    else:
+        vector_why = f"{specialist} embeddings can be written into the hidden states of open-weight {label}"
+    return [
+        {
+            "kind": "native",
+            "available": native,
+            "why": f"{label} reads {modality} natively" if native else f"{label} does not read {modality} natively",
+        },
+        {"kind": "text", "available": specialist is not None, "why": text_why},
+        {"kind": "tool", "available": False, "why": "the tool bridge is not built yet"},
+        {
+            "kind": "image",
+            "available": False,
+            "why": "the image bridge, which would show the input as a picture such as a spectrogram, is not built yet",
+        },
+        {"kind": "vector", "available": bool(model_info.open_weights and specialist is not None), "why": vector_why},
+    ]
