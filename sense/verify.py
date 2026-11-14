@@ -22,9 +22,11 @@ The card comes back with verdict "candidate"; the planner decides.
 max_items None scores at most 200 held-out examples for an open-weight model, and at most
 config.api_verify_items() (SENSE_API_VERIFY_ITEMS, default 50) for a model that is not open-weight, such as an
 API model: there each question is asked three times (the bridge, swapped input and no input), each a paid
-request; the lookup and specialist-alone controls ask nothing (sense.models_api caches the answers, so verifying
-the same questions again asks the API nothing). Fewer items give a wider interval: the card's `n` says how many
-were scored and its `interval` how certain the accuracy is. An explicit max_items is used as given.
+request, or up to three requests for a tool-bridge question, where the model may call the tool in two rounds
+before it answers; the lookup and specialist-alone controls ask nothing (sense.models_api caches the answers, so
+verifying the same questions again asks the API nothing). A tool bridge is scored like any other: its "swapped"
+control hands the model the tool of a clip of another label. Fewer items give a wider interval: the card's `n`
+says how many were scored and its `interval` how certain the accuracy is. An explicit max_items is used as given.
 
 free_text asks held-out clips from the same split (dataset.test_idx) an open question instead (dataset.question
 plus " Answer in a few words.") and counts how often the reply names the true label, under the same swapped and

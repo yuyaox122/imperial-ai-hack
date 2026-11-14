@@ -9,8 +9,13 @@ Public surface (do not rename):
 Local open-weight models implement contracts.OpenModel:
   "qwen3.5-0.8b", "qwen3.5-2b"   frozen Qwen3.5 through transformers; reference: socket_pilot/host.py.
   Vector inputs are written into placeholder "slot" tokens after block `SenseInput.layer`; text inputs are
-  put into the prompt; several inputs may be given at once.
-  "fake"                         deterministic model for tests and interface work (only in fake mode)
+  put into the prompt; several inputs may be given at once. Tool inputs are refused: local tool calling is not
+  wired, so their ModelInfo has tools=False.
+
+Fake mode (SENSE_FAKE=1) lists two deterministic models for tests and interface work, both FakeModel:
+  "fake"                         open-weight, no tools: takes the vector and text bridges
+  "fake-api"                     not open-weight, can call tools: stands in for an API model, so it takes the
+                                 text and tool bridges (FakeModel itself would also take vector inputs)
 
 Prompt shape: one line per input ("Audio clip: <4 slot tokens>" or "Audio clip: <text>"), then the message or
 the question. API models may be added in sense/models_api.py, which is imported here if it exists.
@@ -49,7 +54,7 @@ _lock = threading.RLock()
 
 def available_models() -> list[ModelInfo]:
     if config.fake():
-        return [_fake_info()]
+        return _fake_infos()
     infos = [_local_info(name) for name in _LOCAL if name not in _registered]
     return infos + [info for info, _ in _registered.values()]
 
@@ -76,9 +81,13 @@ def register_model(info: ModelInfo, loader: Callable[[], BaseModel]) -> None:
 
 def _entry(name: str) -> tuple[ModelInfo, Callable[[], BaseModel]]:
     if config.fake():
-        if name != "fake":
-            raise ValueError(f"Unknown model {name!r}: in fake mode (SENSE_FAKE=1) the only model is 'fake'.")
-        info = _fake_info()
+        infos = {info.name: info for info in _fake_infos()}
+        if name not in infos:
+            raise ValueError(
+                f"Unknown model {name!r}: in fake mode (SENSE_FAKE=1) the only model is 'fake' (open-weight) or "
+                "'fake-api' (an API model that can call tools). Use one of those, or unset SENSE_FAKE for real models."
+            )
+        info = infos[name]
         return info, lambda: FakeModel(info)
     if name in _registered:
         return _registered[name]
@@ -109,7 +118,9 @@ def _local_info(name: str) -> ModelInfo:
         f"Weights for {source} were not found on this machine. Set SENSE_HF_CACHE to the Hugging Face cache "
         f"that holds them, or {env} to a local model directory."
     )
-    return ModelInfo(name=name, label=label, native=["text", "image"], open_weights=True, available=found, note=note)
+    return ModelInfo(
+        name=name, label=label, native=["text", "image"], open_weights=True, available=found, note=note, tools=False,
+    )
 
 
 def _has_weights(directory: Path) -> bool:
@@ -218,6 +229,11 @@ class QwenModel:
                 vectors.append((vec, inp.layer))
             elif inp.kind == "text":
                 lines.append(f"{label}: {(inp.text or '').replace(SLOT_MARKER, '')}")
+            elif inp.kind == "tool":
+                raise ValueError(
+                    f"{self.info.label} cannot call tools: tool calling is wired for API models only, not for local "
+                    f"models. Give {inp.source or label} to it through a text or vector bridge instead."
+                )
             else:
                 raise ValueError(f"{self.info.label} takes text and vector inputs here; {inp.kind} inputs are not wired up.")
         user = "\n".join(lines + [body.replace(SLOT_MARKER, "")])
@@ -328,6 +344,39 @@ def _fake_info() -> ModelInfo:
     )
 
 
+def _fake_api_info() -> ModelInfo:
+    return ModelInfo(
+        name="fake-api",
+        label="Fake API model (no weights, tools)",
+        native=["text", "image"],
+        open_weights=False,
+        available=True,
+        note="Deterministic stand-in for an API model that can call tools, for tests and interface work.",
+        tools=True,
+    )
+
+
+def _fake_infos() -> list[ModelInfo]:
+    return [_fake_info(), _fake_api_info()]
+
+
+_BEST_MATCH = re.compile(r"Best match: (.+)\.\s*$")
+
+
+def _best_match(result: str) -> str | None:
+    """The X of a tool result ending 'Best match: X.', or None."""
+    found = _BEST_MATCH.search(result)
+    return found.group(1).strip() if found else None
+
+
+def _first_concept(text: str) -> str | None:
+    """The fake concept named earliest in `text` (a tool lists its nearest match first), or None."""
+    from sense.specialists import FAKE_CONCEPTS
+
+    found = [(m.start(), c) for c in FAKE_CONCEPTS if (m := re.search(rf"\b{re.escape(c)}\b", text.lower()))]
+    return min(found)[1] if found else None
+
+
 def _words(text: str) -> list[str]:
     return re.findall(r"[a-z0-9]+", text.lower())
 
@@ -340,8 +389,13 @@ def _hash_uniform(*parts: object) -> float:
 class FakeModel:
     """Deterministic open-weight stand-in. A text's state is the mean of fixed random word vectors (scaled per
     block). For a vector input it picks the option whose state is most similar, but only reads slots written
-    after blocks 0 to READ_DEPTH, like Qwen3.5; for a text input it picks the option the text names. Without
-    evidence it picks by a hash of the question, so it scores near chance."""
+    after blocks 0 to READ_DEPTH, like Qwen3.5; for a text input it picks the option the text names; for a tool
+    input it calls the tool with the options as candidates and picks the option the tool names in "Best match:
+    X.". Without evidence it picks by a hash of the question, so it scores near chance. In chat it calls a tool
+    without candidates and says what the tool returned.
+
+    It takes every kind of input whatever its ModelInfo says (it is a test double): "fake" (open-weight, no
+    tools) still answers tool inputs, and "fake-api" (not open-weight) still reads vector inputs."""
 
     READ_DEPTH = 3
 
@@ -381,6 +435,9 @@ class FakeModel:
         if inp.kind == "text" and inp.text:
             said = set(_words(inp.text))
             return np.array([np.mean([w in said for w in _words(o)]) if _words(o) else 0.0 for o in options])
+        if inp.kind == "tool" and inp.tool is not None:
+            best = _best_match(inp.tool.call({"candidates": list(options)}))
+            return np.array([1.0 if o == best else 0.0 for o in options])
         return np.zeros(len(options))
 
     def choose(self, items: list[ChoiceItem]) -> list[int]:
@@ -410,6 +467,12 @@ class FakeModel:
             parts = []
             for k, inp in enumerate(inputs):
                 name = "The audio clip" if len(inputs) == 1 else f"Audio clip {k + 1}"
+                if inp.kind == "tool" and inp.tool is not None:
+                    result = inp.tool.call({})
+                    heard = _first_concept(result)
+                    lead = f"{name} sounds like {heard}." if heard else f"I cannot make out what is in {name.lower()}."
+                    parts.append(f"{lead} I called {inp.tool.name}, which returned: {result}")
+                    continue
                 heard = self._heard(inp)
                 parts.append(f"{name} sounds like {heard}." if heard else f"I cannot make out what is in {name.lower()}.")
             reply = " ".join(parts)

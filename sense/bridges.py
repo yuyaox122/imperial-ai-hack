@@ -8,6 +8,14 @@ Public surface (do not rename):
   make_text_bridge(model, dataset=None) -> Bridge
       Describes the input in words. With a dataset: the specialist's best-matching label
       ('audio: sounds like "rock"'). Without: the nearest caption from datasets.caption_bank().
+  make_tool_bridge(model, dataset=None) -> Bridge
+      Lets the model call the specialist as a tool named "listen" (a SenseInput of kind "tool" holding a
+      contracts.ToolHandle). With candidates the tool returns the specialist's similarity of the clip to each;
+      without, the 3 nearest labels of the dataset, or the 3 nearest captions of datasets.caption_bank().
+      For models that can call tools (ModelInfo.tools); it does not check that itself, see availability.
+  build(kind, model, dataset, scope) -> Bridge
+      Build one bridge kind the way an agent run does: "vector" fits on dataset.fit_idx; "text" and "tool" use
+      the dataset's labels for scope "closed" and the caption bank for scope "open". Other kinds: ValueError.
   load_bridge(directory) -> Bridge
       Reload a bridge saved with Bridge.save.
   describe(bridge) -> dict
@@ -23,7 +31,16 @@ fit_seconds_by_layer (the closed-form fit of each candidate block alone, keyed b
 at 2, the fast blocks of fake mode each rounded up to 0.01 s and added up to more than the whole fit.
 
 Every bridge implements contracts.Bridge: from_embedding, prepare, save. `name` is "vector:<dataset>",
-"text:<dataset>" or "text:captions".
+"text:<dataset>", "text:captions", "tool:<dataset>" or "tool:captions".
+
+The listen tool. Its one optional argument, "candidates", is a list of at most 10 short descriptions or labels.
+Each candidate is phrased as "<c> music" when the dataset's question mentions music and "the sound of <c>"
+otherwise (always the latter for the caption bank), embedded as text by the specialist and compared with the
+clip by cosine: 'Similarity of the clip to each candidate (CLAP): rock 0.41, jazz 0.22. Best match: rock.'
+Without candidates (or with an empty list) it returns 'Nearest labels (CLAP): rock 0.41, metal 0.30, blues 0.12.'
+or 'Nearest captions (CLAP): "...", "...", "...".' Bad arguments get a one-line error text the model can act
+on. Each call is logged in ToolHandle.calls; ToolHandle.key is the sha256 of the clip's float32 embedding bytes
+plus the bridge name.
 
 Also used by sense.verify: five_options, the seeded five-option question builder.
 On disk a bridge is bridge.json (settings) plus bridge.npz (arrays).
@@ -31,13 +48,16 @@ On disk a bridge is bridge.json (settings) plus bridge.npz (arrays).
 
 from __future__ import annotations
 
+import copy
+import hashlib
 import json
+import threading
 import time
 from pathlib import Path
 
 import numpy as np
 
-from sense.contracts import BaseModel, Bridge, ChoiceItem, LabelledSet, ModelInfo, OpenModel, SenseInput
+from sense.contracts import BaseModel, Bridge, ChoiceItem, LabelledSet, ModelInfo, OpenModel, SenseInput, ToolHandle
 
 LAMBDAS = [1e-2, 1e-1, 1.0, 10.0, 1e2, 1e3, 1e4, 1e5, 1e6]
 LAYER_CANDIDATES = range(5)  # blocks 0-4: Qwen3.5 reads the slots up to about block 4
@@ -62,11 +82,21 @@ def _unit(a: np.ndarray) -> np.ndarray:
     return a / np.maximum(np.linalg.norm(a, axis=-1, keepdims=True), 1e-12)
 
 
+def _phrasing(question: str) -> str:
+    """"music" when the question is about music, else "sound": how a label is worded as a phrase."""
+    return "music" if "music" in question.lower() else "sound"
+
+
+def _phrased(names: list[str], style: str) -> list[str]:
+    """"<n> music" for style "music", else "the sound of <n>"."""
+    if style == "music":
+        return [f"{n} music" for n in names]
+    return [f"the sound of {n}" for n in names]
+
+
 def _label_phrases(dataset: LabelledSet) -> list[str]:
     """A second wording of each label, averaged with the bare label to form the target (as in socket_pilot)."""
-    if "music" in dataset.question.lower():
-        return [f"{n} music" for n in dataset.labels]
-    return [f"the sound of {n}" for n in dataset.labels]
+    return _phrased(list(dataset.labels), _phrasing(dataset.question))
 
 
 def _choose_lambda(X: np.ndarray, T: np.ndarray, k: int = 5, seed: int = 0) -> float:
@@ -364,6 +394,257 @@ def make_text_bridge(model: BaseModel, dataset: LabelledSet | None = None) -> Br
     return TextBridge(modality="audio", model_name=model.info.name, source="captions", phrases=texts, phrase_emb=emb)
 
 
+# ----------------------------------------------------------------------------- tool bridge
+TOOL_NAME = "listen"
+MAX_CANDIDATES = 10
+MAX_CANDIDATE_CHARS = 120  # "a short description or label"; CLAP reads little more than this anyway
+NEAREST = 3  # phrases the tool returns when it is called without candidates
+_TEXT_CACHE_SIZE = 4096  # candidate phrases kept embedded per bridge; verification asks about the same labels often
+_EXAMPLE = 'such as {"candidates": ["rock", "jazz"]}'
+
+
+class ToolBridge:
+    """Offers the specialist to the model as the listen tool, one ToolHandle per clip. The model asks how well the
+    clip matches candidate descriptions it chooses, or what the clip is nearest to, and reads the answer as text."""
+
+    kind = "tool"
+
+    def __init__(
+        self,
+        *,
+        modality: str,
+        model_name: str,
+        source: str,
+        phrases: list[str],
+        phrase_emb: np.ndarray,
+        question_style: str = "sound",
+    ):
+        if question_style not in ("music", "sound"):
+            raise ValueError(f"question_style must be 'music' or 'sound', not {question_style!r}.")
+        self.modality = modality
+        self.model_name = model_name
+        self.source = source  # a dataset name, or "captions"
+        self.name = f"tool:{source}"
+        self.phrases = phrases  # the dataset's labels, or the caption bank: what the tool names without candidates
+        self.question_style = question_style  # candidates are worded "<c> music" for "music", else "the sound of <c>"
+        self._phrase_unit = _unit(np.asarray(phrase_emb, dtype=np.float32))
+        self._text_cache: dict[str, np.ndarray] = {}  # phrase -> unit text embedding
+        self._lock = threading.Lock()  # an API model may call the tools of several clips at once
+
+    # ------------------------------------------------------------------------- what the model is offered
+    def _specialist_label(self) -> str:
+        """The specialist's display name without its parenthesis: "CLAP", or "Fake CLAP" in fake mode."""
+        from sense import specialists
+
+        try:
+            return specialists.describe(self.modality)["label"].split(" (")[0]
+        except ValueError:  # no specialist for this modality
+            return "the specialist"
+
+    def tool_description(self) -> str:
+        nearest = "captions" if self.source == "captions" else f"{self.source} labels"
+        return (
+            f"Listen to an audio clip with {self._specialist_label()}, an audio-text model. With candidates (up to "
+            f"{MAX_CANDIDATES} short descriptions or labels) it returns how similar the clip is to each, and the best "
+            f"match; without candidates it returns the {NEAREST} nearest {nearest}."
+        )
+
+    @staticmethod
+    def tool_parameters() -> dict:
+        return {
+            "type": "object",
+            "properties": {
+                "candidates": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "maxItems": MAX_CANDIDATES,
+                    "description": (
+                        f"Optional: up to {MAX_CANDIDATES} short descriptions or labels to compare the clip with, "
+                        'such as ["rock", "jazz"]. Leave it out to hear what the clip is nearest to.'
+                    ),
+                },
+            },
+        }
+
+    # ------------------------------------------------------------------------- Bridge
+    def from_embedding(self, emb: np.ndarray, source: str = "") -> SenseInput:
+        emb = np.asarray(emb, dtype=np.float32).reshape(-1)
+        if emb.shape[0] != self._phrase_unit.shape[1]:
+            raise ValueError(
+                f"The embedding has {emb.shape[0]} values but {self.name} compares against {self._phrase_unit.shape[1]}; "
+                "it was built with a different specialist (or in fake mode). Build the bridge again."
+            )
+        clip = _unit(emb)
+
+        def call(arguments: dict) -> str:
+            result = self._answer(clip, arguments)
+            handle.calls.append({"arguments": copy.deepcopy(arguments), "result": result})
+            return result
+
+        handle = ToolHandle(
+            name=TOOL_NAME,
+            description=self.tool_description(),
+            parameters=self.tool_parameters(),
+            call=call,
+            key=hashlib.sha256(emb.tobytes() + self.name.encode("utf-8")).hexdigest(),
+        )
+        return SenseInput(
+            kind="tool",
+            modality=self.modality,
+            source=source,
+            detail=f"the model can call the {TOOL_NAME} tool to hear this clip",
+            tool=handle,
+        )
+
+    def prepare(self, path: Path) -> SenseInput:
+        from sense.specialists import get_specialist
+
+        path = Path(path)
+        return self.from_embedding(get_specialist(self.modality).embed_files([path])[0], source=path.name)
+
+    def save(self, directory: Path) -> None:
+        directory = Path(directory)
+        directory.mkdir(parents=True, exist_ok=True)
+        meta = {
+            "kind": self.kind,
+            "name": self.name,
+            "modality": self.modality,
+            "model_name": self.model_name,
+            "source": self.source,
+            "question_style": self.question_style,
+        }
+        if self.source != "captions":  # small: keep the labels with the bridge; the caption bank is reloaded instead
+            meta["phrases"] = self.phrases
+            np.savez(directory / "bridge.npz", phrase_emb=self._phrase_unit)
+        (directory / "bridge.json").write_text(json.dumps(meta, indent=2))
+
+    @classmethod
+    def load(cls, directory: Path, meta: dict) -> ToolBridge:
+        if meta["source"] == "captions":
+            from sense.datasets import caption_bank
+
+            emb, phrases = caption_bank()
+        else:
+            emb, phrases = np.load(Path(directory) / "bridge.npz", allow_pickle=False)["phrase_emb"], list(meta["phrases"])
+        return cls(
+            modality=meta["modality"],
+            model_name=meta["model_name"],
+            source=meta["source"],
+            phrases=phrases,
+            phrase_emb=emb,
+            question_style=meta.get("question_style", "sound"),
+        )
+
+    # ------------------------------------------------------------------------- the tool itself
+    def _answer(self, clip: np.ndarray, arguments: dict) -> str:
+        """The text the model sees for one call. Bad arguments get an error text, never an exception."""
+        if not isinstance(arguments, dict):
+            return f"{TOOL_NAME} error: the arguments must be a JSON object, {_EXAMPLE}."
+        candidates = arguments.get("candidates")
+        if candidates is None or (isinstance(candidates, list) and not candidates):
+            return self._nearest(clip)
+        problem = _candidates_problem(candidates)
+        if problem:
+            return f"{TOOL_NAME} error: {problem}"
+        names = [c.strip() for c in candidates]
+        sims = self._text_units(_phrased(names, self.question_style), len(clip)) @ clip
+        order = sorted(range(len(names)), key=lambda k: -float(sims[k]))  # stable: ties keep the order given
+        listed = ", ".join(f"{names[k]} {_sim(sims[k])}" for k in order)
+        return (
+            f"Similarity of the clip to each candidate ({self._specialist_label()}): {listed}. "
+            f"Best match: {names[order[0]]}."
+        )
+
+    def _nearest(self, clip: np.ndarray) -> str:
+        sims = self._phrase_unit @ clip
+        top = [int(k) for k in np.argsort(-sims, kind="stable")[:NEAREST]]
+        if self.source == "captions":
+            listed = ", ".join(f'"{self.phrases[k]}"' for k in top)
+            return f"Nearest captions ({self._specialist_label()}): {listed}."
+        listed = ", ".join(f"{self.phrases[k]} {_sim(sims[k])}" for k in top)
+        return f"Nearest labels ({self._specialist_label()}): {listed}."
+
+    def _text_units(self, texts: list[str], dim: int) -> np.ndarray:
+        """Unit text embeddings of `texts` by the specialist, [len(texts), dim], remembered between calls."""
+        from sense.specialists import get_specialist
+
+        with self._lock:
+            found = {t: self._text_cache[t] for t in texts if t in self._text_cache}
+        missing = [t for t in dict.fromkeys(texts) if t not in found]
+        if missing:
+            emb = np.asarray(get_specialist(self.modality).embed_texts(missing), dtype=np.float32)
+            if emb.ndim != 2 or emb.shape[1] != dim:
+                raise ValueError(
+                    f"The specialist's text embeddings have {emb.shape[-1]} values but the clips of {self.name} have "
+                    f"{dim}; the bridge was built with a different specialist (or in fake mode). Build it again."
+                )
+            fresh = dict(zip(missing, _unit(emb)))
+            found.update(fresh)
+            with self._lock:
+                if len(self._text_cache) + len(fresh) > _TEXT_CACHE_SIZE:
+                    self._text_cache.clear()
+                self._text_cache.update(fresh)
+        return np.stack([found[t] for t in texts])
+
+
+def _sim(x: float) -> str:
+    """A cosine with 2 decimals, never "-0.00"."""
+    text = f"{float(x):.2f}"
+    return "0.00" if text == "-0.00" else text
+
+
+def _candidates_problem(candidates: object) -> str | None:
+    """Why `candidates` cannot be used, as a sentence for the model, or None when it can."""
+    if not isinstance(candidates, list):
+        return f"candidates must be a list of short descriptions or labels, {_EXAMPLE}."
+    if len(candidates) > MAX_CANDIDATES:
+        return f"{len(candidates)} candidates were given, but at most {MAX_CANDIDATES} fit in one call; ask about fewer."
+    for c in candidates:
+        if not isinstance(c, str):
+            return f"every candidate must be a string, but {repr(c)[:40]} is not; send a list {_EXAMPLE}."
+        if not c.strip():
+            return f"a candidate is empty; give each candidate a few words, {_EXAMPLE}."
+        if len(c) > MAX_CANDIDATE_CHARS:
+            return f"each candidate must be a short description or label of at most {MAX_CANDIDATE_CHARS} characters."
+    return None
+
+
+def make_tool_bridge(model: BaseModel, dataset: LabelledSet | None = None) -> Bridge:
+    if dataset is not None:
+        return ToolBridge(
+            modality=dataset.modality,
+            model_name=model.info.name,
+            source=dataset.name,
+            phrases=list(dataset.labels),
+            phrase_emb=dataset.label_text_emb,
+            question_style=_phrasing(dataset.question),
+        )
+    from sense.datasets import caption_bank
+
+    emb, texts = caption_bank()
+    return ToolBridge(modality="audio", model_name=model.info.name, source="captions", phrases=texts, phrase_emb=emb)
+
+
+# ----------------------------------------------------------------------------- building by kind
+_BUILDABLE = ("vector", "text", "tool")
+
+
+def build(kind: str, model: BaseModel, dataset: LabelledSet, scope: str) -> Bridge:
+    """Build one bridge of `kind` for `model`, as an agent run does: a vector bridge is fitted on
+    dataset.fit_idx; a text or tool bridge uses the dataset's labels for scope "closed" and the caption bank
+    for scope "open", so that it can describe any sound, not only the labelled ones."""
+    if kind == "vector":
+        return fit_vector_bridge(model, dataset, dataset.fit_idx)
+    if kind == "text":
+        return make_text_bridge(model, dataset if scope == "closed" else None)
+    if kind == "tool":
+        return make_tool_bridge(model, dataset if scope == "closed" else None)
+    raise ValueError(
+        f"Cannot build a {kind!r} bridge: the kinds that can be built are {', '.join(_BUILDABLE)}. "
+        "Ask for one of those."
+    )
+
+
 # ----------------------------------------------------------------------------- loading
 def load_bridge(directory: Path) -> Bridge:
     meta_path = Path(directory) / "bridge.json"
@@ -374,6 +655,8 @@ def load_bridge(directory: Path) -> Bridge:
         return VectorBridge.load(directory, meta)
     if meta.get("kind") == "text":
         return TextBridge.load(directory, meta)
+    if meta.get("kind") == "tool":
+        return ToolBridge.load(directory, meta)
     raise ValueError(f"{meta_path} names an unknown bridge kind {meta.get('kind')!r}.")
 
 
@@ -385,8 +668,9 @@ def _str_keys(scores: dict | None) -> dict[str, float] | None:
 
 def describe(bridge: Bridge) -> dict:
     """What the trace should say about a built bridge, as plain JSON values; None where the bridge has no such
-    fact (a text bridge has no layer and no fit timing, a vector bridge has no phrases). `source` is the data
-    the bridge was built from: the dataset name, or "captions" for the caption-bank text bridge."""
+    fact (a text or tool bridge has no layer and no fit timing, a vector bridge has no phrases). `source` is the
+    data the bridge was built from: the dataset name, or "captions" for a caption-bank text or tool bridge;
+    `n_phrases` counts the labels or captions a text or tool bridge compares a clip with."""
     from sense import specialists
 
     try:
@@ -434,6 +718,13 @@ def availability(model_info: ModelInfo, modality: str) -> list[dict]:
         vector_why = f"there is no {modality} specialist to give an embedding to write into {label}"
     else:
         vector_why = f"{specialist} embeddings can be written into the hidden states of open-weight {label}"
+    tool = bool(model_info.tools and specialist is not None)
+    if not model_info.tools:
+        tool_why = f"{label} cannot call tools; tool calls are wired for API models only"
+    elif specialist is None:
+        tool_why = f"there is no {modality} specialist for {label} to call as a tool"
+    else:
+        tool_why = f"{label} can call {specialist} as a tool"
     return [
         {
             "kind": "native",
@@ -441,7 +732,7 @@ def availability(model_info: ModelInfo, modality: str) -> list[dict]:
             "why": f"{label} reads {modality} natively" if native else f"{label} does not read {modality} natively",
         },
         {"kind": "text", "available": specialist is not None, "why": text_why},
-        {"kind": "tool", "available": False, "why": "the tool bridge is not built yet"},
+        {"kind": "tool", "available": tool, "why": tool_why},
         {
             "kind": "image",
             "available": False,

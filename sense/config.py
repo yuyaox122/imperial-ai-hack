@@ -12,7 +12,8 @@
   OPENAI_API_KEY        optional: enables the LLM planner and API base models
   SENSE_API_VERIFY_ITEMS  held-out items verification scores for an API (not open-weight) base model (default 50,
                         at least 10); each item costs three paid requests (the bridge, swapped input, no input),
-                        so this is lower than the 200 used locally
+                        or up to seven through a tool bridge (two rounds of tool calls before each answer), so
+                        this is lower than the 200 used locally
   SENSE_API_CACHE       on by default: an API model's multiple-choice answers are kept under <SENSE_HOME>/api_cache
                         so repeat verification asks the API model nothing again; "0", "false", "no" or "off" turn
                         it off

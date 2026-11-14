@@ -8,13 +8,17 @@ Vocabulary
   specialist  a frozen model that understands one modality (CLAP for audio)
   bridge      one way of getting a modality into a base model: native, text, tool, image or vector
   sense       an installed bridge together with the report card that justified installing it
+  tool        a function the base model may call while it answers (ToolHandle); the tool bridge offers the
+              specialist this way, to models that can call tools (ModelInfo.tools)
+
+SenseInput is never sent over HTTP (a tool input holds a Python callable); the server reports its `detail` instead.
 """
 
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Literal, Protocol, runtime_checkable
+from typing import Any, Callable, Literal, Protocol, runtime_checkable
 
 import numpy as np
 
@@ -24,10 +28,27 @@ Scope = Literal["closed", "open"]  # closed: only the labelled categories matter
 
 # ----------------------------------------------------------------------------- inputs
 @dataclass
-class SenseInput:
-    """What a bridge hands to a base model for one file."""
+class ToolHandle:
+    """A tool the base model may call to ask a specialist about one input (a SenseInput of kind "tool").
 
-    kind: Literal["text", "vector", "image"]
+    A tool bridge builds one per file. The model adapter offers it to the model and runs `call` with the
+    arguments the model sent; the text `call` returns is what the model sees. A tool bridge's `call` answers bad
+    arguments with an error text for the model instead of raising, and logs every call in `calls`."""
+
+    name: str  # the function name the model sees, e.g. "listen"
+    description: str  # what the tool does, for the model
+    parameters: dict  # JSON schema of the arguments
+    call: Callable[[dict], str]  # runs the tool with the model's parsed arguments; returns the text the model sees
+    key: str  # what the tool would answer about (e.g. sha256 of the clip's embedding plus the bridge name), so
+    #           that an answer cache never gives one clip's answer to another
+    calls: list[dict] = field(default_factory=list)  # one {"arguments", "result"} per call, appended by call wrappers
+
+
+@dataclass
+class SenseInput:
+    """What a bridge hands to a base model for one file. Never serialised: a tool input holds a callable."""
+
+    kind: Literal["text", "vector", "image", "tool"]
     modality: str  # "audio"
     source: str = ""  # file name, for traces and the interface
     text: str | None = None  # kind "text": inserted into the prompt
@@ -35,6 +56,7 @@ class SenseInput:
     layer: int | None = None  # kind "vector": the block after which the vector is written
     image: bytes | None = None  # kind "image": PNG or JPEG bytes
     detail: str = ""  # one line for the interface, e.g. 'nearest caption: "a dog barks"'
+    tool: ToolHandle | None = None  # kind "tool": the model hears the file only by calling this tool
 
 
 @dataclass
@@ -55,6 +77,7 @@ class ModelInfo:
     open_weights: bool  # True allows the vector bridge
     available: bool = True  # False when weights or an API key are missing
     note: str = ""
+    tools: bool = False  # the model can call tools; True allows the tool bridge
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
