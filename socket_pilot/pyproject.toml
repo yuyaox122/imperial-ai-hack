@@ -1,0 +1,15 @@
+[project]
+name = "socket-pilot"
+version = "0.1.0"
+description = "Go/no-go pilot: a closed-form audio socket for a frozen Qwen3.5"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "torch>=2.6",
+    "transformers>=5.0",
+    "numpy>=2.0",
+    "scipy>=1.14",
+    "soundfile>=0.12",
+]
+
+[tool.uv]
+package = false

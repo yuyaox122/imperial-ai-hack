@@ -1,0 +1,178 @@
+{
+  "host": "models--Qwen--Qwen3.5-0.8B",
+  "encoder": "laion/clap-htsat-unfused",
+  "slots": 4,
+  "socket_layer": 1,
+  "n_layers": 24,
+  "ridge_lambda": 10.0,
+  "n_fit": 1200,
+  "n_test": 400,
+  "dev_sweep": [
+    {
+      "layer": 0,
+      "lambda": 10.0,
+      "plug": 95.0,
+      "swap": 21.0,
+      "own_text": 96.5
+    },
+    {
+      "layer": 1,
+      "lambda": 10.0,
+      "plug": 98.5,
+      "swap": 22.0,
+      "own_text": 100.0
+    },
+    {
+      "layer": 2,
+      "lambda": 10.0,
+      "plug": 97.5,
+      "swap": 21.5,
+      "own_text": 99.5
+    },
+    {
+      "layer": 3,
+      "lambda": 10.0,
+      "plug": 94.0,
+      "swap": 21.5,
+      "own_text": 97.0
+    },
+    {
+      "layer": 4,
+      "lambda": 10.0,
+      "plug": 81.0,
+      "swap": 21.0,
+      "own_text": 88.5
+    },
+    {
+      "layer": 5,
+      "lambda": 10.0,
+      "plug": 43.0,
+      "swap": 23.5,
+      "own_text": 42.5
+    },
+    {
+      "layer": 6,
+      "lambda": 10.0,
+      "plug": 26.0,
+      "swap": 18.5,
+      "own_text": 23.5
+    },
+    {
+      "layer": 7,
+      "lambda": 10.0,
+      "plug": 37.0,
+      "swap": 20.5,
+      "own_text": 38.0
+    },
+    {
+      "layer": 8,
+      "lambda": 10.0,
+      "plug": 33.0,
+      "swap": 20.5,
+      "own_text": 33.0
+    },
+    {
+      "layer": 9,
+      "lambda": 10.0,
+      "plug": 25.0,
+      "swap": 19.5,
+      "own_text": 25.0
+    },
+    {
+      "layer": 10,
+      "lambda": 10.0,
+      "plug": 17.5,
+      "swap": 19.0,
+      "own_text": 17.5
+    },
+    {
+      "layer": 11,
+      "lambda": 10.0,
+      "plug": 21.5,
+      "swap": 20.5,
+      "own_text": 21.0
+    }
+  ],
+  "test": {
+    "identify": {
+      "plug": [
+        99.0,
+        98.0,
+        99.8
+      ],
+      "swapped audio": [
+        19.2,
+        15.5,
+        23.2
+      ],
+      "zero write": [
+        20.8,
+        16.8,
+        25.0
+      ],
+      "nearest fit clip": [
+        97.8,
+        96.0,
+        99.0
+      ],
+      "own text (ceiling)": [
+        99.8,
+        99.2,
+        100.0
+      ],
+      "no write": [
+        23.5,
+        19.5,
+        27.8
+      ],
+      "gap plug - swapped": [
+        79.8,
+        75.8,
+        83.5
+      ],
+      "CLAP zero-shot (no LM)": [
+        98.2,
+        97.0,
+        99.5
+      ]
+    },
+    "category": {
+      "plug": [
+        60.2,
+        55.5,
+        65.0
+      ],
+      "swapped audio": [
+        21.2,
+        17.5,
+        25.5
+      ],
+      "zero write": [
+        22.0,
+        18.0,
+        26.0
+      ],
+      "nearest fit clip": [
+        61.5,
+        56.8,
+        66.2
+      ],
+      "own text (ceiling)": [
+        60.8,
+        56.0,
+        65.5
+      ],
+      "no write": [
+        21.5,
+        17.5,
+        25.8
+      ],
+      "gap plug - swapped": [
+        39.0,
+        33.2,
+        44.5
+      ]
+    }
+  },
+  "seconds": 289.0
+}
