@@ -65,7 +65,7 @@ class RulePlanner:
             if card.accuracy + _EPS >= bar:
                 return True, (
                     f"it scored {pct(card.accuracy)} against {pct(card.chance)} chance, "
-                    f"above the {pct(bar)} bar for a {card.kind} bridge"
+                    f"meets the {pct(bar)} bar for a {card.kind} bridge"
                 )
             return False, (
                 f"it scored {pct(card.accuracy)}, below the {pct(bar)} bar for a {card.kind} bridge "

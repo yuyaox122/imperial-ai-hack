@@ -216,6 +216,7 @@ def test_tool_card_uses_the_text_bars():
     request = FitRequest("fake", "toy")
     ok, why = RulePlanner().assess(request, make_card("tool:toy", "tool", 0.35, swapped=0.2))
     assert ok and "tool bridge" in why
+    assert "meets the 35.0% bar" in why
     assert not RulePlanner().assess(request, make_card("tool:toy", "tool", 0.34, swapped=0.2))[0]
     assert not RulePlanner().assess(request, make_card("tool:toy", "tool", 0.60, swapped=0.55))[0]
     assert RulePlanner().assess(request, make_card("tool:toy", "tool", 0.60, swapped=0.50))[0]
