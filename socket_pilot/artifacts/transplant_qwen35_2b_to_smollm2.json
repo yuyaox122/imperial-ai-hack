@@ -1,0 +1,455 @@
+{
+  "donor": "models--Qwen--Qwen3.5-2B",
+  "recipient": "models--HuggingFaceTB--SmolLM2-1.7B-Instruct",
+  "n_words": 8000,
+  "image_tokens": 138,
+  "best": {
+    "donor_layer": 20,
+    "recipient_layer": "in",
+    "match_norm": true,
+    "acc": 63.0
+  },
+  "dev_sweep": [
+    {
+      "donor_layer": 0,
+      "recipient_layer": "in",
+      "match_norm": false,
+      "acc": 21.0
+    },
+    {
+      "donor_layer": 0,
+      "recipient_layer": "in",
+      "match_norm": true,
+      "acc": 27.0
+    },
+    {
+      "donor_layer": 0,
+      "recipient_layer": 1,
+      "match_norm": false,
+      "acc": 20.0
+    },
+    {
+      "donor_layer": 0,
+      "recipient_layer": 1,
+      "match_norm": true,
+      "acc": 21.0
+    },
+    {
+      "donor_layer": 0,
+      "recipient_layer": 2,
+      "match_norm": false,
+      "acc": 24.0
+    },
+    {
+      "donor_layer": 0,
+      "recipient_layer": 2,
+      "match_norm": true,
+      "acc": 26.0
+    },
+    {
+      "donor_layer": 0,
+      "recipient_layer": 3,
+      "match_norm": false,
+      "acc": 17.0
+    },
+    {
+      "donor_layer": 0,
+      "recipient_layer": 3,
+      "match_norm": true,
+      "acc": 21.0
+    },
+    {
+      "donor_layer": 4,
+      "recipient_layer": "in",
+      "match_norm": false,
+      "acc": 56.0
+    },
+    {
+      "donor_layer": 4,
+      "recipient_layer": "in",
+      "match_norm": true,
+      "acc": 50.0
+    },
+    {
+      "donor_layer": 4,
+      "recipient_layer": 1,
+      "match_norm": false,
+      "acc": 44.0
+    },
+    {
+      "donor_layer": 4,
+      "recipient_layer": 1,
+      "match_norm": true,
+      "acc": 42.0
+    },
+    {
+      "donor_layer": 4,
+      "recipient_layer": 2,
+      "match_norm": false,
+      "acc": 30.0
+    },
+    {
+      "donor_layer": 4,
+      "recipient_layer": 2,
+      "match_norm": true,
+      "acc": 37.0
+    },
+    {
+      "donor_layer": 4,
+      "recipient_layer": 3,
+      "match_norm": false,
+      "acc": 27.0
+    },
+    {
+      "donor_layer": 4,
+      "recipient_layer": 3,
+      "match_norm": true,
+      "acc": 29.0
+    },
+    {
+      "donor_layer": 8,
+      "recipient_layer": "in",
+      "match_norm": false,
+      "acc": 44.0
+    },
+    {
+      "donor_layer": 8,
+      "recipient_layer": "in",
+      "match_norm": true,
+      "acc": 42.0
+    },
+    {
+      "donor_layer": 8,
+      "recipient_layer": 1,
+      "match_norm": false,
+      "acc": 26.0
+    },
+    {
+      "donor_layer": 8,
+      "recipient_layer": 1,
+      "match_norm": true,
+      "acc": 28.0
+    },
+    {
+      "donor_layer": 8,
+      "recipient_layer": 2,
+      "match_norm": false,
+      "acc": 19.0
+    },
+    {
+      "donor_layer": 8,
+      "recipient_layer": 2,
+      "match_norm": true,
+      "acc": 27.0
+    },
+    {
+      "donor_layer": 8,
+      "recipient_layer": 3,
+      "match_norm": false,
+      "acc": 29.0
+    },
+    {
+      "donor_layer": 8,
+      "recipient_layer": 3,
+      "match_norm": true,
+      "acc": 24.0
+    },
+    {
+      "donor_layer": 12,
+      "recipient_layer": "in",
+      "match_norm": false,
+      "acc": 31.0
+    },
+    {
+      "donor_layer": 12,
+      "recipient_layer": "in",
+      "match_norm": true,
+      "acc": 36.0
+    },
+    {
+      "donor_layer": 12,
+      "recipient_layer": 1,
+      "match_norm": false,
+      "acc": 25.0
+    },
+    {
+      "donor_layer": 12,
+      "recipient_layer": 1,
+      "match_norm": true,
+      "acc": 26.0
+    },
+    {
+      "donor_layer": 12,
+      "recipient_layer": 2,
+      "match_norm": false,
+      "acc": 23.0
+    },
+    {
+      "donor_layer": 12,
+      "recipient_layer": 2,
+      "match_norm": true,
+      "acc": 25.0
+    },
+    {
+      "donor_layer": 12,
+      "recipient_layer": 3,
+      "match_norm": false,
+      "acc": 20.0
+    },
+    {
+      "donor_layer": 12,
+      "recipient_layer": 3,
+      "match_norm": true,
+      "acc": 25.0
+    },
+    {
+      "donor_layer": 16,
+      "recipient_layer": "in",
+      "match_norm": false,
+      "acc": 31.0
+    },
+    {
+      "donor_layer": 16,
+      "recipient_layer": "in",
+      "match_norm": true,
+      "acc": 38.0
+    },
+    {
+      "donor_layer": 16,
+      "recipient_layer": 1,
+      "match_norm": false,
+      "acc": 23.0
+    },
+    {
+      "donor_layer": 16,
+      "recipient_layer": 1,
+      "match_norm": true,
+      "acc": 27.0
+    },
+    {
+      "donor_layer": 16,
+      "recipient_layer": 2,
+      "match_norm": false,
+      "acc": 23.0
+    },
+    {
+      "donor_layer": 16,
+      "recipient_layer": 2,
+      "match_norm": true,
+      "acc": 30.0
+    },
+    {
+      "donor_layer": 16,
+      "recipient_layer": 3,
+      "match_norm": false,
+      "acc": 27.0
+    },
+    {
+      "donor_layer": 16,
+      "recipient_layer": 3,
+      "match_norm": true,
+      "acc": 26.0
+    },
+    {
+      "donor_layer": 20,
+      "recipient_layer": "in",
+      "match_norm": false,
+      "acc": 59.0
+    },
+    {
+      "donor_layer": 20,
+      "recipient_layer": "in",
+      "match_norm": true,
+      "acc": 63.0
+    },
+    {
+      "donor_layer": 20,
+      "recipient_layer": 1,
+      "match_norm": false,
+      "acc": 39.0
+    },
+    {
+      "donor_layer": 20,
+      "recipient_layer": 1,
+      "match_norm": true,
+      "acc": 40.0
+    },
+    {
+      "donor_layer": 20,
+      "recipient_layer": 2,
+      "match_norm": false,
+      "acc": 28.0
+    },
+    {
+      "donor_layer": 20,
+      "recipient_layer": 2,
+      "match_norm": true,
+      "acc": 28.0
+    },
+    {
+      "donor_layer": 20,
+      "recipient_layer": 3,
+      "match_norm": false,
+      "acc": 24.0
+    },
+    {
+      "donor_layer": 20,
+      "recipient_layer": 3,
+      "match_norm": true,
+      "acc": 21.0
+    },
+    {
+      "donor_layer": 24,
+      "recipient_layer": "in",
+      "match_norm": false,
+      "acc": 36.0
+    },
+    {
+      "donor_layer": 24,
+      "recipient_layer": "in",
+      "match_norm": true,
+      "acc": 51.0
+    },
+    {
+      "donor_layer": 24,
+      "recipient_layer": 1,
+      "match_norm": false,
+      "acc": 37.0
+    },
+    {
+      "donor_layer": 24,
+      "recipient_layer": 1,
+      "match_norm": true,
+      "acc": 46.0
+    },
+    {
+      "donor_layer": 24,
+      "recipient_layer": 2,
+      "match_norm": false,
+      "acc": 26.0
+    },
+    {
+      "donor_layer": 24,
+      "recipient_layer": 2,
+      "match_norm": true,
+      "acc": 27.0
+    },
+    {
+      "donor_layer": 24,
+      "recipient_layer": 3,
+      "match_norm": false,
+      "acc": 23.0
+    },
+    {
+      "donor_layer": 24,
+      "recipient_layer": 3,
+      "match_norm": true,
+      "acc": 25.0
+    }
+  ],
+  "map_r2": {
+    "0->in": 0.307,
+    "0->1": 0.579,
+    "0->2": 0.528,
+    "0->3": 0.544,
+    "4->in": 0.173,
+    "4->1": 0.524,
+    "4->2": 0.48,
+    "4->3": 0.495,
+    "8->in": 0.163,
+    "8->1": 0.532,
+    "8->2": 0.488,
+    "8->3": 0.503,
+    "12->in": 0.16,
+    "12->1": 0.529,
+    "12->2": 0.485,
+    "12->3": 0.499,
+    "16->in": 0.175,
+    "16->1": 0.555,
+    "16->2": 0.506,
+    "16->3": 0.517,
+    "20->in": 0.142,
+    "20->1": 0.543,
+    "20->2": 0.487,
+    "20->3": 0.497,
+    "24->in": 0.112,
+    "24->1": 0.52,
+    "24->2": 0.463,
+    "24->3": 0.469
+  },
+  "test": {
+    "recipient with transplanted vision": [
+      62.5,
+      57.8,
+      67.2
+    ],
+    "recipient, image swapped": [
+      27.8,
+      23.5,
+      32.0
+    ],
+    "recipient, no image": [
+      24.0,
+      19.8,
+      28.2
+    ],
+    "donor's own answer (native vision)": [
+      97.8,
+      96.2,
+      99.0
+    ]
+  },
+  "samples": [
+    {
+      "truth": "dining table",
+      "caption": "A man in an Arabic type outfit on a cell phone.",
+      "recipient_says": "A variety of formal and informal settings, including a formal meeting room, a stylish office, a stylish and elegant dining room, and a formal and elegant"
+    },
+    {
+      "truth": "clock",
+      "caption": "THERE IS A CLOCK THAT IS ON DISPLAY IN THE CITY",
+      "recipient_says": "The image depicts a variety of architectural structures, including a clock tower, a palace, a lighthouse, and a series of buildings with ornate details, all"
+    },
+    {
+      "truth": "bear",
+      "caption": "The bear is inside of the river stream.",
+      "recipient_says": "The image depicts a variety of animals, including a bear, a whale, and a deer, all engaged in different aquatic activities such as swimming, spl"
+    },
+    {
+      "truth": "laptop",
+      "caption": "A laptop computer sitting on top of a wooden table.",
+      "recipient_says": "The image depicts a variety of electronic devices, including computers, smartphones, and televisions, with various accessories and components, such as screens, keyboards, and"
+    },
+    {
+      "truth": "person",
+      "caption": "The two teens are playing video games in the rec center.",
+      "recipient_says": "The image depicts a variety of objects and furniture, including a kitchen, a living room, a dining room, a bathroom, and a bedroom, all"
+    },
+    {
+      "truth": "bus",
+      "caption": "People are boarding a bus parked at a stop.",
+      "recipient_says": "The image depicts a variety of vehicles and structures, including buses, trains, and bicycles, all lined up along a street, with various architectural elements such"
+    },
+    {
+      "truth": "bench",
+      "caption": "A little kid pointing his camera at a stage where people are dressed up.",
+      "recipient_says": "A group of people are gathered in a picturesque setting, with a mix of adults and children, dressed in various outfits, and engaged in a variety of"
+    },
+    {
+      "truth": "couch",
+      "caption": "A dog sitting on a couch with its head cocked to the side.",
+      "recipient_says": "The image depicts a variety of objects and scenes, including a dog lying on a dog bed, a dog standing on a dog bed, a dog lying"
+    },
+    {
+      "truth": "teddy bear",
+      "caption": "Two teddy bears with one wearing a lrge pink shirt.",
+      "recipient_says": "The image depicts a collection of colorful, intricately patterned, and layered objects, including a series of small, stuffed animals, a quilt, and various"
+    },
+    {
+      "truth": "elephant",
+      "caption": "A woman pats an elephant as a couple men watch.",
+      "recipient_says": "The image depicts a variety of animals, including elephants, giraffes, and lions, standing or sitting in different poses, surrounded by various structures such as trees"
+    }
+  ],
+  "seconds": 1268.9
+}

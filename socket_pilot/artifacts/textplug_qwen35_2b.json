@@ -1,0 +1,168 @@
+{
+  "host": "models--Qwen--Qwen3.5-2B",
+  "encoder": "laion/clap-htsat-unfused",
+  "n_captions": 12000,
+  "socket_layer": 2,
+  "dev_sweep": [
+    {
+      "layer": 0,
+      "lambda": 10.0,
+      "plug": 33.0,
+      "swap": 23.5
+    },
+    {
+      "layer": 1,
+      "lambda": 10.0,
+      "plug": 47.5,
+      "swap": 21.5
+    },
+    {
+      "layer": 2,
+      "lambda": 10.0,
+      "plug": 53.0,
+      "swap": 19.0
+    },
+    {
+      "layer": 3,
+      "lambda": 1.0,
+      "plug": 38.5,
+      "swap": 20.0
+    }
+  ],
+  "test": {
+    "identify": {
+      "text-only plug": [
+        52.0,
+        47.0,
+        57.0
+      ],
+      "swapped audio": [
+        20.0,
+        16.2,
+        24.0
+      ],
+      "nearest caption": [
+        75.8,
+        71.2,
+        79.8
+      ],
+      "own text (ceiling)": [
+        99.5,
+        98.8,
+        100.0
+      ],
+      "no write": [
+        23.2,
+        19.2,
+        27.8
+      ],
+      "CLAP zero-shot (no LM)": [
+        98.2,
+        96.8,
+        99.5
+      ]
+    },
+    "category": {
+      "text-only plug": [
+        45.0,
+        40.0,
+        50.0
+      ],
+      "swapped audio": [
+        25.0,
+        21.0,
+        29.2
+      ],
+      "nearest caption": [
+        57.5,
+        52.5,
+        62.3
+      ],
+      "own text (ceiling)": [
+        66.8,
+        61.8,
+        71.0
+      ],
+      "no write": [
+        21.2,
+        17.5,
+        25.5
+      ]
+    },
+    "identify, 10 classes unseen by the paired plug": {
+      "paired plug (40 classes)": [
+        43.8,
+        32.5,
+        55.0
+      ],
+      "text-only plug": [
+        70.0,
+        60.0,
+        80.0
+      ]
+    }
+  },
+  "samples": [
+    {
+      "truth": "dog",
+      "nearest_caption": "Dog barking then many dogs barking",
+      "host_says": "The sound in the audio clip is a **dog barking** or **dog howling**."
+    },
+    {
+      "truth": "rooster",
+      "nearest_caption": "A rooster crows and chickens back",
+      "host_says": "The sound in the audio clip is a **chirping** or **buzzing** noise, likely resembling a bee"
+    },
+    {
+      "truth": "glass breaking",
+      "nearest_caption": "Glass breaking and shattering",
+      "host_says": "A loud, sharp **bang**."
+    },
+    {
+      "truth": "water drops",
+      "nearest_caption": "Water droplets are falling",
+      "host_says": "A soft, continuous **hum** or **whirring** sound."
+    },
+    {
+      "truth": "chirping birds",
+      "nearest_caption": "Squeaking rodent noises",
+      "host_says": "A **click** or **pop**."
+    },
+    {
+      "truth": "keyboard typing",
+      "nearest_caption": "Continuous typing and tapping",
+      "host_says": "A loud, continuous **clatter** or **crunch**."
+    },
+    {
+      "truth": "chirping birds",
+      "nearest_caption": "Birds chirping in the background as leaves gently rustle",
+      "host_says": "A high-pitched, clear **squeak**."
+    },
+    {
+      "truth": "crackling fire",
+      "nearest_caption": "A roaring fire crackles, snaps and pops in a small wind",
+      "host_says": "Wind"
+    },
+    {
+      "truth": "church bells",
+      "nearest_caption": "A bell is rung close and a church bell rings in the distance",
+      "host_says": "A **bell** or a **ringing tone**."
+    },
+    {
+      "truth": "drinking sipping",
+      "nearest_caption": "Heaving and licking then the animal scratches and whines",
+      "host_says": "The sound in the audio clip is a **clap**."
+    },
+    {
+      "truth": "sneezing",
+      "nearest_caption": "Person sneezing",
+      "host_says": "The sound in the audio clip is **squeaking**."
+    },
+    {
+      "truth": "rain",
+      "nearest_caption": "Heavy rain, droplets hitting the surface",
+      "host_says": "The sound in the audio clip is **rain**."
+    }
+  ],
+  "seconds": 380.8
+}

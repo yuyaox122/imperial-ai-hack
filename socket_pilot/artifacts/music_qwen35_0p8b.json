@@ -1,0 +1,99 @@
+{
+  "host": "models--Qwen--Qwen3.5-0.8B",
+  "socket_layer": 0,
+  "dev_sweep": [
+    {
+      "layer": 0,
+      "plug": 79.0
+    },
+    {
+      "layer": 1,
+      "plug": 78.5
+    },
+    {
+      "layer": 2,
+      "plug": 73.0
+    },
+    {
+      "layer": 3,
+      "plug": 57.5
+    }
+  ],
+  "test": {
+    "genre, five options, held-out tracks (n=199)": {
+      "plug": [
+        84.9,
+        79.4,
+        89.9
+      ],
+      "swapped audio": [
+        11.1,
+        7.0,
+        15.6
+      ],
+      "nearest fit track": [
+        79.9,
+        73.9,
+        85.4
+      ],
+      "own text (ceiling)": [
+        100.0,
+        100.0,
+        100.0
+      ],
+      "no write": [
+        22.6,
+        17.1,
+        28.6
+      ],
+      "CLAP zero-shot (no LM)": [
+        49.2,
+        42.2,
+        56.3
+      ]
+    },
+    "rock or classical, two options (chance 50)": {
+      "all genres seen (n=40)": [
+        100.0,
+        100.0,
+        100.0
+      ],
+      "all genres seen, audio swapped (n=40)": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "no write (n=200)": [
+        52.0,
+        45.5,
+        59.0
+      ],
+      "rock, classical held out (n=200)": [
+        53.5,
+        46.5,
+        60.5
+      ],
+      "text-only plug (n=200)": [
+        53.5,
+        46.5,
+        60.0
+      ],
+      "environmental sounds only (n=200)": [
+        52.0,
+        45.0,
+        59.0
+      ],
+      "nearest caption pasted as text, no socket (n=200)": [
+        66.5,
+        60.0,
+        72.5
+      ],
+      "CLAP zero-shot, no LM (n=200)": [
+        98.5,
+        96.5,
+        100.0
+      ]
+    }
+  },
+  "seconds": 856.1
+}

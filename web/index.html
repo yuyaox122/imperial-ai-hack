@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Sense harness</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true"></span>
+      <h1>Sense harness</h1>
+    </div>
+    <p class="tagline">Give a base model an input sense it lacks, prove it on held-out clips, then talk to it.</p>
+  </header>
+
+  <main class="columns">
+    <!-- 1. Senses -->
+    <section class="panel" id="senses-panel" aria-labelledby="senses-heading">
+      <div class="panel-head">
+        <h2 id="senses-heading">Senses</h2>
+      </div>
+      <div class="panel-scroll">
+        <div class="field">
+          <label class="label" for="model-select">Base model</label>
+          <select id="model-select" disabled>
+            <option value="">Loading models…</option>
+          </select>
+          <p id="model-info" class="hint"></p>
+          <div id="model-error" class="error" role="alert" hidden></div>
+        </div>
+
+        <div class="block">
+          <h3 class="subhead">Installed senses</h3>
+          <ul id="senses-list" class="sense-list"></ul>
+          <div id="senses-error" class="error" role="alert" hidden></div>
+        </div>
+
+        <form id="fit-form" class="block fit-form" novalidate>
+          <h3 class="subhead">Give this model a sense</h3>
+          <div class="field">
+            <label class="label" for="dataset-select">Labelled examples</label>
+            <select id="dataset-select" disabled>
+              <option value="">Loading labelled sets…</option>
+            </select>
+            <p id="dataset-info" class="hint"></p>
+            <div id="dataset-error" class="error" role="alert" hidden></div>
+          </div>
+          <fieldset class="field">
+            <legend class="label">Scope</legend>
+            <div class="segmented">
+              <input type="radio" id="scope-closed" name="scope" value="closed" checked>
+              <label for="scope-closed">These categories only</label>
+              <input type="radio" id="scope-open" name="scope" value="open">
+              <label for="scope-open">Any sound</label>
+            </div>
+            <p id="scope-hint" class="hint"></p>
+          </fieldset>
+          <button id="run-button" class="button button--primary button--wide" type="submit" disabled>Run agent</button>
+          <div id="fit-error" class="error" role="alert" hidden></div>
+        </form>
+      </div>
+    </section>
+
+    <!-- 2. Chat -->
+    <section class="panel panel--chat" id="chat-panel" aria-labelledby="chat-heading">
+      <div class="panel-head">
+        <h2 id="chat-heading">Chat</h2>
+        <span id="chat-model" class="panel-meta"></span>
+      </div>
+      <div id="thread" class="thread" aria-live="polite">
+        <div id="thread-empty" class="empty-state">
+          <p class="empty-title">Ask the model about a sound</p>
+          <p>Attach an audio file or pick a sample clip below, then ask a question. Each reply shows how every file reached the model, and warns when a file could not reach it.</p>
+        </div>
+      </div>
+      <div class="samples">
+        <div class="samples-head">
+          <h3 class="subhead">Sample clips</h3>
+          <span id="samples-source" class="panel-meta"></span>
+        </div>
+        <ul id="samples-list" class="samples-list"></ul>
+        <div id="samples-error" class="error" role="alert" hidden></div>
+      </div>
+      <form id="chat-form" class="composer" novalidate>
+        <ul id="attachments" class="attachments" aria-label="Files attached to the next message" hidden></ul>
+        <label class="sr-only" for="message">Message</label>
+        <textarea id="message" rows="2" placeholder="Ask about the attached clip, for example: Which genre is this?"></textarea>
+        <div class="composer-actions">
+          <label class="button button--ghost file-button">
+            Attach audio
+            <input id="file-input" class="sr-only" type="file" accept=".wav,.mp3,.flac,.ogg,.opus,.aif,.aiff,.au" multiple>
+          </label>
+          <span class="hint composer-hint">Enter sends. Shift+Enter adds a line.</span>
+          <button id="send-button" class="button button--primary" type="submit" disabled>Send</button>
+        </div>
+        <div id="chat-error" class="error" role="alert" hidden></div>
+      </form>
+    </section>
+
+    <!-- 3. Agent trace -->
+    <section class="panel" id="trace-panel" aria-labelledby="trace-heading">
+      <div class="panel-head">
+        <h2 id="trace-heading">Agent trace</h2>
+        <span id="trace-status" class="pill" hidden></span>
+      </div>
+      <div id="trace-scroll" class="panel-scroll">
+        <div id="trace-intro" class="trace-intro">
+          <p>When you run the agent, it builds each candidate bridge for the chosen model and scores it on held-out clips against controls: swapped audio, no audio, a nearest-example lookup and the text bridge. It installs the best bridge that beats those controls, or installs nothing and says why.</p>
+          <ol class="timeline timeline--preview" aria-label="Steps of a run">
+            <li class="event event--preview"><span class="event-mark" aria-hidden="true"></span><div class="event-body"><div class="event-head"><span class="event-step">inspect</span></div><p class="event-message">Read what the model accepts and whether its weights are open.</p></div></li>
+            <li class="event event--preview"><span class="event-mark" aria-hidden="true"></span><div class="event-body"><div class="event-head"><span class="event-step">plan</span></div><p class="event-message">Choose which bridges to try.</p></div></li>
+            <li class="event event--preview"><span class="event-mark" aria-hidden="true"></span><div class="event-body"><div class="event-head"><span class="event-step">fit</span></div><p class="event-message">Build each candidate from the labelled examples.</p></div></li>
+            <li class="event event--preview"><span class="event-mark" aria-hidden="true"></span><div class="event-body"><div class="event-head"><span class="event-step">verify</span></div><p class="event-message">Score each one on held-out clips against the controls.</p></div></li>
+            <li class="event event--preview"><span class="event-mark" aria-hidden="true"></span><div class="event-body"><div class="event-head"><span class="event-step">decide</span></div><p class="event-message">Pick the bridge that beats the controls, or refuse.</p></div></li>
+            <li class="event event--preview"><span class="event-mark" aria-hidden="true"></span><div class="event-body"><div class="event-head"><span class="event-step">install</span></div><p class="event-message">Add it to the model's senses, ready for chat.</p></div></li>
+          </ol>
+        </div>
+        <div id="trace-run" hidden>
+          <div class="trace-request">
+            <span id="trace-request"></span>
+            <span id="trace-elapsed" class="num"></span>
+          </div>
+          <ol id="timeline" class="timeline"></ol>
+          <div id="trace-outcome" aria-live="polite"></div>
+          <div id="trace-error" class="error" role="alert" hidden></div>
+        </div>
+      </div>
+    </section>
+  </main>
+</body>
+</html>
