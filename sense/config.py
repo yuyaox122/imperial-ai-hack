@@ -9,6 +9,10 @@
   SENSE_CLAP            Hugging Face id or local path (default: laion/clap-htsat-unfused)
   SENSE_SAMPLE_DIRS     os.pathsep-separated directories of audio files offered as samples in the interface
   OPENAI_API_KEY        optional: enables the LLM planner and API base models
+  SENSE_API_VERIFY_ITEMS  held-out items verification scores for an API (not open-weight) base model (default 50);
+                        each item is one paid request per control, so this is lower than the 200 used locally
+  SENSE_API_CACHE       on by default: an API model's multiple-choice answers are kept under <SENSE_HOME>/api_cache
+                        so a repeat run asks nothing again; "0", "false", "no" or "off" turn it off
 """
 
 from __future__ import annotations
@@ -74,3 +78,25 @@ def sample_dirs() -> list[Path]:
 
 def openai_key() -> str | None:
     return os.environ.get("OPENAI_API_KEY") or None
+
+
+def api_verify_items() -> int:
+    """Held-out items to score when verifying an API base model: SENSE_API_VERIFY_ITEMS, default 50."""
+    raw = os.environ.get("SENSE_API_VERIFY_ITEMS", "").strip()
+    if not raw:
+        return 50
+    try:
+        value = int(raw)
+    except ValueError:
+        value = 0
+    if value <= 0:
+        raise ValueError(
+            f"SENSE_API_VERIFY_ITEMS is {raw!r}, but it must be a positive whole number of held-out items. "
+            "Set it to, for example, 50, or unset it to use the default of 50."
+        )
+    return value
+
+
+def api_cache_enabled() -> bool:
+    """Whether an API model's multiple-choice answers are cached on disk (SENSE_API_CACHE, on by default)."""
+    return os.environ.get("SENSE_API_CACHE", "").strip().lower() not in ("0", "false", "no", "off")
