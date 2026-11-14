@@ -37,6 +37,10 @@ DDL = {
 }
 
 
+def column_types(name: str) -> dict[str, str]:
+    return dict(c.split() for c in " ".join(DDL[name].split()).split(", "))
+
+
 def setup(sql: conn.SQL) -> None:
     """Creates the schema, the tables and the Volume when they are missing."""
     sql.run(f"CREATE SCHEMA IF NOT EXISTS {conn.catalog()}.{conn.schema()}")
@@ -130,6 +134,7 @@ def _insert(sql: conn.SQL, name: str, rows: list[dict[str, Any]], batch: int = 5
     for start in range(0, len(rows), batch):
         chunk = rows[start : start + batch]
         cols = list(chunk[0])
+        types = column_types(name)
         params: dict[str, Any] = {}
         values = []
         for r, row in enumerate(chunk):
@@ -137,7 +142,7 @@ def _insert(sql: conn.SQL, name: str, rows: list[dict[str, Any]], batch: int = 5
             for c in cols:
                 key = f"{c}_{r}"
                 params[key] = row[c]
-                names.append(f"CAST(:{key} AS TIMESTAMP)" if c == "recorded" else f":{key}")
+                names.append(f"CAST(:{key} AS {types[c]})")  # typed, so a NULL in one row matches numbers in another
             values.append(f"({', '.join(names)})")
         sql.run(f"INSERT INTO {conn.table(name)} ({', '.join(cols)}) VALUES {', '.join(values)}", params)
 

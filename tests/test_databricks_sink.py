@@ -63,6 +63,7 @@ def test_write_run_replaces_the_run_rows_with_bound_parameters():
     assert len(inserts) == 3
     s, p = inserts[1]
     assert "CAST(:recorded_0 AS TIMESTAMP)" in s and p["bridge_1"] == "text:gtzan"
+    assert "CAST(:lookup_1 AS DOUBLE)" in s and p["lookup_1"] is None  # a NULL control keeps the column's type
     assert "vector:gtzan" not in s  # values travel as parameters, never inside the SQL text
 
 
@@ -85,3 +86,26 @@ def test_record_from_state_matches_the_run_record_shape():
     record = sink.record_from_state(state)
     assert record["seconds"] == 1.5 and record["request"]["dataset"] == "gtzan"
     assert sink.card_rows(record)[0]["installed"] is True
+
+
+def test_listener_writes_a_finished_fake_job(monkeypatch):
+    import threading
+
+    from agent import jobs
+    from sense.contracts import FitRequest
+
+    monkeypatch.setenv("SENSE_FAKE", "1")
+    sql = FakeSQL()
+    done = threading.Event()
+    listener = sink.Listener(sql, upload=False, mlflow_runs=False)
+    original = listener._write
+    monkeypatch.setattr(listener, "_write", lambda job_id: (original(job_id), done.set()))
+    jobs.add_listener(listener)
+    try:
+        job_id = jobs.start(FitRequest(model="fake", dataset="gtzan"))
+        assert done.wait(60)
+    finally:
+        jobs.remove_listener(listener)
+    inserts = [p for s, p in sql.calls if s.startswith(f"INSERT INTO {conn.table('report_cards')}")]
+    assert inserts and inserts[0]["run_id_0"] == job_id
+    assert any(p.get("installed_0") or p.get("installed_1") for p in inserts)

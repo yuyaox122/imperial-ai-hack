@@ -3,6 +3,8 @@
   .venv/bin/python -m integrations.databricks smoke              sign in, Volume upload, table insert, one MLflow run
   .venv/bin/python -m integrations.databricks setup              create the schema, tables and Volume
   .venv/bin/python -m integrations.databricks backfill [FILE..]  write recorded runs (sense.runs, or CLI --save files)
+  .venv/bin/python -m integrations.databricks serve [--port 8000] the usual server (server.app), and every agent run
+                                                                  it finishes is written to Databricks
 
 Set up auth first: `databricks configure`, or DATABRICKS_HOST and DATABRICKS_TOKEN. See conn.py for the names.
 Flags: --no-mlflow skips MLflow, --no-upload skips the Volume copy of run.json.
@@ -91,10 +93,12 @@ def backfill(args: argparse.Namespace) -> int:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="python -m integrations.databricks", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("command", choices=["smoke", "setup", "backfill"])
+    ap.add_argument("command", choices=["smoke", "setup", "backfill", "serve"])
     ap.add_argument("files", nargs="*", help="backfill: run records written by scripts/demo_cli.py --save")
     ap.add_argument("--no-mlflow", action="store_true")
     ap.add_argument("--no-upload", action="store_true")
+    ap.add_argument("--host", default="127.0.0.1")
+    ap.add_argument("--port", type=int, default=8000)
     args = ap.parse_args(argv)
     if args.command == "smoke":
         return smoke(args)
@@ -102,7 +106,22 @@ def main(argv: list[str] | None = None) -> int:
         sink.setup(conn.warehouse())
         print(f"Ready: {conn.catalog()}.{conn.schema()} (runs, report_cards, trace_events, Volume {sink.VOLUME})")
         return 0
+    if args.command == "serve":
+        return serve(args)
     return backfill(args)
+
+
+def serve(args: argparse.Namespace) -> int:
+    import uvicorn
+
+    from agent import jobs
+
+    sql = conn.warehouse()
+    sink.setup(sql)
+    jobs.add_listener(sink.Listener(sql, upload=not args.no_upload, mlflow_runs=not args.no_mlflow))
+    print(f"Writing every finished agent run to Databricks ({conn.catalog()}.{conn.schema()}).")
+    uvicorn.run("server.app:app", host=args.host, port=args.port)
+    return 0
 
 
 if __name__ == "__main__":
