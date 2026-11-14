@@ -19,7 +19,8 @@ Public surface (do not rename):
       anything.
 
 A vector bridge records fit_seconds (the whole fit, including the layer sweep and its dev scoring) and
-fit_seconds_by_layer (the closed-form fit of each candidate block alone, keyed by block).
+fit_seconds_by_layer (the closed-form fit of each candidate block alone, keyed by block). Both keep 4 decimals:
+at 2, the fast blocks of fake mode each rounded up to 0.01 s and added up to more than the whole fit.
 
 Every bridge implements contracts.Bridge: from_embedding, prepare, save. `name` is "vector:<dataset>",
 "text:<dataset>" or "text:captions".
@@ -227,7 +228,7 @@ def _fit_at(model: OpenModel, dataset: LabelledSet, idx: np.ndarray, layer: int)
     W = np.linalg.solve(X.T @ X + lam * np.eye(X.shape[1]), X.T @ (T - mu_t))
     rho = float(np.linalg.norm(T - mu_t, axis=1).mean())
     seen = sorted({int(c) for c in dataset.y[idx]})
-    seconds = round(time.time() - start, 2)  # the closed-form fit of this block only, without dev scoring
+    seconds = round(time.time() - start, 4)  # the closed-form fit of this block only, without dev scoring
     return VectorBridge(
         modality=dataset.modality,
         model_name=model.info.name,
@@ -288,7 +289,7 @@ def fit_vector_bridge(model: BaseModel, dataset: LabelledSet, idx: np.ndarray, l
             best = bridge
     best.dev_accuracy = scores
     best.fit_seconds_by_layer = fit_times
-    best.fit_seconds = round(time.time() - start, 2)
+    best.fit_seconds = round(time.time() - start, 4)
     return best
 
 
