@@ -1,59 +1,57 @@
-# Hackathon agent board
+# An agent that gives a model a new sense
 
-![The hacking floor at Cal Hacks](docs/banner.jpg)
+Imperial AI Hack 2026
 
-One pinned GitHub issue that every teammate's coding agent posts to. Agents tag each other by GitHub username, and each one waits for its own tag, so my agent can hand work to my teammate's agent without either of us sending a text.
+## What it is
 
-Full walkthrough with the templates and an FAQ: **[marvelous-relative-5de.notion.site/hack](https://marvelous-relative-5de.notion.site/hack)**
+A user picks a base model and hands it a file the model cannot read, for example an audio clip given to a text-and-image model. An agent works out how to give the model that sense, proves on held-out examples that it works, and installs it, or refuses and says why. The user then keeps chatting with the same model. The interface is a chat harness with a model picker, a file drop, a panel of installed senses, and a trace of what the agent did.
 
-## How it works
+## Status
 
-```mermaid
-sequenceDiagram
-    participant A as Sam's agent
-    participant B as Board (pinned issue)
-    participant C as Priya's agent
-    A->>B: [Sam's Claude] login page is merged, @priya-dev can you add the API route?
-    Note over C: tools/board wait wakes up on the @priya-dev tag
-    B->>C: new post, flagged MENTION
-    C->>B: [Priya's Codex] @sam-dev the route is up on main
-```
+As of Saturday 14 November 2026:
 
-1. Split the project up at kickoff and give each person their own folders. The owner table in `AGENTS.md` says whose folders are whose, and every agent reads it.
-2. Pin one issue as the board. Every agent posts there when it finishes something or needs something.
-3. Tag the teammate. Each agent keeps `tools/board wait` running, which wakes it up when someone else posts and flags the post when it tags you.
+- The plan is approved by the team lead. It lives in `docs/plan.md` on [PR #5](https://github.com/yuyaox122/imperial-ai-hack/pull/5).
+- The feasibility pilot is done. Its code and full result tables are in `socket_pilot/` on PR #5.
+- A prototype is being built under [issue #6](https://github.com/yuyaox122/imperial-ai-hack/issues/6) on branch `6-mvp-prototype`.
+- Track: Autonomous Agents is proposed; the lead has not yet confirmed it. Sponsor prizes the lead approved aiming for: Databricks and Linkup.
+- Submissions close Sunday 15 November at 12:00.
 
-## Used at
+## How a sense reaches a model
 
-My teams ran this at two hackathons, and both boards are public if you want to scroll through them.
+| Bridge | How it works | Works with |
+|---|---|---|
+| Native | The model already accepts the input. | Whatever the model supports |
+| Text | A specialist model describes or transcribes the input, and the text goes in the prompt. | Any model |
+| Tool | The specialist is exposed as a tool the base model calls. | Any model with tool use |
+| Image | The input is rendered as an image, such as a spectrogram. | Any model with vision; untested |
+| Vector | A closed-form map writes the specialist's embedding into the base model's early layers. | Open-weight models only |
 
-- **Knight Hacks**, UCF's hackathon. The [Farsight board](https://github.com/azizu06/farsight/issues/24) hit 1,182 posts, and Farsight won four sponsor tracks.
-- **Cal Hacks**, UC Berkeley's hackathon. The [Backrooms board](https://github.com/azizu06/backrooms/issues/1) hit 988 posts, and Backrooms won a Hyphenate track prize.
+## What has been measured
 
-## Setup in 5 minutes
+All figures are on held-out data. Questions have five options, so chance is 20% unless stated.
 
-1. Click **Use this template** to make your hackathon repo from this one.
-2. Open a new issue from the **Message board** template and pin it. If it's the first issue in the repo it's #1 and you can skip the next step.
-3. If it isn't issue #1, every teammate sets `export BOARD_ISSUE=<number>`.
-4. Fill in your team's GitHub logins and the owner table in `AGENTS.md`.
-5. Every teammate runs `gh auth login` once, then `tools/board whoami` to check it works.
+- Vector bridge on sound classes it was fitted on (ESC-50), with frozen Qwen3.5-0.8B and 2B: 99.0% and 96.8%, against 19.2% and 19.0% with swapped audio. Fitting takes 0.5 to 1.0 seconds.
+- Music genre on held-out tracks of seen genres (GTZAN): 84.9%. Rock or classical when both genres were left out of fitting: 53.5%, where chance is 50%.
+- Text bridge on sounds never fitted on: 83.2%, against 53.2% for a vector bridge fitted on caption text only.
+- A text-only model (SmolLM2-1.7B) reading Qwen3.5-2B's internal states for an image, through a map fitted on words only: 62.5% on COCO questions, against 24.0% with no image.
 
-## Commands
+The vector bridge is fast and accurate for categories the user can give examples of and fails outside them, so the agent's verification step, and its refusal when a bridge fails the controls, is the core of the product.
 
-| Command | What it does |
-|---|---|
-| `tools/board post "[Sam's Claude] ..."` | Posts to the board. Every post starts with whose agent it is. |
-| `tools/board unread` | Shows posts since your last check and flags the ones that tag you. |
-| `tools/board wait` | Blocks until someone else posts, then prints it. |
-| `tools/board read -n 20` | Shows the last 20 posts. |
-| `tools/board whoami` | Prints your GitHub login so you can check `gh` is set up. |
+## Repository
 
-`tools/board wait` checks once every 30 seconds, and when nothing is new that check is one API call, so a whole team stays well under GitHub's rate limit. Use `--interval 60` if a lot of agents share one account.
+- `AGENTS.md`: team rules for every agent.
+- `tools/board`: the team message board, pinned issue #1.
+- `design/`: interface mockup and board diagrams.
+- `docs/`: the plan, once PR #5 merges.
+- Application code lands from PR #5 and issue #6.
 
-## Works with any coding agent
+## Working in this repo
 
-The script only needs `bash` and `gh`, so any agent that can run a shell command can use it. Claude Code also gets the hooks in `.claude/`, which show unread posts when a session starts and on every prompt, and `CLAUDE.md` pulls in the rules from `AGENTS.md`. Every other agent reads `AGENTS.md` and runs `tools/board unread` before each task.
+- Read `AGENTS.md` first.
+- One issue per piece of work, branch `<issue#>-<slug>`, PR with `Closes #N`.
+- Post on the board with `tools/board post "[Name's Agent] ..."` and read it with `tools/board read -n 20`.
 
-## Requirements
+## Models and data
 
-`bash`, `git`, and the [GitHub CLI](https://cli.github.com) logged in with `gh auth login`.
+- Models: Qwen/Qwen3.5-0.8B, Qwen/Qwen3.5-2B, HuggingFaceTB/SmolLM2-1.7B-Instruct, laion/clap-htsat-unfused.
+- Data: ESC-50, GTZAN, AudioCaps caption text, COCO val2017.
