@@ -386,9 +386,30 @@ def test_on_cards_runs_after_verify_and_t0_sets_the_clock(fake_sense):
     fake_sense.results = {"vector": (0.85, {"swapped": 0.2}), "text": (0.6, {"swapped": 0.2})}
     got = []
     events = []
-    loop.run_fit(FitRequest("fake", "toy"), events.append, on_cards=got.append, t0=time.monotonic() - 100)
+    seen_at = []  # how many events had been emitted when on_cards ran
+
+    def on_cards(cards):
+        got.append(cards)
+        seen_at.append(len(events))
+
+    loop.run_fit(FitRequest("fake", "toy"), events.append, on_cards=on_cards, t0=time.monotonic() - 100)
     assert len(got) == 1 and len(got[0]) == 2
+    [n] = seen_at
+    assert (events[n - 1].step, events[n - 1].status) == ("verify", "ok")
+    assert (events[n].step, events[n].status) == ("decide", "start")
     assert all(e.t >= 100 for e in events)
+
+
+def test_a_raising_specialist_describe_gives_none_and_the_run_finishes(fake_sense, monkeypatch):
+    def describe(modality):
+        raise ValueError(f"No specialist is known for {modality}.")
+
+    monkeypatch.setattr(specialists, "describe", describe, raising=False)
+    fake_sense.results = {"vector": (0.85, {"swapped": 0.2}), "text": (0.6, {"swapped": 0.2})}
+    cards, installed, events = run(FitRequest("fake", "toy"))
+    fit_ok = [e for e in events if e.step == "fit" and e.status == "ok"]
+    assert len(fit_ok) == 2 and all(e.data["specialist"] is None for e in fit_ok)
+    assert events[-1].step == "done" and events[-1].status == "ok" and installed == "vector:toy"
 
 
 # ----------------------------------------------------------------------------- jobs
@@ -471,6 +492,24 @@ def test_a_raising_listener_does_not_stop_the_run(fake_sense, fresh_jobs, monkey
     assert job.status == "done"
     assert job.error is None and len(job.cards) == 2 and job.events[-1].step == "done"
     assert [e for _, e, _ in seen[:-1]] == job.events
+
+
+def test_remove_listener_stops_calls(fake_sense, fresh_jobs, monkeypatch):
+    monkeypatch.setattr(planner_mod, "_preferred", None)
+    monkeypatch.setattr(jobs, "_listeners", [])
+    fake_sense.results = {"vector": (0.85, {"swapped": 0.2}), "text": (0.6, {"swapped": 0.2})}
+    seen = []
+
+    def listener(job_id, event, cards):
+        seen.append((job_id, event, cards))
+
+    jobs.add_listener(listener)
+    jobs.remove_listener(listener)
+    jobs.remove_listener(listener)  # removing one that is not registered is a no-op
+    job_id = jobs.start(FitRequest("fake", "toy"))
+    assert wait_for(lambda: jobs.get(job_id).status != "running")
+    assert jobs.get(job_id).status == "done"
+    assert seen == []
 
 
 def test_one_job_at_a_time_with_live_events(fresh_jobs, monkeypatch):

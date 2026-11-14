@@ -5,17 +5,18 @@ Public surface (do not rename):
       Returns every candidate's card (with final verdicts and reasons) and the installed Bridge.name, if any.
       `emit(TraceEvent)` is called as the run proceeds; it must be safe to call from a worker thread.
       `on_cards(list[ReportCard])`, if given, is called once, right after the verify step, with the cards
-      (verdicts are set later, by the decide step). `t0`, if given, is the time.monotonic() value every
+      (verdicts are set later, by the decide step); an exception raised by on_cards propagates and fails
+      the run at the verify step. `t0`, if given, is the time.monotonic() value every
       event's `t` counts from, so a caller's earlier events share one clock; by default the run's own start.
 
 Steps, each emitting a "start" event and then "ok" or "fail" (TraceEvent.step in brackets):
   [inspect] load the model and dataset; report what the model accepts natively and whether it is open-weight
   [plan]    planner.plan -> bridge kinds to try. The "ok" event data has "unavailable": the bridges
             bridges.availability(model_info, modality) reports as not available, each {"kind", "why"}
-            ([] when sense.bridges has no availability function)
+            ([] when sense.bridges has no availability function or it raises)
   [fit]     build each candidate (bridges.fit_vector_bridge on dataset.fit_idx, bridges.make_text_bridge).
-            Each "ok" event data has "specialist": specialists.describe(modality), or None when
-            sense.specialists has no describe function
+            Each "ok" event data has "specialist": specialists.describe(modality), read just after that bridge
+            is built, or None when sense.specialists has no describe function or it raises
   [verify]  verify.verify for each candidate, the text bridge serving as a control for the vector bridge;
             the "ok" event data carries the ReportCard dict ("card") and the wall time of that verify.verify
             call in seconds, rounded to 2 places ("seconds")
@@ -32,6 +33,7 @@ The text bridge is built from the dataset's labels for scope "closed" and from t
 
 from __future__ import annotations
 
+import logging
 import time
 from datetime import datetime, timezone
 from typing import Any, Callable
@@ -41,6 +43,8 @@ from sense import bridges, datasets, models, registry, specialists, verify
 from sense.contracts import (
     Bridge, BridgeKind, Decision, FitRequest, LabelledSet, ModelInfo, Planner, ReportCard, TraceEvent,
 )
+
+_log = logging.getLogger(__name__)
 
 _CONTROL_NAMES = {
     "swapped": "swapped input",
@@ -114,7 +118,6 @@ def run_fit(
         # [fit]
         step = "fit"
         built: dict[BridgeKind, Bridge] = {}
-        specialist = _specialist(request.modality)
         for kind in kinds:
             if kind in built:
                 continue
@@ -131,7 +134,7 @@ def run_fit(
             seconds = round(time.monotonic() - started, 2)
             say("ok", f"Built {bridge.name} in {seconds:.1f} s.{_layer_note(bridge)}", kind=kind, bridge=bridge.name,
                 seconds=seconds, layer=getattr(bridge, "layer", None), dev_accuracy=getattr(bridge, "dev_accuracy", None),
-                specialist=specialist)
+                specialist=_specialist(request.modality))
 
         # [verify]
         step = "verify"
@@ -223,18 +226,29 @@ def run_fit(
 
 
 def _unavailable(info: ModelInfo, modality: str) -> list[dict[str, str]]:
-    """The bridges sense.bridges.availability reports as unavailable, as [{"kind", "why"}], or [] when
-    that function does not exist (it is reached by name so this module works before it lands)."""
+    """The bridges sense.bridges.availability reports as unavailable, as [{"kind", "why"}], or [] when that
+    function does not exist or fails: a trace fact must never fail a run."""
     availability = getattr(bridges, "availability", None)
     if availability is None:
         return []
-    return [{"kind": row["kind"], "why": row["why"]} for row in availability(info, modality) if not row["available"]]
+    try:
+        return [{"kind": row["kind"], "why": row["why"]} for row in availability(info, modality) if not row["available"]]
+    except Exception:
+        _log.warning("bridges.availability failed for %s; reporting no unavailable bridges", modality, exc_info=True)
+        return []
 
 
 def _specialist(modality: str) -> dict[str, Any] | None:
-    """specialists.describe(modality), or None when that function does not exist."""
+    """specialists.describe(modality), or None when that function does not exist or fails (it raises ValueError
+    for a modality with no specialist): a trace fact must never fail a run."""
     describe = getattr(specialists, "describe", None)
-    return describe(modality) if describe is not None else None
+    if describe is None:
+        return None
+    try:
+        return describe(modality)
+    except Exception:
+        _log.warning("specialists.describe failed for %s; reporting no specialist", modality, exc_info=True)
+        return None
 
 
 def _earlier_sense(request: FitRequest) -> tuple[str, str] | None:
