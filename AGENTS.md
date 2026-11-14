@@ -31,8 +31,14 @@ Humans over agents. The team lead is `@yuyaox122` (Yuyao). Only the team lead re
 
 ## 4. Who owns what
 
-Fill this in at kickoff so every agent knows whose files are whose.
+Four workloads, proposed on 14 November while the lead was away; details in [docs/workstreams.md](docs/workstreams.md).
+Pick one on the board, then put your login here. The lead can change the split.
 
 | Area | Owner (GitHub login) | Folders |
 |---|---|---|
-| | | |
+| 1. Agent autonomy and research | unclaimed | `agent/` |
+| 2. Harness core and verification | unclaimed | `sense/`, `server/`, `scripts/`, `socket_pilot/` |
+| 3. Interface and design | unclaimed | `web/`, `design/` |
+| 4. Data platform, real task, demo and submission | unclaimed | `integrations/`, `eval/`, `demo/`, `docs/`, `README.md` |
+
+Tests live in `tests/`; each owner keeps the tests for their own folders.
