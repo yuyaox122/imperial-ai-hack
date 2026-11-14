@@ -39,7 +39,7 @@ Name the team: Yuyao (lead, data platform, demo), Michael (harness and verificat
 ## Sponsor lines (one sentence each, only to the matching judge)
 
 - **Databricks:** "Every agent run, report card, trace event and triage flag is a Delta table in Unity Catalog, with an MLflow run per verified bridge. An install is backed by a pass row in `report_cards`." Show the `report_cards` table.
-- **Figma:** "Figma and the build run one loop: Henad's 131 variables carry their CSS names as code syntax, `web/style.css` declares the same names, and the running app was captured back into Figma, where its parts became components. Refusal has its own variant on every part." Open the **★ Pitch · Figma prize** page and present it (five frames, arrow keys): https://www.figma.com/design/9DxXU1h0aHjw8Mc8vUwl8O/Imperial-AI-Hackathon?node-id=70-76. P02 is the "how we used Figma" evidence; P03 is the design principle.
+- **Figma:** "Figma and the build run one loop: Henad's 131 variables carry their CSS names as code syntax, `web/style.css` declares the same names, and the running app was captured back into Figma, where its parts became components. Every part that shows a verdict has a Refused variant." Open the **★ Pitch · Figma prize** page and present it (five frames, arrow keys): https://www.figma.com/design/9DxXU1h0aHjw8Mc8vUwl8O/Imperial-AI-Hackathon?node-id=70-76. P02 is the "how we used Figma" evidence; P03 is the design principle.
 
 ## Slides
 
