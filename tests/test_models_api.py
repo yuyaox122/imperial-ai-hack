@@ -90,6 +90,11 @@ def test_native_images_are_sent_as_data_urls(api):
     assert content[1]["image_url"]["url"] == "data:image/png;base64,iVBORw0KGgo="
 
 
+def test_chat_returns_available_text_at_token_limit(api):
+    api.client.chat.completions.create.return_value = completion("A dog is barking", finish="length")
+    assert api.module.OpenAIChatModel().chat("What sound?", []) == "A dog is barking"
+
+
 def test_choose_sends_letter_options_and_returns_indices(api):
     model = api.module.OpenAIChatModel()
     item = ChoiceItem("Which sound?", ["cat", "dog"], [SenseInput("text", "audio", text="a dog barks")])

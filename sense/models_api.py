@@ -52,7 +52,10 @@ class OpenAIChatModel:
             content.append({"type": "image_url", "image_url": {"url": f"data:{mime};base64,{encoded}"}})
         return content
 
-    def _complete(self, instruction: str, message: str, inputs: list[SenseInput], limit: int) -> str:
+    def _complete(
+        self, instruction: str, message: str, inputs: list[SenseInput], limit: int,
+        *, allow_truncated: bool = False,
+    ) -> str:
         response = self._client.chat.completions.create(
             model=self.model,
             temperature=0,
@@ -64,7 +67,8 @@ class OpenAIChatModel:
             ],
         )
         choice = response.choices[0]
-        if choice.finish_reason != "stop" or choice.message.refusal or not choice.message.content:
+        finishes = ("stop", "length") if allow_truncated else ("stop",)
+        if choice.finish_reason not in finishes or choice.message.refusal or not choice.message.content:
             raise ValueError("The API model returned no complete answer")
         return choice.message.content.strip()
 
@@ -74,6 +78,7 @@ class OpenAIChatModel:
             message,
             inputs,
             max_new_tokens,
+            allow_truncated=True,
         )
 
     def _choose(self, item: ChoiceItem) -> int:
