@@ -60,7 +60,7 @@
   }
 
   // Brightness per level; "off" regions stay grey.
-  const LEVEL = { off: 0.16, refused: 0.5, native: 0.6, running: 0.85, installed: 1 };
+  const LEVEL = { off: 0.3, refused: 0.5, native: 0.6, running: 0.85, installed: 1 };
 
   function mount(canvas, opts) {
     opts = opts || {};
@@ -71,7 +71,7 @@
     const pulses = [];
 
     function readColours() {
-      const off = cssVar("--app-widget-stroke", "#3c3c3c"), err = cssVar("--app-error", "#e5484d");
+      const off = cssVar("--rule-dark", "#616161"), err = cssVar("--app-error", "#e5484d");
       for (const g in REGIONS) {
         const lv = levels[g] || "off";
         colours[g] = lv === "off" ? off : lv === "refused" ? err : cssVar(`--wire-${REGIONS[g].token}`, "#9e9e9e");
