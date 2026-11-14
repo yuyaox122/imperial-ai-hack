@@ -20,8 +20,9 @@ All JSON. Errors: {"detail": "<what went wrong and what to do>"} with a 4xx or 5
        -> the audio file
   POST /api/chat                                    multipart form: model, message, files (0..n uploads), sample_ids (0..n)
        -> {"reply": str, "used": [{"bridge", "kind", "source", "detail"}]}
-          `used` lists how each file reached the model; a file whose modality has no installed sense is
-          reported with kind "none" and is not shown to the model.
+          `used` lists how each file reached the model; a file whose modality has no installed sense, or that
+          cannot be read, is reported with kind "none" and is not shown to the model.
+          400 for an empty message; 409 while an agent run holds a different local model.
   GET  /                                            web/index.html; other files under web/ are served at /static/
 
 The server holds no model itself: it calls sense.models, sense.registry, sense.datasets and agent.jobs.
@@ -46,7 +47,7 @@ from sense.config import REPO
 from sense.contracts import FitRequest, SenseInput
 
 WEB = REPO / "web"
-AUDIO_EXTENSIONS = {".wav", ".mp3", ".flac", ".ogg", ".m4a", ".au"}
+AUDIO_EXTENSIONS = {".wav", ".mp3", ".flac", ".ogg", ".opus", ".aif", ".aiff", ".au"}  # what soundfile reads; not .m4a
 SCOPES = ("closed", "open")
 CHAT_TOKENS = 256  # the default 96 cut Qwen3.5-0.8B's replies off mid-sentence
 
@@ -73,10 +74,24 @@ def _check_model(name: str) -> None:
         raise _bad_request(f"Unknown model '{name}'. Choose one of: {', '.join(known) or 'none available'}.")
 
 
-def _check_dataset(name: str) -> None:
-    known = [d["name"] for d in datasets.available_sets()]
+def _check_dataset(name: str) -> dict:
+    known = {d["name"]: d for d in datasets.available_sets()}
     if name not in known:
         raise _bad_request(f"Unknown dataset '{name}'. Choose one of: {', '.join(known) or 'none available'}.")
+    return known[name]
+
+
+def _check_no_competing_run(model: str) -> None:
+    """Refuse to load a second local model next to the one a running agent run still holds (24 GB laptop)."""
+    job = jobs.latest()
+    if job is None or job.status != "running" or job.request.model == model:
+        return
+    open_weights = {m.name for m in models.available_models() if m.open_weights}
+    if model in open_weights and job.request.model in open_weights:
+        raise HTTPException(
+            status_code=409,
+            detail=f"An agent run on {job.request.model} is in progress. Chat with that model or wait for the run to finish.",
+        )
 
 
 def _sample_id(path: str) -> str:
@@ -125,15 +140,23 @@ def api_senses(model: str) -> list[dict]:
 @app.delete("/api/senses")
 def api_remove_sense(model: str, modality: str) -> dict:
     _check_model(model)
-    return {"removed": registry.uninstall(model, modality)}
+    try:
+        return {"removed": registry.uninstall(model, modality)}
+    except ValueError as exc:
+        raise _bad_request(f"{exc} Use a modality such as 'audio'.")
 
 
 @app.post("/api/fit")
 def api_fit(body: FitBody) -> dict:
     _check_model(body.model)
-    _check_dataset(body.dataset)
+    dataset = _check_dataset(body.dataset)
     if body.scope not in SCOPES:
         raise _bad_request(f"Unknown scope '{body.scope}'. Use 'closed' or 'open'.")
+    if body.modality != dataset["modality"]:
+        raise _bad_request(
+            f"The set {body.dataset} holds {dataset['modality']} examples, but the request is for "
+            f"{body.modality}. Pick a {body.modality} set, or ask for {dataset['modality']}."
+        )
     request = FitRequest(model=body.model, dataset=body.dataset, modality=body.modality, scope=body.scope)
     try:
         return {"job_id": jobs.start(request)}
@@ -167,11 +190,14 @@ def api_sample(sample_id: str) -> FileResponse:
 @app.post("/api/chat")
 def api_chat(
     model: str = Form(...),
-    message: str = Form(...),
+    message: str = Form(""),
     files: list[UploadFile] = File(default=[]),
     sample_ids: list[str] = Form(default=[]),
 ) -> dict:
     _check_model(model)
+    if not message.strip():
+        raise _bad_request("The message is empty. Type a question for the model, then send it.")
+    _check_no_competing_run(model)
     # (display name, path on disk) for every file the user attached
     attached: list[tuple[str, Path]] = []
     temp_paths: list[Path] = []
@@ -194,7 +220,12 @@ def api_chat(
             base = models.load_model(model)
         except Exception as exc:
             raise HTTPException(status_code=500, detail=f"Could not load model '{model}': {exc}")
-        bridges = {b.modality: b for b in registry.get_bridges(model)}
+        bridges = {}
+        if any(_modality_of(name) for name, _ in attached):  # plain text chat must not depend on the senses
+            try:
+                bridges = {b.modality: b for b in registry.get_bridges(model)}
+            except RuntimeError as exc:
+                raise HTTPException(status_code=500, detail=str(exc))
 
         inputs: list[SenseInput] = []
         used: list[dict] = []
@@ -203,7 +234,7 @@ def api_chat(
             bridge = bridges.get(modality) if modality else None
             if bridge is None:
                 if modality is None:
-                    why = f"only audio files ({' '.join(sorted(AUDIO_EXTENSIONS))}) can be given to it."
+                    why = f"only audio files in these formats can be given to it: {' '.join(sorted(AUDIO_EXTENSIONS))}."
                 else:
                     why = f"{base.info.label} has no installed {modality} sense. Run the agent for this model first."
                 used.append({"bridge": "", "kind": "none", "source": name,
@@ -211,6 +242,11 @@ def api_chat(
                 continue
             try:
                 item = bridge.prepare(path)
+            except (ValueError, FileNotFoundError) as exc:  # this file is unreadable; answer with the others
+                why = str(exc).replace(str(path), name).replace(path.name, name)
+                used.append({"bridge": "", "kind": "none", "source": name,
+                             "detail": f"'{name}' was not shown to the model: {why}"})
+                continue
             except Exception as exc:
                 raise HTTPException(status_code=500, detail=f"Could not read '{name}' with bridge '{bridge.name}': {exc}")
             item.source = name  # uploads sit under temporary names; show the name the user gave

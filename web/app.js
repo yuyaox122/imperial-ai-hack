@@ -916,6 +916,8 @@ function finishJob(job, data) {
   store.set("sessionStorage", "sense.job", null);
   const outcome = $("trace-outcome");
   const model = modelLabel(job.request ? job.request.model : "");
+  const done = (Array.isArray(data.events) ? data.events : []).filter((e) => e && e.step === "done").pop();
+  const earlier = (done && done.data) || {}; // "replaced" or "kept": the sense installed before this run
   if (job.status === "failed") {
     outcome.replaceChildren(
       h(
@@ -931,7 +933,8 @@ function finishJob(job, data) {
         "div",
         { class: "outcome outcome--pass" },
         h("strong", { text: "Installed. " }),
-        `${data.installed} is now a sense of ${model}, listed under Senses and used in chat.`,
+        `${data.installed} is now a sense of ${model}, listed under Senses and used in chat.` +
+          (earlier.replaced ? ` It replaced the earlier ${earlier.replaced} sense.` : ""),
       ),
     );
   } else {
@@ -940,7 +943,8 @@ function finishJob(job, data) {
         "div",
         { class: "outcome outcome--warn" },
         h("strong", { text: "Nothing installed. " }),
-        "No candidate passed its checks; each card above gives the reason.",
+        "No candidate passed its checks; each card above gives the reason." +
+          (earlier.kept ? ` Chat keeps using the earlier ${earlier.kept} sense.` : ""),
       ),
     );
   }

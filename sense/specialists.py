@@ -163,7 +163,7 @@ def _load_middle(path: Path, sr: int, window_s: int) -> np.ndarray:
     try:
         wav, fs = sf.read(path, dtype="float32", always_2d=True)
     except Exception as err:
-        raise ValueError(f"Could not read {path.name} as audio ({err}). Use a WAV, FLAC or OGG file.") from err
+        raise ValueError(f"Could not read {path.name} as audio ({err}). Use a WAV, FLAC, OGG, MP3 or AIFF file.") from err
     wav = wav.mean(axis=1)
     if len(wav) == 0:
         raise ValueError(f"{path.name} contains no audio samples.")
@@ -246,7 +246,7 @@ class FakeSpecialist:
         try:
             wav, fs = sf.read(path, dtype="float32", always_2d=True)
         except Exception as err:
-            raise ValueError(f"Could not read {path.name} as audio ({err}). Use a WAV, FLAC or OGG file.") from err
+            raise ValueError(f"Could not read {path.name} as audio ({err}). Use a WAV, FLAC, OGG, MP3 or AIFF file.") from err
         wav = wav.mean(axis=1)
         rng = np.random.default_rng(_seed("file", hashlib.md5(wav.tobytes()).hexdigest()))
         concept = self._tone_concept(wav, fs)

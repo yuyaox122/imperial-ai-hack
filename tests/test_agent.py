@@ -89,7 +89,7 @@ def make_card(bridge: str, kind: str, accuracy: float, scope: str = "closed", **
 def fake_sense(monkeypatch):
     """Replace every sense.* function the loop calls. Set `state.results[kind] = (accuracy, controls)`."""
     state = SimpleNamespace(
-        model=FakeModel(), results={}, installs=[], verify_calls=[], text_calls=[], vector_fits=0,
+        model=FakeModel(), results={}, installs=[], verify_calls=[], text_calls=[], vector_fits=0, earlier=[],
     )
 
     def fit_vector(model, dataset, idx, layer=None):
@@ -118,7 +118,14 @@ def fake_sense(monkeypatch):
     monkeypatch.setattr(bridges, "make_text_bridge", make_text)
     monkeypatch.setattr(verify, "verify", fake_verify)
     monkeypatch.setattr(registry, "install", lambda bridge, card: state.installs.append((bridge.name, card.verdict)))
+    monkeypatch.setattr(registry, "installed", lambda name: state.earlier)  # senses installed before the run
     return state
+
+
+EARLIER_GTZAN = {
+    "bridge": "vector:gtzan", "kind": "vector", "modality": "audio", "dataset": "gtzan",
+    "card": {"accuracy": 0.795, "dataset": "gtzan", "scope": "closed"},
+}
 
 
 @pytest.fixture
@@ -265,6 +272,39 @@ def test_nothing_acceptable_installs_nothing(fake_sense):
     install_events = [e for e in events if e.step == "install"]
     assert [e.status for e in install_events] == ["info"]
     assert events[-1].step == "done" and "No audio sense was installed" in events[-1].message
+
+
+def test_refusal_names_the_earlier_sense_chat_keeps_using(fake_sense):
+    fake_sense.earlier = [EARLIER_GTZAN]
+    fake_sense.results = {
+        "vector": (0.30, {"swapped": 0.2, "no_input": 0.2, "lookup": 0.3}),
+        "text": (0.25, {"swapped": 0.2, "no_input": 0.2, "lookup": 0.3}),
+    }
+    _, installed, events = run(FitRequest("fake", "toy"))
+
+    assert installed is None and fake_sense.installs == []
+    [install] = [e for e in events if e.step == "install"]
+    assert "still cannot take" not in install.message
+    assert "keeps the earlier vector:gtzan sense (79.5% on gtzan, closed scope)" in install.message
+    assert install.data["kept"] == "vector:gtzan"
+    assert "Chat keeps using the earlier vector:gtzan sense" in events[-1].message
+    assert events[-1].data == {"installed": None, "kept": "vector:gtzan"}
+
+
+def test_install_names_the_sense_it_replaces(fake_sense):
+    fake_sense.earlier = [EARLIER_GTZAN]
+    fake_sense.results = {
+        "vector": (0.95, {"swapped": 0.2, "no_input": 0.2, "lookup": 0.95, "unseen_classes": 0.22}),
+        "text": (0.70, {"swapped": 0.2, "no_input": 0.2, "lookup": 0.95}),
+    }
+    _, installed, events = run(FitRequest("fake", "toy", scope="open"))
+
+    assert installed == "text:captions"
+    start = next(e for e in events if e.step == "install" and e.status == "start")
+    assert "replacing the earlier vector:gtzan sense (79.5% on gtzan, closed scope)" in start.message
+    assert start.data["replaced"] == "vector:gtzan"
+    assert "It replaced the earlier vector:gtzan sense" in events[-1].message
+    assert events[-1].data == {"installed": "text:captions", "replaced": "vector:gtzan"}
 
 
 def test_closed_weight_model_skips_vector(fake_sense):

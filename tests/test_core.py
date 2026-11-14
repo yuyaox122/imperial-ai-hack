@@ -11,7 +11,7 @@ import numpy as np
 import pytest
 
 from sense import bridges, config, datasets, models, registry
-from sense.contracts import Bridge, FitRequest, ModelInfo, OpenModel
+from sense.contracts import Bridge, FitRequest, LabelledSet, ModelInfo, OpenModel
 from sense.verify import verify
 
 
@@ -99,6 +99,30 @@ def test_open_scope_adds_unseen_classes_and_they_fail(model, gtzan, vector_bridg
     assert card.controls["unseen_classes"] < card.chance + 0.25  # the vector bridge transfers labels, not sounds
     text = bridges.make_text_bridge(model, gtzan)
     assert "unseen_classes" not in verify(model, text, gtzan, FitRequest(model="fake", dataset="gtzan", scope="open")).controls
+
+
+def test_lookup_answers_the_same_five_option_questions(model):
+    """Each test clip lies nearest to fitted examples of the next label (a decoy), then of its own. Searching all
+    labels the lookup is always wrong; on the bridge's five-option questions it is right whenever the decoy is
+    not among the options."""
+    labels = ["blues", "classical", "country", "disco", "jazz", "metal", "pop", "reggae", "rock", "soul"]
+    n_labels, per_label = len(labels), 6
+    eye = np.eye(n_labels)
+    noise = np.random.default_rng(1).normal(scale=0.01, size=(n_labels * per_label, n_labels))
+    y = np.repeat(np.arange(n_labels), per_label)
+    fit_rows = eye[y] + noise  # each fitted example sits on its own label's axis
+    test_rows = 0.6 * eye[y] + 0.8 * eye[(y + 1) % n_labels]  # closer to the decoy's axis than to its own
+    ds = LabelledSet(
+        name="toy", title="Toy", modality="audio", question="Which genre?", labels=labels,
+        y=np.concatenate([y, y]), emb=np.vstack([fit_rows, test_rows]), label_text_emb=eye,
+        fit_idx=np.arange(len(y)), dev_idx=np.arange(0), test_idx=np.arange(len(y), 2 * len(y)),
+    )
+    card = verify(model, bridges.make_text_bridge(model, ds), ds, FitRequest(model="fake", dataset="toy"))
+
+    options, _ = bridges.five_options(ds.y[ds.test_idx], n_labels, np.random.default_rng(0))  # verify's draw
+    decoy_absent = [(t + 1) % n_labels not in opts for t, opts in zip(ds.y[ds.test_idx], options)]
+    assert card.controls["lookup"] == pytest.approx(np.mean(decoy_absent), abs=1e-4)
+    assert 0.3 < card.controls["lookup"] < 0.8  # the old all-label search scored 0.0 here
 
 
 def test_verify_is_deterministic(model, gtzan, vector_bridge):

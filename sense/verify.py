@@ -8,7 +8,8 @@ the true label and four other labels in a seeded random order. Chance is 0.2 (or
 five labels). The card's `accuracy` is the bridge's; `controls` holds:
   "swapped"         the same questions with each input taken from an example of a different label
   "no_input"        the same questions with no bridged input
-  "lookup"          answer with the label of the nearest fitted example in specialist space (no base model)
+  "lookup"          the same questions answered with the label of the nearest fitted example in specialist space,
+                    searching only fitted examples of the question's five options (no base model)
   "text_bridge"     accuracy of `text_bridge` on the same questions, when one is given
   "unseen_classes"  only for request.scope == "open" and vector bridges: refit the bridge with a fifth of the
                     labels left out and score it on held-out examples of those labels
@@ -52,7 +53,7 @@ def verify(
     controls = {
         "swapped": score([[bridge.from_embedding(dataset.emb[j], _source(dataset, j))] for j in swap]),
         "no_input": score([[] for _ in test]),
-        "lookup": _lookup(dataset, test),
+        "lookup": _lookup(dataset, test, options),
     }
     if text_bridge is not None:
         controls["text_bridge"] = score([[text_bridge.from_embedding(dataset.emb[i], _source(dataset, i))] for i in test])
@@ -109,8 +110,9 @@ def _accuracy(
     return round(float((np.array(model.choose(items)) == answers).mean()), 4)
 
 
-def _lookup(dataset: LabelledSet, test: np.ndarray) -> float:
-    """Label of the nearest fitted example (cosine on embeddings z-scored with the fitting statistics)."""
+def _lookup(dataset: LabelledSet, test: np.ndarray, options: list[list[int]]) -> float:
+    """The bridge's own questions, answered with the label of the nearest fitted example among the offered
+    options (cosine on embeddings z-scored with the fitting statistics)."""
     emb = dataset.emb.astype(np.float64)
     fit = dataset.fit_idx
     mu, sd = emb[fit].mean(0), emb[fit].std(0) + 1e-8
@@ -118,8 +120,11 @@ def _lookup(dataset: LabelledSet, test: np.ndarray) -> float:
     b = (emb[fit] - mu) / sd
     a /= np.linalg.norm(a, axis=1, keepdims=True) + 1e-12
     b /= np.linalg.norm(b, axis=1, keepdims=True) + 1e-12
-    nearest = fit[(a @ b.T).argmax(1)]
-    return round(float((dataset.y[nearest] == dataset.y[test]).mean()), 4)
+    fit_y = dataset.y[fit]
+    offered = (fit_y[None, None, :] == np.asarray(options)[:, :, None]).any(1)  # [n_test, n_fit]
+    nearest = np.where(offered, a @ b.T, -np.inf).argmax(1)
+    correct = offered.any(1) & (fit_y[nearest] == dataset.y[test])
+    return round(float(correct.mean()), 4)
 
 
 def _unseen_classes(model: BaseModel, bridge: Bridge, dataset: LabelledSet, max_items: int, rng: np.random.Generator) -> float:

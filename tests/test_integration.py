@@ -103,6 +103,48 @@ def test_files_that_cannot_reach_the_model_are_reported(client):
     assert "No audio reached me" in r.json()["reply"]
 
 
+def test_a_second_install_names_the_sense_it_replaces(client):
+    assert run_job(client, "closed")["installed"] == "vector:gtzan"
+    state = run_job(client, "open")
+    assert state["installed"] == "text:captions"
+    start = next(e for e in state["events"] if e["step"] == "install" and e["status"] == "start")
+    assert "replacing the earlier vector:gtzan sense" in start["message"] and "on gtzan, closed scope" in start["message"]
+    assert state["events"][-1]["data"]["replaced"] == "vector:gtzan"
+    assert [s["bridge"] for s in client.get("/api/senses", params={"model": "fake"}).json()] == ["text:captions"]
+
+
+def test_aiff_reaches_the_model_and_an_unreadable_file_does_not_stop_the_chat(client):
+    import io
+
+    import soundfile as sf
+
+    assert run_job(client, "closed")["installed"] == "vector:gtzan"
+    samples = client.get("/api/samples", params={"dataset": "gtzan"}).json()
+    jazz = next(s for s in samples if s["label"] == "jazz")
+    wav, sr = sf.read(io.BytesIO(client.get(f"/api/samples/{jazz['id']}").content))
+    aiff = io.BytesIO()
+    sf.write(aiff, wav, sr, format="AIFF")
+    r = client.post("/api/chat", data={"model": "fake", "message": "What is this?"}, files=[
+        ("files", ("memo.wav", b"not really audio", "audio/wav")),
+        ("files", ("clip.aiff", aiff.getvalue(), "audio/aiff")),
+    ])
+    assert r.status_code == 200, r.text
+    bad, good = r.json()["used"]
+    assert bad["kind"] == "none" and "Could not read memo.wav as audio" in bad["detail"]
+    assert good["kind"] == "vector" and good["source"] == "clip.aiff"
+    assert "jazz" in r.json()["reply"]
+
+
+def test_a_broken_installed_sense_keeps_text_chat_working(client, tmp_path):
+    assert run_job(client, "closed")["installed"] == "vector:gtzan"
+    (tmp_path / "home" / "fake" / "audio" / "bridge.npz").unlink()
+    r = client.post("/api/chat", data={"model": "fake", "message": "hi"})
+    assert r.status_code == 200 and "No audio reached me" in r.json()["reply"]
+    sample = client.get("/api/samples", params={"dataset": "gtzan"}).json()[0]
+    r = client.post("/api/chat", data={"model": "fake", "message": "hi", "sample_ids": [sample["id"]]})
+    assert r.status_code == 500 and "Uninstall it and run the agent again" in r.json()["detail"]
+
+
 def test_second_run_while_one_is_running_is_refused(client, monkeypatch):
     from agent import loop
 

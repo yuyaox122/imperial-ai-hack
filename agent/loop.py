@@ -12,8 +12,10 @@ Steps, each emitting a "start" event and then "ok" or "fail" (TraceEvent.step in
   [verify]  verify.verify for each candidate, the text bridge serving as a control for the vector bridge;
             the event data carries the ReportCard dict
   [decide]  planner.decide -> which bridge, and why
-  [install] registry.install for the chosen bridge; other cards get verdict "rejected" with the reason
-  [done]    one-line summary
+  [install] registry.install for the chosen bridge; other cards get verdict "rejected" with the reason.
+            The message names the sense already installed for this model and modality, which the new one
+            replaces or, when nothing is installed, chat keeps using (event data "replaced" or "kept")
+  [done]    one-line summary, with "installed" and "replaced" or "kept" in its data
 Any exception becomes an [error] event with status "fail" and is re-raised.
 
 The text bridge is built from the dataset's labels for scope "closed" and from the caption bank for scope
@@ -135,12 +137,19 @@ def run_fit(
 
         # [install]
         step = "install"
-        if chosen is None:
+        earlier = _earlier_sense(request)  # (bridge name, description) of the sense chat uses now, if any
+        if chosen is None and earlier is None:
             say("info", f"Installed nothing; {info.label} still cannot take {request.modality} input.")
+        elif chosen is None:
+            say("info", f"Installed nothing; {info.label} keeps the earlier {earlier[1]}, which chat still uses.",
+                kept=earlier[0])
         else:
-            say("start", f"Installing {chosen.bridge} for {info.label}.", bridge=chosen.bridge)
+            replacing = f", replacing the earlier {earlier[1]}" if earlier else ""
+            say("start", f"Installing {chosen.bridge} for {info.label}{replacing}.", bridge=chosen.bridge,
+                replaced=earlier[0] if earlier else None)
             registry.install(by_name[chosen.bridge], chosen)
-            say("ok", f"Installed {chosen.bridge}; {info.label} can now take {request.modality} input in chat.", bridge=chosen.bridge)
+            say("ok", f"Installed {chosen.bridge}; {info.label} can now take {request.modality} input in chat.",
+                bridge=chosen.bridge, replaced=earlier[0] if earlier else None)
 
         # [done]
         step = "done"
@@ -151,13 +160,24 @@ def run_fit(
                 why = "the only candidate failed verification"
             else:
                 why = f"none of the {len(cards)} candidates passed verification"
-            summary = f"No {request.modality} sense was installed for {info.label}: {why}."
+            if earlier is None:
+                summary = f"No {request.modality} sense was installed for {info.label}: {why}."
+            else:
+                summary = (
+                    f"No new {request.modality} sense was installed for {info.label}: {why}. "
+                    f"Chat keeps using the earlier {earlier[1]}."
+                )
         else:
             summary = (
                 f"{info.label} can now take {request.modality} input through {chosen.bridge}: it scored "
                 f"{pct(chosen.accuracy)} on {chosen.n} held-out questions, against {pct(chosen.chance)} chance."
             )
-        say("ok", summary, installed=decision.install)
+            if earlier is not None:
+                summary += f" It replaced the earlier {earlier[1]}."
+        outcome = {}
+        if earlier is not None:
+            outcome["replaced" if chosen else "kept"] = earlier[0]
+        say("ok", summary, installed=decision.install, **outcome)
         return cards, decision.install
 
     except Exception as exc:
@@ -167,6 +187,23 @@ def run_fit(
         step = "error"
         say("fail", f"The agent run stopped during the {failed} step. {detail}", step=failed, error=type(exc).__name__)
         raise
+
+
+def _earlier_sense(request: FitRequest) -> tuple[str, str] | None:
+    """The installed sense of this model and modality, as (bridge name, 'vector:gtzan sense (79.5% on gtzan,
+    closed scope)'), or None. An unreadable card does not stop the run: it is described without numbers."""
+    try:
+        entries = [e for e in registry.installed(request.model) if e.get("modality") == request.modality]
+    except (OSError, ValueError, KeyError):
+        return None
+    if not entries:
+        return None
+    entry, card = entries[0], entries[0].get("card") or {}
+    try:
+        numbers = f" ({pct(float(card['accuracy']))} on {card['dataset']}, {card['scope']} scope)"
+    except (KeyError, TypeError, ValueError):
+        numbers = ""
+    return entry["bridge"], f"{entry['bridge']} sense{numbers}"
 
 
 def _fit_message(kind: str, request: FitRequest, dataset: LabelledSet) -> str:
