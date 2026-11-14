@@ -14,7 +14,7 @@ import re
 import tempfile
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from openai import OpenAI
 
@@ -87,6 +87,7 @@ class LLMPlanner:
 
     def _answer(
         self, method: str, instruction: str, data: dict[str, Any], schema: dict[str, Any],
+        validate: Callable[[dict[str, Any]], Any],
     ) -> tuple[dict[str, Any], Path | None]:
         # Hash exactly the canonical request sent to the API, including prompts,
         # schema and generation settings, so changes cannot reuse stale answers.
@@ -110,9 +111,12 @@ class LLMPlanner:
             path = config.home() / "plans" / (hashlib.sha256(identity.encode("utf-8")).hexdigest() + ".json")
             answer = json.loads(path.read_text(encoding="utf-8"))
             if isinstance(answer, dict):
-                return answer, path  # Callers revalidate cached answers before use.
-        except (OSError, TypeError, ValueError):
+                validate(answer)
+                return answer, path  # Callers recheck after lookup, including the current gate.
+        except (OSError, TypeError, ValueError, KeyError):
             pass
+        # A bad memo gets exactly one fresh attempt. Invalid live answers are
+        # validated by the caller and fall back without another API request.
         return self._ask(payload), path
 
     def _ask(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -134,6 +138,19 @@ class LLMPlanner:
         if config.fake():
             return RulePlanner().plan(request, model, dataset)
         allowed = list(ORDER) if model.open_weights else ["text"]
+
+        def validate(answer: dict[str, Any]) -> list[BridgeKind]:
+            kinds = answer.get("bridges")
+            if (
+                set(answer) != {"bridges"}
+                or not isinstance(kinds, list)
+                or not kinds
+                or any(not isinstance(kind, str) or kind not in allowed for kind in kinds)
+                or len(set(kinds)) != len(kinds)
+            ):
+                raise ValueError("Invalid bridge plan")
+            return sorted(kinds, key=ORDER.index)
+
         try:
             answer, path = self._answer(
                 "plan",
@@ -163,17 +180,9 @@ class LLMPlanner:
                     "required": ["bridges"],
                     "additionalProperties": False,
                 },
+                validate,
             )
-            kinds = answer.get("bridges")
-            if (
-                set(answer) != {"bridges"}
-                or not isinstance(kinds, list)
-                or not kinds
-                or any(not isinstance(kind, str) or kind not in allowed for kind in kinds)
-                or len(set(kinds)) != len(kinds)
-            ):
-                raise ValueError("Invalid bridge plan")
-            kinds = sorted(kinds, key=ORDER.index)
+            kinds = validate(answer)
             _remember(path, {"bridges": kinds})
             return kinds
         except Exception:
@@ -218,6 +227,35 @@ class LLMPlanner:
             eligible = [name for name, (ok, _) in assessments.items() if ok]
             if not eligible:
                 return self._fallback(request, cards)
+
+            def validate(answer: dict[str, Any]) -> Decision:
+                install, reason = answer.get("install"), answer.get("reason")
+                if set(answer) != {"install", "reason"} or (install is not None and (not isinstance(install, str) or install not in by_name)):
+                    raise ValueError("Unknown bridge decision")
+                if not isinstance(reason, str) or not reason.strip() or len(reason) > 800:
+                    raise ValueError("Missing or overlong decision reason")
+                reason = reason.strip()
+                sentences = [part for part in re.split(r"[.!?](?:\s+|$)", reason) if part.strip()]
+                relevant = [by_name[install]] if install is not None else cards
+                if not 1 <= len(sentences) <= 2 or not any(
+                    _cites(reason, card.accuracy) and _cites(reason, card.controls["swapped"])
+                    for card in relevant
+                ):
+                    raise ValueError("Decision reason must cite measured accuracy and swapped control")
+                if install is not None:
+                    assessments[install] = self.assess(request, by_name[install])
+                    if not assessments[install][0]:
+                        raise ValueError("Decision fails the shared acceptance gate")
+                # Numeric citations cannot validate arithmetic or other claims in model prose.
+                # Preserve the selection (including refusal), but publish measured assessments.
+                if install is None:
+                    reason = "The planner chose not to install a bridge. " + " ".join(
+                        why for _, why in assessments.values()
+                    )
+                else:
+                    reason = f"Installed {install}. {assessments[install][1]}"
+                return Decision(install, reason)
+
             answer, path = self._answer(
                 "decide",
                 "Choose a verified bridge to install, or null to refuse. Return JSON with install "
@@ -244,34 +282,11 @@ class LLMPlanner:
                     "required": ["install", "reason"],
                     "additionalProperties": False,
                 },
+                validate,
             )
-            install, reason = answer.get("install"), answer.get("reason")
-            if set(answer) != {"install", "reason"} or (install is not None and (not isinstance(install, str) or install not in by_name)):
-                raise ValueError("Unknown bridge decision")
-            if not isinstance(reason, str) or not reason.strip() or len(reason) > 800:
-                raise ValueError("Missing or overlong decision reason")
-            reason = reason.strip()
-            sentences = [part for part in re.split(r"[.!?](?:\s+|$)", reason) if part.strip()]
-            relevant = [by_name[install]] if install is not None else cards
-            if not 1 <= len(sentences) <= 2 or not any(
-                _cites(reason, card.accuracy) and _cites(reason, card.controls["swapped"])
-                for card in relevant
-            ):
-                raise ValueError("Decision reason must cite measured accuracy and swapped control")
-            if install is not None:
-                assessments[install] = self.assess(request, by_name[install])
-                if not assessments[install][0]:
-                    raise ValueError("Decision fails the shared acceptance gate")
-            # Numeric citations cannot validate arithmetic or other claims in model prose.
-            # Preserve the selection (including refusal), but publish measured assessments.
-            if install is None:
-                reason = "The planner chose not to install a bridge. " + " ".join(
-                    why for _, why in assessments.values()
-                )
-            else:
-                reason = f"Installed {install}. {assessments[install][1]}"
+            decision = validate(answer)
             _remember(path, answer)
-            return Decision(install, reason)
+            return decision
         except Exception:
             return self._fallback(request, cards)
 

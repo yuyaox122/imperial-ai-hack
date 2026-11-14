@@ -455,3 +455,42 @@ def test_changed_cache_version_misses(api, request_data, model, dataset, monkeyp
     monkeypatch.setattr(api.module, "_MEMO_VERSION", api.module._MEMO_VERSION + 1)
     api.module.LLMPlanner().plan(request_data, model, dataset)
     assert api.client.chat.completions.create.call_count == 2
+
+
+@pytest.mark.parametrize("method,bad", [
+    ("plan", {}), ("plan", {"bridges": []}),
+    ("decide", {}), ("decide", {"install": "vector:sounds"}),
+])
+def test_invalid_memo_object_recovers_with_one_fresh_answer(
+    api, request_data, model, dataset, cards, tmp_path, method, bad,
+):
+    good = {"bridges": ["vector"]} if method == "plan" else {"install": "vector:sounds", "reason": "85% vs 20%."}
+    args = (request_data, model, dataset) if method == "plan" else (request_data, cards)
+    api.client.chat.completions.create.return_value = completion(good)
+    expected = getattr(api.module.LLMPlanner(), method)(*args)
+    memo = next((tmp_path / "plans").glob("*.json"))
+    memo.write_text(json.dumps(bad))
+    assert getattr(api.module.LLMPlanner(), method)(*args) == expected
+    assert api.client.chat.completions.create.call_count == 2
+    assert json.loads(memo.read_text()) == good
+    assert getattr(api.module.LLMPlanner(), method)(*args) == expected
+    assert api.client.chat.completions.create.call_count == 2
+    getattr(api.rules, method).assert_not_called()
+
+
+@pytest.mark.parametrize("method", ["plan", "decide"])
+def test_invalid_live_answer_after_invalid_memo_is_not_retried_or_stored(
+    api, request_data, model, dataset, cards, tmp_path, method,
+):
+    good = {"bridges": ["vector"]} if method == "plan" else {"install": "vector:sounds", "reason": "85% vs 20%."}
+    args = (request_data, model, dataset) if method == "plan" else (request_data, cards)
+    api.client.chat.completions.create.return_value = completion(good)
+    getattr(api.module.LLMPlanner(), method)(*args)
+    memo = next((tmp_path / "plans").glob("*.json"))
+    memo.write_text("{}")
+    api.client.chat.completions.create.return_value = completion({"invalid": True})
+    result = getattr(api.module.LLMPlanner(), method)(*args)
+    assert result == getattr(api.rules, method).return_value
+    assert api.client.chat.completions.create.call_count == 2
+    assert json.loads(memo.read_text()) == {}
+    getattr(api.rules, method).assert_called_once()
