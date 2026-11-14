@@ -648,6 +648,7 @@ def test_coverage_rejects_lossy_semantic_names(requested, actual):
 
 @pytest.mark.parametrize('requested,source', [
     ('猫', '犬'), ('A+B', 'A-B'), ('A B', 'A+B'), ('label 0', '犬'),
+    ('x' * 40, 'x' * 40 + ' tail'),
 ])
 @pytest.mark.parametrize('string_labels', [False, True])
 def test_fetch_cannot_use_lossy_folder_name_as_requested_identity(tmp_path, hub, requested, source, string_labels):
