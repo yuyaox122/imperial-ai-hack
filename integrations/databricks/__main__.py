@@ -98,7 +98,9 @@ def triage(args: argparse.Namespace) -> int:
     from eval import triage as tri
 
     if args.from_file:
-        records = [json.loads(Path(f).read_text()) for f in args.from_file]
+        # `--from a b c` puts b and c in the positional files; take them too.
+        paths = [*args.from_file, *args.files]
+        records = [json.loads(Path(f).read_text()) for f in paths]
     else:
         records = tri.run_all(args)
         for record in records:
