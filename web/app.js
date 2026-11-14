@@ -1895,6 +1895,16 @@ function setLogVisible(show) {
 
 // ---------------------------------------------------------------- start
 
+/** Figma (the team design) or Henad (Michael's design system: square, ruled, MCS colours). Visual only. */
+function setTheme(theme) {
+  const henad = theme === "henad";
+  if (henad) document.documentElement.dataset.theme = "henad";
+  else delete document.documentElement.dataset.theme;
+  store.set("localStorage", "sense.theme", henad ? "henad" : null);
+  $("theme-button").setAttribute("aria-checked", String(henad));
+  requestAnimationFrame(drawWires); // port positions move with the type
+}
+
 function updateScopeHint() {
   const scope = document.querySelector('input[name="scope"]:checked');
   $("scope-hint").textContent = SCOPE_HINTS[scope ? scope.value : "closed"];
@@ -1926,6 +1936,7 @@ function bindEvents() {
     closeFit(false);
   });
 
+  $("theme-button").addEventListener("click", () => setTheme(document.documentElement.dataset.theme === "henad" ? "figma" : "henad"));
   $("log-button").addEventListener("click", () => setLogVisible(!state.showLog));
   $("export-button").addEventListener("click", exportReport);
 
@@ -1967,6 +1978,7 @@ function bindEvents() {
 
 function init() {
   hydrateIcons();
+  $("theme-button").setAttribute("aria-checked", String(document.documentElement.dataset.theme === "henad"));
   bindEvents();
   updateScopeHint();
   renderAttachments();

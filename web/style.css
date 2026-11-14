@@ -1137,3 +1137,187 @@ button.sense-text:hover .sense-title { text-decoration: underline; }
   .sense-chips { flex-wrap: wrap; }
   .graph-canvas { grid-template-columns: 172px 198px 172px; justify-content: start; }
 }
+
+/* ---------------------------------------------------------------- Toggle (Figma 19:287) */
+.switch {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-8);
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--color-text-secondary);
+  font: 400 11px/15px var(--font-sans);
+  white-space: nowrap;
+}
+.switch:hover { color: var(--color-text-primary); }
+.switch-track {
+  position: relative;
+  width: 28px;
+  height: 16px;
+  border-radius: var(--radius-full);
+  background: var(--color-border-strong);
+  transition: background-color 0.12s;
+}
+.switch-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--color-text-secondary);
+  transition: transform 0.12s, background-color 0.12s;
+}
+.switch[aria-checked="true"] .switch-track { background: var(--color-accent-default); }
+.switch[aria-checked="true"] .switch-thumb { transform: translateX(12px); background: var(--white); }
+
+/* ================================================================ Henad theme
+ * Michael's Henad design system (claude.ai Design System artifact "Henad"): calm, ruled and dense.
+ * MCS colours by role, square corners, one-pixel rules and no shadows, IBM Plex with ss01 and ss02, the black
+ * band with its grid. The Figma tokens above are remapped, so every component keeps its structure.
+ * Data colours (modality dots and wires) are exempt from MCS, as Henad allows, and stay as in Figma. */
+:root[data-theme="henad"] {
+  color-scheme: dark;
+  --mcs-gray-50: #f5f5f5; --mcs-gray-100: #eeeeee; --mcs-gray-200: #e0e0e0; --mcs-gray-300: #bdbdbd;
+  --mcs-gray-400: #9e9e9e; --mcs-gray-500: #808080; --mcs-gray-600: #757575; --mcs-gray-700: #616161;
+  --mcs-gray-800: #424242; --mcs-gray-900: #212121; --mcs-gray-950: #131313;
+  --mcs-red-200: #fab2b9; --mcs-red-500: #e43748; --mcs-red-900: #360e12;
+  --mcs-orange-200: #f9bc98; --mcs-orange-300: #f6a373; --mcs-orange-500: #ec6f27; --mcs-orange-900: #3a1904;
+  --mcs-green-200: #96e29e; --mcs-green-400: #2ebf57; --mcs-green-500: #14ae52; --mcs-green-900: #033015;
+  --mcs-blue-200: #8fc7ff; --mcs-blue-500: #007af5; --mcs-blue-900: #01244d;
+
+  --henad-band: #000000;
+  --henad-heading: #ffffff;
+  --henad-accent-tint: rgba(236, 111, 39, 0.10);
+
+  --color-bg-app: var(--mcs-gray-950);
+  --color-bg-canvas: #0a0a0a;
+  --color-bg-panel: var(--mcs-gray-950);
+  --color-bg-raised: var(--mcs-gray-950);
+  --color-bg-sunken: #0a0a0a;
+  --color-bg-muted: var(--mcs-gray-900);
+  --color-bg-hover: var(--mcs-gray-900);
+  --color-border-default: var(--mcs-gray-800);
+  --color-border-strong: var(--mcs-gray-700);
+  --color-border-subtle: var(--mcs-gray-700);
+  --color-text-primary: var(--mcs-gray-300);
+  --color-text-secondary: var(--mcs-gray-400);
+  --color-text-muted: var(--mcs-gray-500);
+  --color-text-on-accent: #000000;
+  --color-accent-default: var(--mcs-orange-500);
+  --color-accent-soft: var(--henad-accent-tint);
+  --color-accent-text: var(--mcs-orange-500);
+  --color-status-success: var(--mcs-green-400);
+  --color-status-success-soft: var(--mcs-green-900);
+  --color-status-on-success: var(--mcs-green-200);
+  --color-status-warning: var(--mcs-orange-500);
+  --color-status-warning-text: var(--mcs-orange-200);
+  --color-status-warning-soft: var(--mcs-orange-900);
+  --color-status-warning-border: var(--mcs-orange-500);
+  --color-status-danger: var(--mcs-red-500);
+  --color-status-danger-soft: var(--mcs-red-900);
+  --color-running: var(--mcs-blue-500);
+  --color-running-soft: var(--mcs-blue-900);
+  --color-running-text: var(--mcs-blue-200);
+
+  --font-sans: "IBM Plex Sans", "Helvetica Neue", Arial, system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --elevation-card: none;
+  --elevation-popover: none;
+  --glow-installed: none;
+}
+
+/* Square corners everywhere, no shadows. */
+[data-theme="henad"] *, [data-theme="henad"] ::before, [data-theme="henad"] ::after { border-radius: 0 !important; box-shadow: none !important; }
+[data-theme="henad"] body { font-feature-settings: "kern", "liga", "tnum", "ss01", "ss02"; }
+[data-theme="henad"] ::selection { background: rgba(236, 111, 39, 0.67); color: #ffffff; }
+[data-theme="henad"] h1, [data-theme="henad"] h2, [data-theme="henad"] h3,
+[data-theme="henad"] .node-title, [data-theme="henad"] .step-title, [data-theme="henad"] .result-title,
+[data-theme="henad"] .display-value:not(.display-value--installed):not(.display-value--refused) { color: var(--henad-heading); }
+
+/* The band: black, the 32 px grid with a crosshair every 128 px fading in from the left, labels knocked out. */
+[data-theme="henad"] .topbar { position: relative; isolation: isolate; background: var(--henad-band); border-bottom-color: var(--mcs-gray-800); }
+[data-theme="henad"] .topbar::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='128' height='128'%3E%3Cpath d='M.5 0V128M32.5 0V128M64.5 0V128M96.5 0V128M0 31.5H128M0 63.5H128M0 95.5H128M0 127.5H128' stroke='%23212121'/%3E%3Cpath d='M64.5 55V72M56 63.5H73' stroke='%23616161'/%3E%3C/svg%3E");
+  background-position: right -1px top -40px;
+  -webkit-mask-image: linear-gradient(to right, transparent 30%, #000 90%);
+  mask-image: linear-gradient(to right, transparent 30%, #000 90%);
+}
+[data-theme="henad"] .brand-name { color: #ffffff; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; background: var(--henad-band); box-shadow: 0 0 0 4px var(--henad-band) !important; }
+[data-theme="henad"] .logo { background: none; color: #ffffff; }
+[data-theme="henad"] .model-picker { background: var(--henad-band); border-color: var(--mcs-gray-800); }
+[data-theme="henad"] .model-tile { background: none; border: 1px solid var(--mcs-gray-700); color: var(--mcs-gray-300); }
+[data-theme="henad"] .switch { color: var(--mcs-gray-400); }
+
+/* Buttons: the primary action takes the accent; the rest are ruled. */
+[data-theme="henad"] .btn { font-weight: 500; }
+[data-theme="henad"] .btn--primary { font-weight: 600; }
+[data-theme="henad"] .btn--primary:hover:not(:disabled) { background: var(--mcs-orange-300); }
+[data-theme="henad"] .btn--secondary { background: var(--color-bg-panel); border-color: var(--mcs-gray-700); }
+[data-theme="henad"] .btn--soft { background: var(--henad-accent-tint); border-color: var(--mcs-orange-500); color: var(--mcs-orange-500); }
+[data-theme="henad"] .send:hover:not(:disabled) { background: var(--mcs-orange-300); }
+
+/* Status badges: the hue's 900 fill and its 200 label; running is blue. */
+[data-theme="henad"] .tag { font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; font-size: 10px; }
+[data-theme="henad"] .tag--neutral { background: var(--mcs-gray-800); color: var(--mcs-gray-300); }
+[data-theme="henad"] .tag--accent { background: var(--color-running-soft); color: var(--color-running-text); }
+[data-theme="henad"] .tag--success, [data-theme="henad"] .tag--installed { background: var(--mcs-green-900); color: var(--mcs-green-200); }
+[data-theme="henad"] .tag--warning { background: var(--mcs-orange-900); color: var(--mcs-orange-200); }
+[data-theme="henad"] .tag--danger, [data-theme="henad"] .tag--refused { background: var(--mcs-red-900); color: var(--mcs-red-200); }
+[data-theme="henad"] .chip { background: none; border-color: var(--mcs-gray-800); }
+[data-theme="henad"] .chip--new { background: var(--mcs-orange-900); border-color: var(--mcs-orange-500); }
+[data-theme="henad"] .chip--refused { background: var(--mcs-red-900); border-color: var(--mcs-red-500); }
+[data-theme="henad"] .badge-new { background: var(--mcs-orange-500); color: #000000; font-weight: 700; }
+
+/* Callouts instead of boxed notes: a rule in the hue's key colour down the left over its subtle fill. */
+[data-theme="henad"] .note, [data-theme="henad"] .result, [data-theme="henad"] .outcome {
+  border: 0;
+  border-left: 1px solid var(--mcs-orange-500);
+  background: var(--mcs-orange-900);
+  color: var(--mcs-gray-300);
+}
+[data-theme="henad"] .note--danger, [data-theme="henad"] .result--refused, [data-theme="henad"] .outcome { border-left-color: var(--mcs-red-500); background: var(--mcs-red-900); }
+[data-theme="henad"] .note--accent { border-left-color: var(--color-running); background: var(--color-running-soft); }
+[data-theme="henad"] .note--accent .icon { color: var(--color-running-text); }
+[data-theme="henad"] .result { border-left-color: var(--mcs-green-500); background: var(--mcs-green-900); }
+[data-theme="henad"] .result--refused { border-left-color: var(--mcs-red-500); background: var(--mcs-red-900); }
+[data-theme="henad"] .error { border-left: 1px solid var(--mcs-red-500); background: var(--mcs-red-900); color: var(--mcs-red-200); }
+[data-theme="henad"] .bubble { background: var(--mcs-gray-900); color: var(--mcs-gray-100); }
+[data-theme="henad"] .msg--agent .name, [data-theme="henad"] .msg--agent .name-line .icon { color: var(--mcs-gray-100); }
+
+/* Graph and steps: ruled boxes; the state picks the hue, running is blue. */
+[data-theme="henad"] .graph-canvas { background-image: radial-gradient(var(--mcs-gray-900) 1px, transparent 1px); background-size: 32px 32px; }
+[data-theme="henad"] .legend { background: var(--color-bg-panel); }
+[data-theme="henad"] .node { border-color: var(--mcs-gray-700); }
+[data-theme="henad"] .node--installed { border: 1px solid var(--mcs-green-500); }
+[data-theme="henad"] .node--refused { border: 1px dashed var(--mcs-red-500); }
+[data-theme="henad"] .node--running { border: 1px solid var(--color-running); }
+[data-theme="henad"] .node--model { border: 1px solid var(--mcs-gray-300); }
+[data-theme="henad"] .node.is-selected { outline: 2px solid var(--mcs-orange-500); }
+[data-theme="henad"] .node-tile { background: none; border: 1px solid var(--mcs-gray-800); }
+[data-theme="henad"] .node--model .node-tile { color: var(--mcs-gray-100); }
+[data-theme="henad"] .port { box-shadow: 0 0 0 2px var(--color-bg-raised) !important; }
+[data-theme="henad"] .bridge-group { border: 1px dashed var(--mcs-gray-700); background: none; }
+[data-theme="henad"] .group-head { color: var(--mcs-gray-400); font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; font-size: 10px; }
+[data-theme="henad"] .held-check.is-running { border-color: var(--color-running); color: var(--color-running-text); }
+[data-theme="henad"] .step--running { border: 1px solid var(--color-running); background: var(--color-running-soft); }
+[data-theme="henad"] .step--running .step-num .icon { color: var(--color-running-text); }
+[data-theme="henad"] .step--refused { border: 1px solid var(--mcs-red-500); }
+[data-theme="henad"] .step-code { color: var(--mcs-gray-300); }
+[data-theme="henad"] .event-step { color: var(--mcs-gray-300); }
+[data-theme="henad"] .t-overline, [data-theme="henad"] .field legend { font-weight: 700; letter-spacing: 0.08em; }
+
+/* Report: metric bars square, the accent kept off decoration. */
+[data-theme="henad"] .track { background: var(--mcs-gray-900); }
+[data-theme="henad"] .metric--installed .fill { background: var(--mcs-green-500); }
+[data-theme="henad"] .metric--refused .fill { background: var(--mcs-red-500); }
+[data-theme="henad"] .metric--control .fill { background: var(--mcs-gray-600); }
+[data-theme="henad"] .metric--reference .fill { background: var(--mcs-gray-700); }
+[data-theme="henad"] .tick { background: var(--mcs-gray-300); }
+[data-theme="henad"] .popover { border-color: var(--mcs-gray-700); }

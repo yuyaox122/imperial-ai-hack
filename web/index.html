@@ -9,8 +9,16 @@
   <!-- Inter and JetBrains Mono, the families of the Figma text styles. Without a network the system fonts take over. -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400&display=swap">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400&display=swap">
   <link rel="stylesheet" href="/static/style.css">
+  <!-- Theme before first paint: Figma (default) or Henad, from ?theme= or the last choice. -->
+  <script>
+    try {
+      const asked = new URLSearchParams(location.search).get("theme");
+      const theme = asked || localStorage.getItem("sense.theme");
+      if (theme === "henad") document.documentElement.dataset.theme = "henad";
+    } catch (e) {}
+  </script>
   <script src="/static/app.js" defer></script>
 </head>
 <body>
@@ -39,6 +47,11 @@
     </div>
 
     <div class="actions">
+      <!-- Toggle (19:287), where the Figma top bar has its Replay mode switch -->
+      <button id="theme-button" class="switch" type="button" role="switch" aria-checked="false" title="Show the interface in the Henad design system">
+        <span class="switch-label">Henad style</span>
+        <span class="switch-track" aria-hidden="true"><span class="switch-thumb"></span></span>
+      </button>
       <button id="new-sense-button" class="btn btn--primary" type="button" aria-haspopup="dialog" aria-controls="fit-popover" aria-expanded="false"><span data-icon="plus"></span>New sense</button>
     </div>
   </header>
