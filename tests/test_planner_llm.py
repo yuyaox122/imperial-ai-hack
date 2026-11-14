@@ -145,7 +145,10 @@ def test_plan_api_errors_fall_back(api, request_data, model, dataset, monkeypatc
 def test_decide_sends_complete_cards_and_returns_grounded_reason(api, request_data, cards):
     reason = "Vector scored 85% accuracy against 20% swapped input."
     api.client.chat.completions.create.return_value = completion({"install": "vector:sounds", "reason": reason})
-    assert api.module.LLMPlanner().decide(request_data, cards) == Decision("vector:sounds", reason)
+    planner = api.module.LLMPlanner()
+    decision = planner.decide(request_data, cards)
+    assert decision.install == "vector:sounds"
+    assert planner.assess(request_data, cards[0])[1] in decision.reason
     sent = json.loads(api.client.chat.completions.create.call_args.kwargs["messages"][1]["content"])
     assert sent["cards"] == [card.to_dict() for card in cards]
     api.rules.decide.assert_not_called()
@@ -154,7 +157,12 @@ def test_decide_sends_complete_cards_and_returns_grounded_reason(api, request_da
 def test_decide_can_refuse(api, request_data, cards):
     reason = "Although accuracy was 85% vs 20% swapped, the request needs unseen-class evidence."
     api.client.chat.completions.create.return_value = completion({"install": None, "reason": reason})
-    assert api.module.LLMPlanner().decide(request_data, cards) == Decision(None, reason)
+    decision = api.module.LLMPlanner().decide(request_data, cards)
+    assert decision.install is None
+    assert "chose not to install" in decision.reason
+    assert "vector:sounds passed" in decision.reason
+    assert "text:captions passed" in decision.reason
+    assert "needs unseen-class evidence" not in decision.reason
     api.rules.decide.assert_not_called()
 
 
@@ -255,3 +263,42 @@ def test_duplicate_names_do_not_reach_api(api, request_data, cards):
     cards[1].bridge = cards[0].bridge
     api.module.LLMPlanner().decide(request_data, cards)
     api.client.chat.completions.create.assert_not_called()
+
+
+@pytest.mark.parametrize("install", [None, "text:gtzan"])
+def test_false_llm_arithmetic_is_not_published(api, install):
+    request = FitRequest("qwen", "gtzan")
+    card = ReportCard("qwen", "audio", "gtzan", "closed", "text:gtzan", "text", 40, .1, .475, {"swapped": .2})
+    false_reason = "Text accuracy 47.5% fails the required gain over 20% swapped input."
+    api.client.chat.completions.create.return_value = completion({"install": install, "reason": false_reason})
+    planner = api.module.LLMPlanner()
+    decision = planner.decide(request, [card])
+    assert decision.install == install  # A model may still decline an eligible bridge.
+    assert false_reason not in decision.reason
+    assert "text:gtzan passed" in decision.reason
+    assert "47.5%" in decision.reason and "20.0%" in decision.reason
+    assert planner.assess(request, card)[0] is True
+    api.rules.decide.assert_not_called()
+
+
+def test_llm_assessment_distinguishes_eligible_and_failed_cards(api, request_data, cards):
+    from agent.loop import _apply_verdicts
+
+    cards[0].accuracy = .4  # Clears ten points, but fails the vector's 25-point gate.
+    api.client.chat.completions.create.return_value = completion({
+        "install": None, "reason": "Text accuracy 70% is below 20% swapped input.",
+    })
+    planner = api.module.LLMPlanner()
+    decision = planner.decide(request_data, cards)
+    _apply_verdicts(planner, request_data, cards, decision)
+    assert "vector:sounds failed" in cards[0].reason
+    assert "text:captions passed" in cards[1].reason
+    assert "below 20%" not in cards[1].reason
+
+
+@pytest.mark.parametrize("swapped", [None, float("nan"), float("inf"), -.1, 1.1, .65])
+def test_llm_assessment_includes_mandatory_floor(api, request_data, cards, swapped):
+    cards[1].controls["swapped"] = swapped
+    ok, reason = api.module.LLMPlanner().assess(request_data, cards[1])
+    assert not ok
+    assert "failed" in reason and "swapped" in reason

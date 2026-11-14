@@ -15,7 +15,7 @@ from typing import Any
 
 from openai import OpenAI
 
-from agent.planner import RulePlanner, register_planner
+from agent.planner import RulePlanner, pct, register_planner
 from sense import config
 from sense.contracts import BridgeKind, Decision, FitRequest, LabelledSet, ModelInfo, ReportCard
 
@@ -126,9 +126,26 @@ class LLMPlanner:
         except Exception:
             return RulePlanner().plan(request, model, dataset)
 
+    def assess(self, request: FitRequest, card: ReportCard) -> tuple[bool, str]:
+        """Expose the same deterministic eligibility check to selection and card rendering."""
+        if not _clears_floor(card):
+            return False, (
+                f"{card.bridge} failed: accuracy {card.accuracy!r} and swapped input "
+                f"{card.controls.get('swapped')!r} do not establish the required 0.10 gain "
+                "with valid scores between 0 and 1."
+            )
+        ok, reason = RulePlanner().assess(request, card)
+        if ok and card.kind == "text":
+            swapped = card.controls["swapped"]
+            reason += (
+                f" Swapped input scored {pct(swapped)}, requiring at least "
+                f"{pct(swapped + 0.10)} accuracy."
+            )
+        return ok, reason
+
     @staticmethod
     def _fallback(request: FitRequest, cards: list[ReportCard]) -> Decision:
-        # The text rule only checks chance; apply the mandatory swapped floor to it too.
+        # Keep invalid or missing swapped scores out of the rule fallback too.
         eligible = [card for card in cards if _clears_floor(card)]
         decision = RulePlanner().decide(request, eligible)
         if not eligible:
@@ -142,18 +159,30 @@ class LLMPlanner:
             by_name = {card.bridge: card for card in cards}
             if len(by_name) != len(cards):
                 raise ValueError("Ambiguous bridge names")
+            assessments = {card.bridge: self.assess(request, card) for card in cards}
+            eligible = [name for name, (ok, _) in assessments.items() if ok]
+            if not eligible:
+                return self._fallback(request, cards)
             answer = self._ask(
                 "Choose a verified bridge to install, or null to refuse. Return JSON with install "
                 "and reason. Use a supplied bridge name exactly. The reason must be one or two "
                 "sentences citing the chosen accuracy and swapped control numerically (fractions "
-                "or percentages); for refusal cite the failed candidate's numbers. Never install "
+                "or percentages); for refusal cite a candidate's numbers. Only candidates marked "
+                "eligible in the deterministic assessments may be installed. Never install "
                 "accuracy below swapped + 0.10. For open scope, consider unseen_classes and avoid "
                 "claiming generalisation from closed categories. Weigh chance and all controls.",
-                {"request": request.to_dict(), "cards": [card.to_dict() for card in cards]},
+                {
+                    "request": request.to_dict(),
+                    "cards": [card.to_dict() for card in cards],
+                    "assessments": {
+                        name: {"eligible": ok, "reason": why}
+                        for name, (ok, why) in assessments.items()
+                    },
+                },
                 {
                     "type": "object",
                     "properties": {
-                        "install": {"anyOf": [{"type": "string", "enum": list(by_name)}, {"type": "null"}]},
+                        "install": {"anyOf": [{"type": "string", "enum": eligible}, {"type": "null"}]},
                         "reason": {"type": "string"},
                     },
                     "required": ["install", "reason"],
@@ -173,12 +202,16 @@ class LLMPlanner:
                 for card in relevant
             ):
                 raise ValueError("Decision reason must cite measured accuracy and swapped control")
-            if install is not None and not _clears_floor(by_name[install]):
-                raise ValueError("Decision fails the mandatory swapped-control floor")
-            # One shared gate: the model may only install a bridge the rule planner also accepts
-            # (vector margins, and the unseen-classes control for open scope).
-            if install is not None and not RulePlanner().assess(request, by_name[install])[0]:
+            if install is not None and not assessments[install][0]:
                 raise ValueError("Decision fails the shared acceptance gate")
+            # Numeric citations cannot validate arithmetic or other claims in model prose.
+            # Preserve the selection (including refusal), but publish measured assessments.
+            if install is None:
+                reason = "The planner chose not to install a bridge. " + " ".join(
+                    why for _, why in assessments.values()
+                )
+            else:
+                reason = f"Installed {install}. {assessments[install][1]}"
             return Decision(install, reason)
         except Exception:
             return self._fallback(request, cards)
