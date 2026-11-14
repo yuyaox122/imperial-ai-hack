@@ -176,6 +176,26 @@ Timings on an M4 Pro with 24 GB: fitting the plug, penalty search included, take
 embedding the 2,000 clips takes under three minutes including the encoder download; a full pilot run
 takes about 5 minutes on the 0.8B model and 12 minutes on the 2B.
 
+## Harness runs (sense/, 14 November)
+
+Runs of the harness in `sense/` and `agent/`, not of the pilot scripts, on the same M4 Pro, saved in
+`artifacts/` by `scripts/demo_cli.py --save` and `scripts/score_free_text.py`. The run records are in the format
+`sense.runs.import_record` reads, so they can be replayed (`POST /api/replay` after importing them).
+
+| File | What it holds |
+|---|---|
+| `run_qwen3.5-0.8b_gtzan_closed.json` | GTZAN, closed scope, after the duplicate fix (#41): `vector:gtzan` installed at 79.5% |
+| `run_qwen3.5-0.8b_esc50_open.json` | ESC-50, open scope: `vector:esc50` refused (51.2% on unseen sounds), `text:captions` installed at 80.5% |
+| `run_qwen3.5-0.8b_gtzan-folder_closed.json` | the GTZAN genre folders through `sense.datasets.from_folder` (50 clips per genre): 77.0% |
+| `run_openai-chat_esc50_open.json` | the API model `openai-chat` (gpt-5.4-mini), ESC-50 open scope, 50 items: `text:captions` at 90.0%, with API usage and five chats |
+| `free_text_qwen3.5-0.8b_gtzan_vector.json` | free-text answers through `vector:gtzan`: the reply names the true genre and no other in 37.0% of 100 clips |
+| `free_text_qwen3.5-0.8b_esc50_vector.json` | free-text answers through `vector:esc50`: 45.0% under strict matching ("Clock" for clock tick counts as no label) |
+
+Fit time in the harness: the closed-form fit of one block (ridge with its penalty search, plus the host's label
+targets) took 0.50 to 0.66 s on GTZAN's 597 fitting clips and 1.13 to 1.25 s on ESC-50's 1,200
+(`fit_seconds_by_layer` in the free-text files). The agent's whole fit step took 23.2 s and 25.9 s, because it
+fits five candidate blocks and scores each on 200 dev questions.
+
 ## Models and data used
 
 - Host: `Qwen/Qwen3.5-0.8B`, `Qwen/Qwen3.5-2B` (frozen). Transplant recipient:

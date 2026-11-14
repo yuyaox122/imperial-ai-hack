@@ -1,0 +1,144 @@
+{
+  "model": "qwen3.5-0.8b",
+  "dataset": "esc50",
+  "bridge": "vector:esc50",
+  "kind": "vector",
+  "question": "Which sound is in the audio clip? Answer in a few words.",
+  "n": 100,
+  "seed": 0,
+  "max_new_tokens": 32,
+  "result": {
+    "n": 100,
+    "names_true": 0.45,
+    "names_true_only": 0.45,
+    "names_other": 0.04,
+    "names_none": 0.51,
+    "interval": [
+      0.3561,
+      0.5476
+    ]
+  },
+  "controls": {
+    "swapped": {
+      "n": 100,
+      "names_true": 0.0,
+      "names_true_only": 0.0,
+      "names_other": 0.55,
+      "names_none": 0.45,
+      "interval": [
+        0.0,
+        0.037
+      ]
+    },
+    "no_input": {
+      "n": 100,
+      "names_true": 0.0,
+      "names_true_only": 0.0,
+      "names_other": 0.0,
+      "names_none": 1.0,
+      "interval": [
+        0.0,
+        0.037
+      ]
+    }
+  },
+  "examples": [
+    {
+      "source": "5-103415-A-2.wav",
+      "label": "pig",
+      "reply": "Pig",
+      "named": [
+        "pig"
+      ]
+    },
+    {
+      "source": "5-157204-B-16.wav",
+      "label": "wind",
+      "reply": "Wind",
+      "named": [
+        "wind"
+      ]
+    },
+    {
+      "source": "5-193473-B-12.wav",
+      "label": "crackling fire",
+      "reply": "Crack",
+      "named": []
+    },
+    {
+      "source": "5-201194-A-38.wav",
+      "label": "clock tick",
+      "reply": "Clock",
+      "named": []
+    },
+    {
+      "source": "5-211197-A-24.wav",
+      "label": "coughing",
+      "reply": "Coughing",
+      "named": [
+        "coughing"
+      ]
+    },
+    {
+      "source": "5-217158-A-0.wav",
+      "label": "dog",
+      "reply": "Dog",
+      "named": [
+        "dog"
+      ]
+    },
+    {
+      "source": "5-223099-B-32.wav",
+      "label": "keyboard typing",
+      "reply": "Keyboard",
+      "named": []
+    },
+    {
+      "source": "5-236299-A-34.wav",
+      "label": "can opening",
+      "reply": "Clicking sound",
+      "named": []
+    },
+    {
+      "source": "5-251971-A-47.wav",
+      "label": "airplane",
+      "reply": "Airplane",
+      "named": [
+        "airplane"
+      ]
+    },
+    {
+      "source": "5-263775-B-26.wav",
+      "label": "laughing",
+      "reply": "Singing",
+      "named": []
+    }
+  ],
+  "seconds": 29.09,
+  "created": "2026-11-14T19:02:56+00:00",
+  "build": {
+    "seconds": 25.91,
+    "fit_seconds": 25.9062,
+    "fit_seconds_by_layer": {
+      "0": 1.2519,
+      "1": 1.1419,
+      "2": 1.1331,
+      "3": 1.1368,
+      "4": 1.1298
+    },
+    "layer": 1,
+    "dev_accuracy": {
+      "0": 0.95,
+      "1": 0.995,
+      "2": 0.995,
+      "3": 0.965,
+      "4": 0.895
+    },
+    "installed": false
+  },
+  "machine": {
+    "platform": "macOS-27.0-arm64-arm-64bit",
+    "python": "3.12.12",
+    "machine": "arm64"
+  }
+}

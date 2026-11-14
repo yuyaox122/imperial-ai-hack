@@ -1,0 +1,411 @@
+{
+  "id": "bd0cba890f3a",
+  "origin": "cli",
+  "recorded": "2026-11-14T19:00:53+00:00",
+  "request": {
+    "model": "qwen3.5-0.8b",
+    "dataset": "esc50",
+    "modality": "audio",
+    "scope": "open"
+  },
+  "status": "done",
+  "events": [
+    {
+      "step": "inspect",
+      "status": "start",
+      "message": "Loading the base model qwen3.5-0.8b and the labelled set esc50.",
+      "data": {},
+      "t": 0.0
+    },
+    {
+      "step": "inspect",
+      "status": "ok",
+      "message": "Qwen3.5 0.8B (local) reads text and image natively, but not audio; it is open-weight. Environmental sounds (ESC-50): 50 labels, 1200 examples to fit on, 400 held out.",
+      "data": {
+        "model": {
+          "name": "qwen3.5-0.8b",
+          "label": "Qwen3.5 0.8B (local)",
+          "native": [
+            "text",
+            "image"
+          ],
+          "open_weights": true,
+          "available": true,
+          "note": ""
+        },
+        "dataset": {
+          "name": "esc50",
+          "title": "Environmental sounds (ESC-50)",
+          "labels": [
+            "dog",
+            "rooster",
+            "pig",
+            "cow",
+            "frog",
+            "cat",
+            "hen",
+            "insects",
+            "sheep",
+            "crow",
+            "rain",
+            "sea waves",
+            "crackling fire",
+            "crickets",
+            "chirping birds",
+            "water drops",
+            "wind",
+            "pouring water",
+            "toilet flush",
+            "thunderstorm",
+            "crying baby",
+            "sneezing",
+            "clapping",
+            "breathing",
+            "coughing",
+            "footsteps",
+            "laughing",
+            "brushing teeth",
+            "snoring",
+            "drinking sipping",
+            "door wood knock",
+            "mouse click",
+            "keyboard typing",
+            "door wood creaks",
+            "can opening",
+            "washing machine",
+            "vacuum cleaner",
+            "clock alarm",
+            "clock tick",
+            "glass breaking",
+            "helicopter",
+            "chainsaw",
+            "siren",
+            "car horn",
+            "engine",
+            "train",
+            "church bells",
+            "airplane",
+            "fireworks",
+            "hand saw"
+          ],
+          "n_fit": 1200,
+          "n_dev": 400,
+          "n_test": 400
+        }
+      },
+      "t": 2.181
+    },
+    {
+      "step": "plan",
+      "status": "start",
+      "message": "Asking the llm planner which bridges to try for open-scope audio.",
+      "data": {},
+      "t": 2.181
+    },
+    {
+      "step": "plan",
+      "status": "ok",
+      "message": "Bridges to try, in order: text, vector. The planner proposed text; vector added so every available bridge is verified.",
+      "data": {
+        "planner": "llm",
+        "kinds": [
+          "text",
+          "vector"
+        ]
+      },
+      "t": 3.2
+    },
+    {
+      "step": "fit",
+      "status": "start",
+      "message": "Building the text bridge, which describes each clip with its nearest caption.",
+      "data": {
+        "kind": "text"
+      },
+      "t": 3.201
+    },
+    {
+      "step": "fit",
+      "status": "ok",
+      "message": "Built text:captions in 0.0 s.",
+      "data": {
+        "kind": "text",
+        "bridge": "text:captions",
+        "seconds": 0.03,
+        "layer": null,
+        "dev_accuracy": null
+      },
+      "t": 3.232
+    },
+    {
+      "step": "fit",
+      "status": "start",
+      "message": "Fitting the vector bridge on 1200 labelled examples of Environmental sounds (ESC-50).",
+      "data": {
+        "kind": "vector"
+      },
+      "t": 3.232
+    },
+    {
+      "step": "fit",
+      "status": "ok",
+      "message": "Built vector:esc50 in 25.8 s. It writes after block 1, chosen on dev questions (block 0: 95.0%, block 1: 99.5%, block 2: 99.5%, block 3: 96.5%, block 4: 89.5%).",
+      "data": {
+        "kind": "vector",
+        "bridge": "vector:esc50",
+        "seconds": 25.8,
+        "layer": 1,
+        "dev_accuracy": {
+          "0": 0.95,
+          "1": 0.995,
+          "2": 0.995,
+          "3": 0.965,
+          "4": 0.895
+        }
+      },
+      "t": 29.029
+    },
+    {
+      "step": "verify",
+      "status": "start",
+      "message": "Scoring text:captions on held-out Environmental sounds (ESC-50) examples against controls.",
+      "data": {
+        "bridge": "text:captions"
+      },
+      "t": 29.029
+    },
+    {
+      "step": "verify",
+      "status": "ok",
+      "message": "text:captions scored 80.5% on 200 held-out questions (chance 20.0%); controls: swapped input 17.5%, no input 21.0%, nearest-example lookup 99.5%, specialist alone 99.0%.",
+      "data": {
+        "card": {
+          "model": "qwen3.5-0.8b",
+          "modality": "audio",
+          "dataset": "esc50",
+          "scope": "open",
+          "bridge": "text:captions",
+          "kind": "text",
+          "n": 200,
+          "chance": 0.2,
+          "accuracy": 0.805,
+          "controls": {
+            "swapped": 0.175,
+            "no_input": 0.21,
+            "lookup": 0.995,
+            "specialist_alone": 0.99
+          },
+          "verdict": "candidate",
+          "reason": "",
+          "created": "2026-11-14T19:01:36+00:00",
+          "interval": [
+            0.7446,
+            0.8539
+          ]
+        }
+      },
+      "t": 43.006
+    },
+    {
+      "step": "verify",
+      "status": "start",
+      "message": "Scoring vector:esc50 on held-out Environmental sounds (ESC-50) examples against controls, including text:captions.",
+      "data": {
+        "bridge": "vector:esc50"
+      },
+      "t": 43.006
+    },
+    {
+      "step": "verify",
+      "status": "ok",
+      "message": "vector:esc50 scored 96.5% on 200 held-out questions (chance 20.0%); controls: swapped input 18.0%, no input 21.0%, nearest-example lookup 99.5%, specialist alone 99.0%, text bridge 80.5%, unseen classes 51.2%.",
+      "data": {
+        "card": {
+          "model": "qwen3.5-0.8b",
+          "modality": "audio",
+          "dataset": "esc50",
+          "scope": "open",
+          "bridge": "vector:esc50",
+          "kind": "vector",
+          "n": 200,
+          "chance": 0.2,
+          "accuracy": 0.965,
+          "controls": {
+            "swapped": 0.18,
+            "no_input": 0.21,
+            "lookup": 0.995,
+            "specialist_alone": 0.99,
+            "text_bridge": 0.805,
+            "unseen_classes": 0.5125
+          },
+          "verdict": "candidate",
+          "reason": "",
+          "created": "2026-11-14T19:01:56+00:00",
+          "interval": [
+            0.9295,
+            0.9829
+          ]
+        }
+      },
+      "t": 62.612
+    },
+    {
+      "step": "decide",
+      "status": "start",
+      "message": "Asking the llm planner to choose among 2 verified candidates.",
+      "data": {},
+      "t": 62.612
+    },
+    {
+      "step": "decide",
+      "status": "ok",
+      "message": "Installed text:captions: it scored 80.5% against 20.0% chance, above the 35.0% bar for a text bridge. vector:esc50 failed: it scored 51.2% on classes it was not fitted on, more than 20 points below its 96.5% on fitted classes, so it does not hold up on new kinds of input.",
+      "data": {
+        "install": "text:captions",
+        "cards": [
+          {
+            "model": "qwen3.5-0.8b",
+            "modality": "audio",
+            "dataset": "esc50",
+            "scope": "open",
+            "bridge": "text:captions",
+            "kind": "text",
+            "n": 200,
+            "chance": 0.2,
+            "accuracy": 0.805,
+            "controls": {
+              "swapped": 0.175,
+              "no_input": 0.21,
+              "lookup": 0.995,
+              "specialist_alone": 0.99
+            },
+            "verdict": "installed",
+            "reason": "Installed text:captions: it scored 80.5% against 20.0% chance, above the 35.0% bar for a text bridge. vector:esc50 failed: it scored 51.2% on classes it was not fitted on, more than 20 points below its 96.5% on fitted classes, so it does not hold up on new kinds of input.",
+            "created": "2026-11-14T19:01:36+00:00",
+            "interval": [
+              0.7446,
+              0.8539
+            ]
+          },
+          {
+            "model": "qwen3.5-0.8b",
+            "modality": "audio",
+            "dataset": "esc50",
+            "scope": "open",
+            "bridge": "vector:esc50",
+            "kind": "vector",
+            "n": 200,
+            "chance": 0.2,
+            "accuracy": 0.965,
+            "controls": {
+              "swapped": 0.18,
+              "no_input": 0.21,
+              "lookup": 0.995,
+              "specialist_alone": 0.99,
+              "text_bridge": 0.805,
+              "unseen_classes": 0.5125
+            },
+            "verdict": "rejected",
+            "reason": "vector:esc50 scored 96.5% on 200 held-out questions (chance 20.0%); controls: swapped input 18.0%, no input 21.0%, nearest-example lookup 99.5%, specialist alone 99.0%, text bridge 80.5%, unseen classes 51.2%. text:captions was installed instead: Installed text:captions: it scored 80.5% against 20.0% chance, above the 35.0% bar for a text bridge. vector:esc50 failed: it scored 51.2% on classes it was not fitted on, more than 20 points below its 96.5% on fitted classes, so it does not hold up on new kinds of input.",
+            "created": "2026-11-14T19:01:56+00:00",
+            "interval": [
+              0.9295,
+              0.9829
+            ]
+          }
+        ]
+      },
+      "t": 64.007
+    },
+    {
+      "step": "install",
+      "status": "start",
+      "message": "Installing text:captions for Qwen3.5 0.8B (local), replacing the earlier vector:gtzan sense (79.5% on gtzan, closed scope).",
+      "data": {
+        "bridge": "text:captions",
+        "replaced": "vector:gtzan"
+      },
+      "t": 64.009
+    },
+    {
+      "step": "install",
+      "status": "ok",
+      "message": "Installed text:captions; Qwen3.5 0.8B (local) can now take audio input in chat.",
+      "data": {
+        "bridge": "text:captions",
+        "replaced": "vector:gtzan"
+      },
+      "t": 64.013
+    },
+    {
+      "step": "done",
+      "status": "ok",
+      "message": "Qwen3.5 0.8B (local) can now take audio input through text:captions: it scored 80.5% on 200 held-out questions, against 20.0% chance. It replaced the earlier vector:gtzan sense (79.5% on gtzan, closed scope).",
+      "data": {
+        "installed": "text:captions",
+        "replaced": "vector:gtzan"
+      },
+      "t": 64.013
+    }
+  ],
+  "cards": [
+    {
+      "model": "qwen3.5-0.8b",
+      "modality": "audio",
+      "dataset": "esc50",
+      "scope": "open",
+      "bridge": "text:captions",
+      "kind": "text",
+      "n": 200,
+      "chance": 0.2,
+      "accuracy": 0.805,
+      "controls": {
+        "swapped": 0.175,
+        "no_input": 0.21,
+        "lookup": 0.995,
+        "specialist_alone": 0.99
+      },
+      "verdict": "installed",
+      "reason": "Installed text:captions: it scored 80.5% against 20.0% chance, above the 35.0% bar for a text bridge. vector:esc50 failed: it scored 51.2% on classes it was not fitted on, more than 20 points below its 96.5% on fitted classes, so it does not hold up on new kinds of input.",
+      "created": "2026-11-14T19:01:36+00:00",
+      "interval": [
+        0.7446,
+        0.8539
+      ]
+    },
+    {
+      "model": "qwen3.5-0.8b",
+      "modality": "audio",
+      "dataset": "esc50",
+      "scope": "open",
+      "bridge": "vector:esc50",
+      "kind": "vector",
+      "n": 200,
+      "chance": 0.2,
+      "accuracy": 0.965,
+      "controls": {
+        "swapped": 0.18,
+        "no_input": 0.21,
+        "lookup": 0.995,
+        "specialist_alone": 0.99,
+        "text_bridge": 0.805,
+        "unseen_classes": 0.5125
+      },
+      "verdict": "rejected",
+      "reason": "vector:esc50 scored 96.5% on 200 held-out questions (chance 20.0%); controls: swapped input 18.0%, no input 21.0%, nearest-example lookup 99.5%, specialist alone 99.0%, text bridge 80.5%, unseen classes 51.2%. text:captions was installed instead: Installed text:captions: it scored 80.5% against 20.0% chance, above the 35.0% bar for a text bridge. vector:esc50 failed: it scored 51.2% on classes it was not fitted on, more than 20 points below its 96.5% on fitted classes, so it does not hold up on new kinds of input.",
+      "created": "2026-11-14T19:01:56+00:00",
+      "interval": [
+        0.9295,
+        0.9829
+      ]
+    }
+  ],
+  "installed": "text:captions",
+  "error": null,
+  "seconds": 64.01,
+  "machine": {
+    "platform": "macOS-27.0-arm64-arm-64bit",
+    "python": "3.12.12",
+    "machine": "arm64"
+  }
+}

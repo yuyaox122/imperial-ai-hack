@@ -18,7 +18,7 @@ import pytest
 from agent import jobs, loop
 from agent import planner as planner_mod
 from agent.planner import RulePlanner, get_planner, register_planner
-from sense import bridges, datasets, models, registry, verify
+from sense import bridges, datasets, models, registry, specialists, verify
 from sense.contracts import (
     Decision,
     FitRequest,
@@ -348,6 +348,70 @@ def test_failing_step_emits_error_and_reraises(fake_sense, monkeypatch):
     assert events[-1].data["step"] == "fit"
 
 
+def test_plan_event_lists_unavailable_bridges(fake_sense, monkeypatch):
+    rows = [{"kind": "native", "available": False, "why": "Fake model does not read audio"},
+            {"kind": "vector", "available": True, "why": ""},
+            {"kind": "image", "available": False, "why": "no audio-to-image renderer"}]
+    monkeypatch.setattr(bridges, "availability", lambda info, modality: rows, raising=False)
+    fake_sense.results = {"vector": (0.85, {"swapped": 0.2}), "text": (0.6, {"swapped": 0.2})}
+    events = run(FitRequest("fake", "toy"))[2]
+    plan_ok = next(e for e in events if e.step == "plan" and e.status == "ok")
+    assert plan_ok.data["unavailable"] == [{"kind": "native", "why": "Fake model does not read audio"},
+                                           {"kind": "image", "why": "no audio-to-image renderer"}]
+
+
+def test_fit_events_name_the_specialist_and_verify_events_are_timed(fake_sense, monkeypatch):
+    spec = {"name": "fake-clap", "label": "Fake CLAP", "modality": "audio", "dim": 64, "embed_seconds_per_file": 0.0}
+    monkeypatch.setattr(specialists, "describe", lambda modality: spec, raising=False)
+    fake_sense.results = {"vector": (0.85, {"swapped": 0.2}), "text": (0.6, {"swapped": 0.2})}
+    events = run(FitRequest("fake", "toy"))[2]
+    fit_ok = [e for e in events if e.step == "fit" and e.status == "ok"]
+    verify_ok = [e for e in events if e.step == "verify" and e.status == "ok"]
+    assert len(fit_ok) == 2 and len(verify_ok) == 2
+    assert all(e.data["specialist"] == spec for e in fit_ok)
+    assert all(e.data["seconds"] >= 0 for e in verify_ok)
+
+
+def test_trace_facts_default_when_sense_lacks_them(fake_sense, monkeypatch):
+    monkeypatch.delattr(bridges, "availability", raising=False)
+    monkeypatch.delattr(specialists, "describe", raising=False)
+    fake_sense.results = {"vector": (0.85, {"swapped": 0.2}), "text": (0.6, {"swapped": 0.2})}
+    events = run(FitRequest("fake", "toy"))[2]
+    assert next(e for e in events if e.step == "plan" and e.status == "ok").data["unavailable"] == []
+    fit_ok = [e for e in events if e.step == "fit" and e.status == "ok"]
+    assert fit_ok and all(e.data["specialist"] is None for e in fit_ok)
+
+
+def test_on_cards_runs_after_verify_and_t0_sets_the_clock(fake_sense):
+    fake_sense.results = {"vector": (0.85, {"swapped": 0.2}), "text": (0.6, {"swapped": 0.2})}
+    got = []
+    events = []
+    seen_at = []  # how many events had been emitted when on_cards ran
+
+    def on_cards(cards):
+        got.append(cards)
+        seen_at.append(len(events))
+
+    loop.run_fit(FitRequest("fake", "toy"), events.append, on_cards=on_cards, t0=time.monotonic() - 100)
+    assert len(got) == 1 and len(got[0]) == 2
+    [n] = seen_at
+    assert (events[n - 1].step, events[n - 1].status) == ("verify", "ok")
+    assert (events[n].step, events[n].status) == ("decide", "start")
+    assert all(e.t >= 100 for e in events)
+
+
+def test_a_raising_specialist_describe_gives_none_and_the_run_finishes(fake_sense, monkeypatch):
+    def describe(modality):
+        raise ValueError(f"No specialist is known for {modality}.")
+
+    monkeypatch.setattr(specialists, "describe", describe, raising=False)
+    fake_sense.results = {"vector": (0.85, {"swapped": 0.2}), "text": (0.6, {"swapped": 0.2})}
+    cards, installed, events = run(FitRequest("fake", "toy"))
+    fit_ok = [e for e in events if e.step == "fit" and e.status == "ok"]
+    assert len(fit_ok) == 2 and all(e.data["specialist"] is None for e in fit_ok)
+    assert events[-1].step == "done" and events[-1].status == "ok" and installed == "vector:toy"
+
+
 # ----------------------------------------------------------------------------- jobs
 def test_job_runs_and_reports_results(fake_sense, fresh_jobs, monkeypatch):
     monkeypatch.setattr(planner_mod, "_preferred", None)  # the rule planner, even if an LLM one is registered
@@ -379,6 +443,73 @@ def test_failing_job_is_marked_failed(fake_sense, fresh_jobs, monkeypatch):
     assert "gtzan_clap.npz is missing" in state.error
     assert state.events[-1].step == "error" and state.events[-1].status == "fail"
     assert state.installed is None and state.cards == []
+
+
+def test_listener_gets_every_event_then_the_cards(fake_sense, fresh_jobs, monkeypatch):
+    monkeypatch.setattr(planner_mod, "_preferred", None)
+    monkeypatch.setattr(jobs, "_listeners", [])
+    fake_sense.results = {"vector": (0.85, {"swapped": 0.2}), "text": (0.6, {"swapped": 0.2})}
+    seen = []
+    jobs.add_listener(lambda job_id, event, cards: seen.append((job_id, event, cards)))
+    job_id = jobs.start(FitRequest("fake", "toy"))
+    assert wait_for(lambda: jobs.get(job_id).status != "running")
+    assert wait_for(lambda: bool(seen) and seen[-1][1] is None)  # the cards call follows the status flip
+    job = jobs.get(job_id)
+    events = [e for _, e, _ in seen[:-1]]
+    assert all(c is None for _, _, c in seen[:-1]) and events == job.events
+    assert seen[-1][1] is None and [c.bridge for c in seen[-1][2]] == [c.bridge for c in job.cards]
+    assert {j for j, _, _ in seen} == {job.id}
+
+
+def test_listener_gets_empty_cards_when_the_job_fails(fake_sense, fresh_jobs, monkeypatch):
+    def broken(name):
+        raise FileNotFoundError("gtzan_clap.npz is missing; run socket_pilot/clap_embed_gtzan.py first")
+
+    monkeypatch.setattr(datasets, "load_labelled_set", broken)
+    monkeypatch.setattr(jobs, "_listeners", [])
+    seen = []
+    jobs.add_listener(lambda job_id, event, cards: seen.append((job_id, event, cards)))
+    job_id = jobs.start(FitRequest("fake", "gtzan"))
+    assert wait_for(lambda: jobs.get(job_id).status != "running")
+    assert wait_for(lambda: bool(seen) and seen[-1][1] is None)
+    job = jobs.get(job_id)
+    assert job.status == "failed"
+    assert [e for _, e, _ in seen[:-1]] == job.events and job.events[-1].step == "error"
+    assert seen[-1] == (job.id, None, [])
+
+
+def test_a_raising_listener_does_not_stop_the_run(fake_sense, fresh_jobs, monkeypatch):
+    monkeypatch.setattr(planner_mod, "_preferred", None)
+    monkeypatch.setattr(jobs, "_listeners", [])
+    fake_sense.results = {"vector": (0.85, {"swapped": 0.2}), "text": (0.6, {"swapped": 0.2})}
+    jobs.add_listener(lambda *a: (_ for _ in ()).throw(RuntimeError("boom")))
+    seen = []
+    jobs.add_listener(lambda job_id, event, cards: seen.append((job_id, event, cards)))
+    job_id = jobs.start(FitRequest("fake", "toy"))
+    assert wait_for(lambda: jobs.get(job_id).status != "running")
+    assert wait_for(lambda: bool(seen) and seen[-1][1] is None)  # a later listener still hears everything
+    job = jobs.get(job_id)
+    assert job.status == "done"
+    assert job.error is None and len(job.cards) == 2 and job.events[-1].step == "done"
+    assert [e for _, e, _ in seen[:-1]] == job.events
+
+
+def test_remove_listener_stops_calls(fake_sense, fresh_jobs, monkeypatch):
+    monkeypatch.setattr(planner_mod, "_preferred", None)
+    monkeypatch.setattr(jobs, "_listeners", [])
+    fake_sense.results = {"vector": (0.85, {"swapped": 0.2}), "text": (0.6, {"swapped": 0.2})}
+    seen = []
+
+    def listener(job_id, event, cards):
+        seen.append((job_id, event, cards))
+
+    jobs.add_listener(listener)
+    jobs.remove_listener(listener)
+    jobs.remove_listener(listener)  # removing one that is not registered is a no-op
+    job_id = jobs.start(FitRequest("fake", "toy"))
+    assert wait_for(lambda: jobs.get(job_id).status != "running")
+    assert jobs.get(job_id).status == "done"
+    assert seen == []
 
 
 def test_one_job_at_a_time_with_live_events(fresh_jobs, monkeypatch):

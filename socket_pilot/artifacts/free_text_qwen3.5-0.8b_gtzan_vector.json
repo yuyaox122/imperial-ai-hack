@@ -1,0 +1,154 @@
+{
+  "model": "qwen3.5-0.8b",
+  "dataset": "gtzan",
+  "bridge": "vector:gtzan",
+  "kind": "vector",
+  "question": "Which genre of music is in the audio clip? Answer in a few words.",
+  "n": 100,
+  "seed": 0,
+  "max_new_tokens": 32,
+  "result": {
+    "n": 100,
+    "names_true": 0.37,
+    "names_true_only": 0.37,
+    "names_other": 0.63,
+    "names_none": 0.0,
+    "interval": [
+      0.2818,
+      0.4678
+    ]
+  },
+  "controls": {
+    "swapped": {
+      "n": 100,
+      "names_true": 0.06,
+      "names_true_only": 0.06,
+      "names_other": 0.94,
+      "names_none": 0.0,
+      "interval": [
+        0.0278,
+        0.1248
+      ]
+    },
+    "no_input": {
+      "n": 100,
+      "names_true": 0.08,
+      "names_true_only": 0.08,
+      "names_other": 0.92,
+      "names_none": 0.0,
+      "interval": [
+        0.0411,
+        0.15
+      ]
+    }
+  },
+  "examples": [
+    {
+      "source": "blues.00007.wav",
+      "label": "blues",
+      "reply": "Hip hop",
+      "named": [
+        "hip hop"
+      ]
+    },
+    {
+      "source": "classical.00007.wav",
+      "label": "classical",
+      "reply": "Classical",
+      "named": [
+        "classical"
+      ]
+    },
+    {
+      "source": "country.00062.wav",
+      "label": "country",
+      "reply": "Rock",
+      "named": [
+        "rock"
+      ]
+    },
+    {
+      "source": "disco.00073.wav",
+      "label": "disco",
+      "reply": "Rock",
+      "named": [
+        "rock"
+      ]
+    },
+    {
+      "source": "hiphop.00061.wav",
+      "label": "hip hop",
+      "reply": "Hip hop",
+      "named": [
+        "hip hop"
+      ]
+    },
+    {
+      "source": "jazz.00042.wav",
+      "label": "jazz",
+      "reply": "Hip hop",
+      "named": [
+        "hip hop"
+      ]
+    },
+    {
+      "source": "metal.00088.wav",
+      "label": "metal",
+      "reply": "Hip hop",
+      "named": [
+        "hip hop"
+      ]
+    },
+    {
+      "source": "pop.00084.wav",
+      "label": "pop",
+      "reply": "Pop",
+      "named": [
+        "pop"
+      ]
+    },
+    {
+      "source": "reggae.00069.wav",
+      "label": "reggae",
+      "reply": "Pop",
+      "named": [
+        "pop"
+      ]
+    },
+    {
+      "source": "rock.00094.wav",
+      "label": "rock",
+      "reply": "Rock",
+      "named": [
+        "rock"
+      ]
+    }
+  ],
+  "seconds": 26.03,
+  "created": "2026-11-14T19:00:53+00:00",
+  "build": {
+    "seconds": 0.0,
+    "fit_seconds": 23.2031,
+    "fit_seconds_by_layer": {
+      "0": 0.6609,
+      "1": 0.5203,
+      "2": 0.5049,
+      "3": 0.5178,
+      "4": 0.5243
+    },
+    "layer": 0,
+    "dev_accuracy": {
+      "0": 0.795,
+      "1": 0.795,
+      "2": 0.775,
+      "3": 0.57,
+      "4": 0.505
+    },
+    "installed": true
+  },
+  "machine": {
+    "platform": "macOS-27.0-arm64-arm-64bit",
+    "python": "3.12.12",
+    "machine": "arm64"
+  }
+}
