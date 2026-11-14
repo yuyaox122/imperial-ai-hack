@@ -86,10 +86,26 @@ class ModelInfo:
 
 @runtime_checkable
 class BaseModel(Protocol):
+    """A model the user chats with.
+
+    Optional streaming. A model may also have
+        chat_stream(message, inputs, max_new_tokens=96, history=None) -> Iterator[str]
+    which takes the same arguments as chat() and yields pieces of the reply in order; their concatenation is the
+    reply chat() would give. It is not part of this protocol: callers check for it (getattr) and fall back to
+    chat() when a model lacks it. A consumer may stop reading early; the model must then free whatever it holds
+    (a lock, a worker thread, an HTTP response) when the iterator is closed. An error during generation is raised
+    to the consumer, after the pieces already yielded."""
+
     info: ModelInfo
 
-    def chat(self, message: str, inputs: list[SenseInput], max_new_tokens: int = 96) -> str:
-        """Free-text reply to `message`, with the bridged inputs available to the model."""
+    def chat(
+        self, message: str, inputs: list[SenseInput], max_new_tokens: int = 96, history: list[dict] | None = None,
+    ) -> str:
+        """Free-text reply to `message`, with the bridged inputs available to the model.
+
+        `history` holds the earlier turns of the conversation, oldest first: a list of {"role": "user" or
+        "assistant", "content": str}. It is text only: the inputs of earlier turns are not sent again, only
+        `inputs` (for this message) reach the model. None or [] starts a new conversation."""
 
     def choose(self, items: list[ChoiceItem]) -> list[int]:
         """For each item, the index of the option the model picks. Deterministic. Used by verification."""

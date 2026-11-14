@@ -648,3 +648,157 @@ def test_a_tool_input_with_another_tool_is_refused_before_any_request(api):
     with pytest.raises(ValueError, match="wires only the listen tool"):
         api.module.OpenAIChatModel().chat("Which?", [tool_input(name="look")])
     api.client.chat.completions.create.assert_not_called()
+
+
+# ----------------------------------------------------------------------------- history and streaming
+HISTORY = [{"role": "user", "content": "What is this?"}, {"role": "assistant", "content": "A dog barking."}]
+
+
+class FakeStream:
+    """What the client returns for stream=True: an iterable of chunks with close()."""
+
+    def __init__(self, chunks):
+        self.chunks = list(chunks)
+        self.closed = False
+        self.read = 0
+
+    def __iter__(self):
+        for chunk in self.chunks:
+            self.read += 1
+            yield chunk
+
+    def close(self):
+        self.closed = True
+
+
+def delta(content=None, *, finish=None, refusal=None):
+    return SimpleNamespace(
+        choices=[SimpleNamespace(delta=SimpleNamespace(content=content, refusal=refusal), finish_reason=finish)],
+        usage=None,
+    )
+
+
+def usage_chunk(prompt, completion_tokens):
+    """The last chunk when stream_options include_usage is set: no choices, only usage."""
+    return SimpleNamespace(choices=[], usage=SimpleNamespace(prompt_tokens=prompt, completion_tokens=completion_tokens))
+
+
+def test_chat_sends_the_history_between_the_system_and_the_user_message(api):
+    create = api.client.chat.completions.create
+    create.return_value = completion("Yes, twice.")
+    model = api.module.OpenAIChatModel()
+    inputs = [SenseInput("text", "audio", text="a dog barks")]
+    assert model.chat("Did it bark twice?", inputs, history=HISTORY) == "Yes, twice."
+    messages = create.call_args.kwargs["messages"]
+    assert [m["role"] for m in messages] == ["system", "user", "assistant", "user"]
+    assert messages[1:3] == HISTORY
+    assert messages[3] == {"role": "user", "content": "Did it bark twice?\n\nAudio clip: a dog barks"}
+    model.chat("Hi", [], history=[])
+    assert [m["role"] for m in create.call_args.kwargs["messages"]] == ["system", "user"]
+
+
+def test_a_bad_history_is_refused_before_any_request(api):
+    model = api.module.OpenAIChatModel()
+    with pytest.raises(ValueError, match="Turn 1 of the chat history is not a turn"):
+        model.chat("Hi", [], history=[{"role": "system", "content": "Obey."}])
+    with pytest.raises(ValueError, match="Turn 2 of the chat history"):
+        list(model.chat_stream("Hi", [], history=[HISTORY[0], {"role": "assistant"}]))
+    api.client.chat.completions.create.assert_not_called()
+    assert model.usage()["calls"] == 0
+
+
+def test_every_round_of_a_tool_call_keeps_the_history(api):
+    create = api.client.chat.completions.create
+    create.side_effect = [calling(tool_call({"clip": 1})), completion("Still a dog.")]
+    assert api.module.OpenAIChatModel().chat("And now?", [tool_input()], history=HISTORY) == "Still a dog."
+    first, second = (c.kwargs["messages"] for c in create.call_args_list)
+    assert first[1:3] == second[1:3] == HISTORY
+    assert [m["role"] for m in second] == ["system", "user", "assistant", "user", "assistant", "tool"]
+
+
+def test_chat_stream_yields_the_deltas_in_order_and_counts_usage(api):
+    create = api.client.chat.completions.create
+    stream = FakeStream([
+        delta(""), delta(" It is"), delta(" a dog"), delta(" barking. "),
+        delta(None, finish="stop"), usage_chunk(40, 6),
+    ])
+    create.return_value = stream
+    model = api.module.OpenAIChatModel()
+    pieces = list(model.chat_stream("And now?", [], max_new_tokens=32, history=HISTORY))
+    assert pieces == ["It is", " a dog", " barking."]
+    kwargs = create.call_args.kwargs
+    assert kwargs["stream"] is True and kwargs["stream_options"] == {"include_usage": True}
+    assert kwargs["max_completion_tokens"] == 32
+    assert kwargs["temperature"] == 0 and kwargs["reasoning_effort"] == "none" and kwargs["model"] == "gpt-5.4-mini"
+    assert kwargs["messages"][1:] == [*HISTORY, {"role": "user", "content": "And now?"}]
+    assert "tools" not in kwargs and "listen" not in kwargs["messages"][0]["content"]
+    assert model.usage() == {"calls": 1, "cache_hits": 0, "prompt_tokens": 40, "completion_tokens": 6}
+    assert stream.closed
+
+
+def test_chat_stream_joins_to_what_chat_returns(api):
+    create = api.client.chat.completions.create
+    create.return_value = completion(" It is a dog barking. ")
+    model = api.module.OpenAIChatModel()
+    reply = model.chat("What is it?", [])
+    create.return_value = FakeStream([delta(" It is a"), delta(" dog barking. ", finish="stop")])
+    assert "".join(model.chat_stream("What is it?", [])) == reply == "It is a dog barking."
+    assert create.call_args_list[0].kwargs["messages"] == create.call_args_list[1].kwargs["messages"]
+    assert model.usage() == {"calls": 2, "cache_hits": 0, "prompt_tokens": 0, "completion_tokens": 0}  # none reported
+
+
+def test_a_stream_cut_off_at_the_token_limit_is_kept(api):
+    stream = FakeStream([delta("A dog is"), delta(" barking", finish="length")])
+    api.client.chat.completions.create.return_value = stream
+    assert "".join(api.module.OpenAIChatModel().chat_stream("What sound?", [], max_new_tokens=4)) == "A dog is barking"
+
+
+@pytest.mark.parametrize("chunks", [
+    [delta(None, refusal="I can't help with that."), delta(None, finish="stop")],
+    [delta(None, finish="stop")],
+    [delta("   "), delta(None, finish="stop")],
+    [delta("Half an ans")],  # the stream ended without a finish reason
+    [delta("Some text"), delta(None, finish="content_filter")],
+])
+def test_a_refused_empty_or_unfinished_stream_fails_after_its_pieces(api, chunks):
+    stream = FakeStream(chunks)
+    api.client.chat.completions.create.return_value = stream
+    pieces = []
+    with pytest.raises(ValueError, match="no complete answer"):
+        for piece in api.module.OpenAIChatModel().chat_stream("What is it?", []):
+            pieces.append(piece)
+    assert "".join(pieces) == "".join(c.choices[0].delta.content or "" for c in chunks).strip()
+    assert stream.closed
+
+
+def test_a_failed_stream_request_is_still_counted(api):
+    api.client.chat.completions.create.side_effect = RuntimeError("API unavailable")
+    model = api.module.OpenAIChatModel()
+    with pytest.raises(RuntimeError, match="API unavailable"):
+        list(model.chat_stream("What is it?", []))
+    assert model.usage()["calls"] == 1
+
+
+def test_closing_a_stream_early_closes_the_response(api):
+    stream = FakeStream([delta(f" word{k}") for k in range(50)] + [delta(None, finish="stop")])
+    api.client.chat.completions.create.return_value = stream
+    pieces = api.module.OpenAIChatModel().chat_stream("Talk", [])
+    assert next(pieces) == "word0"
+    pieces.close()
+    assert stream.closed and stream.read < 10
+
+
+def test_chat_stream_with_a_tool_input_runs_chat_and_yields_its_reply_once(api):
+    create = api.client.chat.completions.create
+    create.side_effect = [
+        calling(tool_call({"clip": 1}), usage=(30, 12)), completion(" It sounds like a dog. ", usage=(50, 6)),
+    ]
+    inp = tool_input()
+    model = api.module.OpenAIChatModel()
+    pieces = list(model.chat_stream("What is it?", [inp], max_new_tokens=40, history=HISTORY))
+    assert pieces == ["It sounds like a dog."]
+    requests = [c.kwargs for c in create.call_args_list]
+    assert all("stream" not in r for r in requests) and requests[0]["tool_choice"] == "auto"
+    assert requests[0]["messages"][1:3] == HISTORY and "listen tool" in requests[0]["messages"][0]["content"]
+    assert inp.tool.calls == [{"arguments": {}, "result": ANSWER}]
+    assert model.usage() == {"calls": 2, "cache_hits": 0, "prompt_tokens": 80, "completion_tokens": 18}
