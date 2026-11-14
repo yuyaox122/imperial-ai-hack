@@ -89,6 +89,26 @@ Chat through the installed `vector:gtzan` bridge worked on held-out clips. The b
 
 A run names the sense it affects. When it installs a bridge for a model that already has an audio sense, the trace says which sense it replaced and with what score. When it installs nothing, the trace names the earlier sense that chat keeps using. Each chat took 2.6 to 4.1 s, including CLAP's first load. Every endpoint in `server/app.py` was exercised against the real model: models, datasets, fit, jobs (including 409 for a second run and 400 for a bad scope), senses, samples (the WAV is served), chat and the interface.
 
+## A real task: forest-monitoring triage
+
+A forest-monitoring team wants chainsaw, hand saw and engine sounds flagged, so a ranger listens to fewer clips. ESC-50 stands in for field recordings: 400 clips per fold, 24 of them targets. `eval/triage.py` asks the base model about each clip through its installed sense, and asks again with no audio as a control. As a second control, CLAP lookup flags the clips whose nearest fitted example is a target, with no base model.
+
+We chose the question wording on fold 4 and report once on fold 5. On fold 4, Qwen3.5-0.8B with `text:captions`:
+
+| question | flagged | no input flags | caught | precision |
+|---|---|---|---|---|
+| ranger: "A forest ranger is listening for illegal logging. Which of these is in the audio clip?" | 372 | 400 | 24/24 | 6.5% |
+| neutral: "Which of these is in the audio clip?" | 295 | 400 | 24/24 | 8.1% |
+| yesno: "Is there a <target> in the audio clip?" | 212 | 400 | 23/24 | 10.8% |
+| chat: "What sound is in the audio clip? Answer in a few words." | 21 | 0 | 13/24 | 61.9% |
+
+The three wordings that offer the targets flag every clip with no audio at all; the model answers "chainsaw" to nothing. Only the open question beats no input. On fold 5 it flagged 26 clips and caught 13 of the 24 targets (54.2% recall, 50.0% precision, 3.5% false alarms): 6 of 8 chainsaws, 7 of 8 engines and none of the 8 hand saws. With no input it flagged none. CLAP lookup flagged 24 and caught 23 (95.8% precision, 0.3% false alarms). On this task the 0.8B adds nothing over CLAP, and a ranger should run the lookup. Records: `socket_pilot/artifacts/triage_qwen3.5-0.8b_esc50_*.json`.
+
+```bash
+.venv/bin/python -m integrations.databricks triage --question chat --fold test     # run it with the installed sense
+.venv/bin/python -m integrations.databricks triage --from socket_pilot/artifacts/triage_*.json   # write saved records
+```
+
 ## Databricks
 
 Every agent run is recorded in a Databricks workspace (Free Edition), so each install has a pass or fail record behind it.
@@ -96,6 +116,7 @@ Every agent run is recorded in a Databricks workspace (Free Edition), so each in
 - Delta tables `workspace.sensorium.runs`, `report_cards` and `trace_events`. Each report card is a row, with the accuracy, its interval, every control as its own column, the verdict and whether it was installed.
 - The run record (`run.json`) in the Volume `/Volumes/workspace/sensorium/runs/<run id>/`.
 - One MLflow run per verified bridge in the experiment `/Users/<you>/sensorium`, with the accuracy and controls as metrics and the verdict as a tag.
+- Triage: `triage_batches` (one row per method per batch, with the question) and `triage_clips` (one row per clip, with the reply), plus one MLflow run per batch.
 
 ```bash
 uv sync --group databricks                                  # client libraries, optional
