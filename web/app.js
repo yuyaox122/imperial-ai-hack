@@ -1,10 +1,10 @@
 "use strict";
 
 /*
- * Sense harness interface ("Sensorium" in the team Figma file): top bar, chat, sense graph, agent run
- * and report card. Talks only to the HTTP API documented in server/app.py. No framework, no build step.
- * The layout follows the Figma screens 01 to 03 and every part is a component from the Figma
- * "Design system" page; design/figma-notes.md maps them. Only data the API returns is shown.
+ * Sense harness interface ("Sensorium"): band, chat, sense graph, agent run, report card and status line.
+ * Drawn in Michael's Henad design system as a minimal FUI; design/figma-notes.md maps the parts to Figma.
+ * Talks only to the HTTP API documented in server/app.py. No framework, no build step.
+ * Only data the API returns is shown.
  */
 
 const POLL_MS = 700;
@@ -64,7 +64,7 @@ const STEPS = [
   { key: "install", title: "Install", idle: "Add it to the model's senses, ready for chat." },
 ];
 const STEP_INDEX = Object.fromEntries(STEPS.map((s) => [s.key, s]));
-const STEP_ICONS = { done: "check-circle", running: "loader", pending: "circle", refused: "ban" };
+const STEP_WORDS = { done: "Done", running: "Running", pending: "Pending", refused: "Refused", failed: "Failed" };
 
 const state = {
   models: [],
@@ -84,6 +84,7 @@ const state = {
   reportBridge: null, // which card the report panel shows
   reportCard: null, // the card it shows, for Export report
   showLog: false,
+  server: "loading", // loading, ok or error: whether /api/models answered, for the status line
 };
 
 const player = new Audio();
@@ -109,90 +110,50 @@ function h(tag, attrs, ...children) {
   return el;
 }
 
-/* Interface icons: Lucide glyphs (ISC licence) exported from the Figma "Icons" set (19:57), 16 px grid. */
+/* Interface icons: Material Design Icons 7.4.47 by Pictogrammers (Apache-2.0), the icon set Henad's app uses.
+   24 px grid, drawn in the colour of the text beside them. */
 const ICONS = {
-  sparkles: [
-    "M6.62467 10.3333C6.56515 10.1026 6.44489 9.89206 6.27641 9.72358C6.10793 9.5551 5.89738 9.43485 5.66667 9.37533L1.57667 8.32066C1.50689 8.30085 1.44547 8.25883 1.40174 8.20096C1.35801 8.14309 1.33435 8.07253 1.33435 7.99999C1.33435 7.92746 1.35801 7.8569 1.40174 7.79903C1.44547 7.74116 1.50689 7.69913 1.57667 7.67933L5.66667 6.62399C5.8973 6.56453 6.1078 6.44438 6.27627 6.27602C6.44474 6.10766 6.56504 5.89725 6.62467 5.66666L7.67933 1.57666C7.69894 1.50661 7.74092 1.44489 7.79888 1.40092C7.85684 1.35696 7.92759 1.33316 8.00033 1.33316C8.07308 1.33316 8.14383 1.35696 8.20179 1.40092C8.25974 1.44489 8.30173 1.50661 8.32133 1.57666L9.37533 5.66666C9.43485 5.89737 9.55511 6.10792 9.72359 6.27641C9.89207 6.44489 10.1026 6.56514 10.3333 6.62466L14.4233 7.67866C14.4937 7.69806 14.5557 7.74 14.5999 7.79804C14.6441 7.85609 14.668 7.92703 14.668 7.99999C14.668 8.07295 14.6441 8.1439 14.5999 8.20194C14.5557 8.25999 14.4937 8.30193 14.4233 8.32133L10.3333 9.37533C10.1026 9.43485 9.89207 9.5551 9.72359 9.72358C9.55511 9.89206 9.43485 10.1026 9.37533 10.3333L8.32067 14.4233C8.30106 14.4934 8.25908 14.5551 8.20112 14.5991C8.14316 14.643 8.07241 14.6668 7.99967 14.6668C7.92692 14.6668 7.85617 14.643 7.79821 14.5991C7.74026 14.5551 7.69827 14.4934 7.67867 14.4233L6.62467 10.3333Z",
-    "M13.3334 2V4.66667",
-    "M14.6667 3.33333H12",
-  ],
-  cpu: [
-    "M12 2.66667H3.99996C3.26358 2.66667 2.66663 3.26363 2.66663 4.00001V12C2.66663 12.7364 3.26358 13.3333 3.99996 13.3333H12C12.7363 13.3333 13.3333 12.7364 13.3333 12V4.00001C13.3333 3.26363 12.7363 2.66667 12 2.66667Z",
-    "M10 6H6V10H10V6Z",
-    "M10 1.33333V2.66666M10 13.3333V14.6667M1.33337 10H2.66671M1.33337 6H2.66671M13.3334 10H14.6667M13.3334 6H14.6667M6.00004 1.33333V2.66666M6.00004 13.3333V14.6667",
-  ],
-  "chevron-down": ["M4 6L8 10L12 6"],
-  plus: ["M3.33325 8H12.6666", "M8 3.33333V12.6667"],
-  check: ["M13.3333 4L5.99996 11.3333L2.66663 8"],
-  "check-circle": [
-    "M8.00004 14.6667C11.6819 14.6667 14.6667 11.6819 14.6667 8C14.6667 4.3181 11.6819 1.33333 8.00004 1.33333C4.31814 1.33333 1.33337 4.3181 1.33337 8C1.33337 11.6819 4.31814 14.6667 8.00004 14.6667Z",
-    "M6 8.00001L7.33333 9.33334L10 6.66667",
-  ],
-  ban: [
-    "M7.99992 14.6667C11.6818 14.6667 14.6666 11.6819 14.6666 8C14.6666 4.3181 11.6818 1.33333 7.99992 1.33333C4.31802 1.33333 1.33325 4.3181 1.33325 8C1.33325 11.6819 4.31802 14.6667 7.99992 14.6667Z",
-    "M3.2666 3.26666L12.7333 12.7333",
-  ],
-  loader: [
-    "M14 8C13.9999 9.26706 13.5988 10.5016 12.854 11.5266C12.1092 12.5517 11.059 13.3146 9.85392 13.7061C8.64886 14.0976 7.3508 14.0976 6.14576 13.706C4.94073 13.3144 3.89059 12.5514 3.14584 11.5263C2.4011 10.5013 1.99999 9.26673 2 7.99967C2.00001 6.73261 2.40114 5.49808 3.14589 4.473C3.89065 3.44793 4.9408 2.68494 6.14584 2.29339C7.35088 1.90183 8.64895 1.90182 9.854 2.29334",
-  ],
-  circle: ["M8 14C11.3137 14 14 11.3137 14 8C14 4.68629 11.3137 2 8 2C4.68629 2 2 4.68629 2 8C2 11.3137 4.68629 14 8 14Z"],
-  x: ["M12 4L4 12", "M4 4L12 12"],
-  "arrow-up": ["M3.33337 8L8.00004 3.33333L12.6667 8", "M8 12.6667V3.33333"],
-  paperclip: [
-    "M14.2934 7.36666L8.1667 13.4933C7.41613 14.2439 6.39815 14.6656 5.3367 14.6656C4.27524 14.6656 3.25726 14.2439 2.5067 13.4933C1.75613 12.7428 1.33447 11.7248 1.33447 10.6633C1.33447 9.60187 1.75613 8.58389 2.5067 7.83333L8.22003 2.11999C8.72041 1.61873 9.39941 1.33678 10.1077 1.33615C10.8159 1.33553 11.4954 1.61628 11.9967 2.11666C12.498 2.61703 12.7799 3.29604 12.7805 4.0043C12.7812 4.71256 12.5004 5.39207 12 5.89333L6.27336 11.6067C6.02318 11.8568 5.68385 11.9974 5.33003 11.9974C4.97621 11.9974 4.63688 11.8568 4.3867 11.6067C4.13651 11.3565 3.99596 11.0171 3.99596 10.6633C3.99596 10.3095 4.13651 9.97018 4.3867 9.71999L10.0467 4.06666",
-  ],
-  play: ["M4 2L13.3333 8L4 14V2Z"],
-  stop: ["M4 4H12V12H4Z"],
-  download: [
-    "M14 10V12.6667C14 13.0203 13.8595 13.3594 13.6095 13.6095C13.3594 13.8595 13.0203 14 12.6667 14H3.33333C2.97971 14 2.64057 13.8595 2.39052 13.6095C2.14048 13.3594 2 13.0203 2 12.6667V10",
-    "M4.66675 6.66667L8.00008 10L11.3334 6.66667",
-    "M8 10V2",
-  ],
-  info: [
-    "M7.99992 14.6667C11.6818 14.6667 14.6666 11.6819 14.6666 8C14.6666 4.3181 11.6818 1.33333 7.99992 1.33333C4.31802 1.33333 1.33325 4.3181 1.33325 8C1.33325 11.6819 4.31802 14.6667 7.99992 14.6667Z",
-    "M8 10.6667V8",
-    "M8 5.33333H8.00667",
-  ],
-  file: [
-    "M10.0001 1.33333H4.00008C3.64646 1.33333 3.30732 1.4738 3.05727 1.72385C2.80722 1.9739 2.66675 2.31304 2.66675 2.66666V13.3333C2.66675 13.687 2.80722 14.0261 3.05727 14.2761C3.30732 14.5262 3.64646 14.6667 4.00008 14.6667H12.0001C12.3537 14.6667 12.6928 14.5262 12.9429 14.2761C13.1929 14.0261 13.3334 13.687 13.3334 13.3333V4.66666L10.0001 1.33333Z",
-    "M9.33325 1.33333V3.99999C9.33325 4.35362 9.47373 4.69276 9.72378 4.9428C9.97383 5.19285 10.313 5.33333 10.6666 5.33333H13.3333",
-  ],
-  plug: [
-    "M8 14.6667V11.3333",
-    "M6 5.33333V1.33333",
-    "M10 5.33333V1.33333",
-    "M12 5.33333V8.66666C12 9.37391 11.719 10.0522 11.219 10.5523C10.7189 11.0524 10.0406 11.3333 9.33333 11.3333H6.66667C5.95942 11.3333 5.28115 11.0524 4.78105 10.5523C4.28095 10.0522 4 9.37391 4 8.66666V5.33333H12Z",
-  ],
-  database: [
-    "M8 5.33333C11.3137 5.33333 14 4.4379 14 3.33333C14 2.22876 11.3137 1.33333 8 1.33333C4.68629 1.33333 2 2.22876 2 3.33333C2 4.4379 4.68629 5.33333 8 5.33333Z",
-    "M2 3.33333V12.6667C2 13.1971 2.63214 13.7058 3.75736 14.0809C4.88258 14.4559 6.4087 14.6667 8 14.6667C9.5913 14.6667 11.1174 14.4559 12.2426 14.0809C13.3679 13.7058 14 13.1971 14 12.6667V3.33333",
-    "M2 8C2 8.53043 2.63214 9.03914 3.75736 9.41421C4.88258 9.78929 6.4087 10 8 10C9.5913 10 11.1174 9.78929 12.2426 9.41421C13.3679 9.03914 14 8.53043 14 8",
-  ],
-  "shield-check": [
-    "M13.3334 8.66667C13.3334 12 11.0001 13.6667 8.22675 14.6333C8.08152 14.6826 7.92377 14.6802 7.78008 14.6267C5.00008 13.6667 2.66675 12 2.66675 8.66667V4C2.66675 3.82319 2.73699 3.65362 2.86201 3.5286C2.98703 3.40358 3.1566 3.33334 3.33341 3.33334C4.66675 3.33334 6.33341 2.53334 7.49341 1.52C7.63465 1.39934 7.81432 1.33304 8.00008 1.33304C8.18585 1.33304 8.36551 1.39934 8.50675 1.52C9.67342 2.54 11.3334 3.33334 12.6667 3.33334C12.8436 3.33334 13.0131 3.40358 13.1382 3.5286C13.2632 3.65362 13.3334 3.82319 13.3334 4V8.66667Z",
-    "M6 8.00001L7.33333 9.33334L10 6.66667",
-  ],
+  "plus": "M19,13H13V19H11V13H5V11H11V5H13V11H19V13Z", // mdi:plus
+  "x": "M19,6.41L17.59,5L12,10.59L6.41,5L5,6.41L10.59,12L5,17.59L6.41,19L12,13.41L17.59,19L19,17.59L13.41,12L19,6.41Z", // mdi:close
+  "chevron-down": "M7.41,8.58L12,13.17L16.59,8.58L18,10L12,16L6,10L7.41,8.58Z", // mdi:chevron-down
+  "check": "M21,7L9,19L3.5,13.5L4.91,12.09L9,16.17L19.59,5.59L21,7Z", // mdi:check
+  "check-circle": "M12 2C6.5 2 2 6.5 2 12S6.5 22 12 22 22 17.5 22 12 17.5 2 12 2M12 20C7.59 20 4 16.41 4 12S7.59 4 12 4 20 7.59 20 12 16.41 20 12 20M16.59 7.58L10 14.17L7.41 11.59L6 13L10 17L18 9L16.59 7.58Z", // mdi:check-circle-outline
+  "ban": "M12 2C17.5 2 22 6.5 22 12S17.5 22 12 22 2 17.5 2 12 6.5 2 12 2M12 4C10.1 4 8.4 4.6 7.1 5.7L18.3 16.9C19.3 15.5 20 13.8 20 12C20 7.6 16.4 4 12 4M16.9 18.3L5.7 7.1C4.6 8.4 4 10.1 4 12C4 16.4 7.6 20 12 20C13.9 20 15.6 19.4 16.9 18.3Z", // mdi:cancel
+  "loader": "M12,4V2A10,10 0 0,0 2,12H4A8,8 0 0,1 12,4Z", // mdi:loading
+  "circle": "M12,20A8,8 0 0,1 4,12A8,8 0 0,1 12,4A8,8 0 0,1 20,12A8,8 0 0,1 12,20M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2Z", // mdi:circle-outline
+  "play": "M8,5.14V19.14L19,12.14L8,5.14Z", // mdi:play
+  "stop": "M18,18H6V6H18V18Z", // mdi:stop
+  "paperclip": "M16.5,6V17.5A4,4 0 0,1 12.5,21.5A4,4 0 0,1 8.5,17.5V5A2.5,2.5 0 0,1 11,2.5A2.5,2.5 0 0,1 13.5,5V15.5A1,1 0 0,1 12.5,16.5A1,1 0 0,1 11.5,15.5V6H10V15.5A2.5,2.5 0 0,0 12.5,18A2.5,2.5 0 0,0 15,15.5V5A4,4 0 0,0 11,1A4,4 0 0,0 7,5V17.5A5.5,5.5 0 0,0 12.5,23A5.5,5.5 0 0,0 18,17.5V6H16.5Z", // mdi:paperclip
+  "arrow-up": "M13,20H11V8L5.5,13.5L4.08,12.08L12,4.16L19.92,12.08L18.5,13.5L13,8V20Z", // mdi:arrow-up
+  "download": "M2 12H4V17H20V12H22V17C22 18.11 21.11 19 20 19H4C2.9 19 2 18.11 2 17V12M12 15L17.55 9.54L16.13 8.13L13 11.25V2H11V11.25L7.88 8.13L6.46 9.55L12 15Z", // mdi:tray-arrow-down
+  "file": "M6,2A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2H6M6,4H13V9H18V20H6V4M8,12V14H16V12H8M8,16V18H13V16H8Z", // mdi:file-document-outline
+  "database": "M12 3C7.58 3 4 4.79 4 7V17C4 19.21 7.59 21 12 21S20 19.21 20 17V7C20 4.79 16.42 3 12 3M18 17C18 17.5 15.87 19 12 19S6 17.5 6 17V14.77C7.61 15.55 9.72 16 12 16S16.39 15.55 18 14.77V17M18 12.45C16.7 13.4 14.42 14 12 14C9.58 14 7.3 13.4 6 12.45V9.64C7.47 10.47 9.61 11 12 11C14.39 11 16.53 10.47 18 9.64V12.45M12 9C8.13 9 6 7.5 6 7S8.13 5 12 5C15.87 5 18 6.5 18 7S15.87 9 12 9Z", // mdi:database-outline
+  "plug": "M16 7V3H14V7H10V3H8V7C7 7 6 8 6 9V14.5L9.5 18V21H14.5V18L18 14.5V9C18 8 17 7 16 7M16 13.67L13.09 16.59L12.67 17H11.33L10.92 16.59L8 13.67V9.09C8 9.06 8.06 9 8.09 9H15.92C15.95 9 16 9.06 16 9.09V13.67Z", // mdi:power-plug-outline
+  "cpu": "M6,4H18V5H21V7H18V9H21V11H18V13H21V15H18V17H21V19H18V20H6V19H3V17H6V15H3V13H6V11H3V9H6V7H3V5H6V4M11,15V18H12V15H11M13,15V18H14V15H13M15,15V18H16V15H15Z", // mdi:chip
+  "info": "M11,9H13V7H11M12,20C7.59,20 4,16.41 4,12C4,7.59 7.59,4 12,4C16.41,4 20,7.59 20,12C20,16.41 16.41,20 12,20M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M11,17H13V11H11V17Z", // mdi:information-outline
+  "shield-check": "M21,11C21,16.55 17.16,21.74 12,23C6.84,21.74 3,16.55 3,11V5L12,1L21,5V11M12,21C15.75,20 19,15.54 19,11.22V6.3L12,3.18L5,6.3V11.22C5,15.54 8.25,20 12,21M10,17L6,13L7.41,11.59L10,14.17L16.59,7.58L18,9", // mdi:shield-check-outline
+  "sparkles": "M19,1L17.74,3.75L15,5L17.74,6.26L19,9L20.25,6.26L23,5L20.25,3.75M9,4L6.5,9.5L1,12L6.5,14.5L9,20L11.5,14.5L17,12L11.5,9.5M19,15L17.74,17.74L15,19L17.74,20.25L19,23L20.25,20.25L23,19L20.25,17.74", // mdi:creation
+  "agent": "M17.5 15.5C17.5 16.61 16.61 17.5 15.5 17.5S13.5 16.61 13.5 15.5 14.4 13.5 15.5 13.5 17.5 14.4 17.5 15.5M8.5 13.5C7.4 13.5 6.5 14.4 6.5 15.5S7.4 17.5 8.5 17.5 10.5 16.61 10.5 15.5 9.61 13.5 8.5 13.5M23 15V18C23 18.55 22.55 19 22 19H21V20C21 21.11 20.11 22 19 22H5C3.9 22 3 21.11 3 20V19H2C1.45 19 1 18.55 1 18V15C1 14.45 1.45 14 2 14H3C3 10.13 6.13 7 10 7H11V5.73C10.4 5.39 10 4.74 10 4C10 2.9 10.9 2 12 2S14 2.9 14 4C14 4.74 13.6 5.39 13 5.73V7H14C17.87 7 21 10.13 21 14H22C22.55 14 23 14.45 23 15M21 16H19V14C19 11.24 16.76 9 14 9H10C7.24 9 5 11.24 5 14V16H3V17H5V20H19V17H21V16Z", // mdi:robot-outline
+  "user": "M12,4A4,4 0 0,1 16,8A4,4 0 0,1 12,12A4,4 0 0,1 8,8A4,4 0 0,1 12,4M12,6A2,2 0 0,0 10,8A2,2 0 0,0 12,10A2,2 0 0,0 14,8A2,2 0 0,0 12,6M12,13C14.67,13 20,14.33 20,17V20H4V17C4,14.33 9.33,13 12,13M12,14.9C9.03,14.9 5.9,16.36 5.9,17V18.1H18.1V17C18.1,16.36 14.97,14.9 12,14.9Z", // mdi:account-outline
+  "log": "M13,19V16H21V19H13M8.5,13L2.47,7H6.71L11.67,11.95C12.25,12.54 12.25,13.5 11.67,14.07L6.74,19H2.5L8.5,13Z", // mdi:console-line
+  "graph": "M19.5 17C19.36 17 19.24 17 19.11 17.04L17.5 13.8C17.95 13.35 18.25 12.71 18.25 12C18.25 10.62 17.13 9.5 15.75 9.5C15.61 9.5 15.5 9.5 15.35 9.54L13.74 6.3C14.21 5.84 14.5 5.21 14.5 4.5C14.5 3.12 13.38 2 12 2S9.5 3.12 9.5 4.5C9.5 5.2 9.79 5.84 10.26 6.29L8.65 9.54C8.5 9.5 8.39 9.5 8.25 9.5C6.87 9.5 5.75 10.62 5.75 12C5.75 12.71 6.04 13.34 6.5 13.79L4.89 17.04C4.76 17 4.64 17 4.5 17C3.12 17 2 18.12 2 19.5C2 20.88 3.12 22 4.5 22S7 20.88 7 19.5C7 18.8 6.71 18.16 6.24 17.71L7.86 14.46C8 14.5 8.12 14.5 8.25 14.5C8.38 14.5 8.5 14.5 8.63 14.46L10.26 17.71C9.79 18.16 9.5 18.8 9.5 19.5C9.5 20.88 10.62 22 12 22S14.5 20.88 14.5 19.5C14.5 18.12 13.38 17 12 17C11.87 17 11.74 17 11.61 17.04L10 13.8C10.45 13.35 10.75 12.71 10.75 12C10.75 11.3 10.46 10.67 10 10.21L11.61 6.96C11.74 7 11.87 7 12 7C12.13 7 12.26 7 12.39 6.96L14 10.21C13.54 10.66 13.25 11.3 13.25 12C13.25 13.38 14.37 14.5 15.75 14.5C15.88 14.5 16 14.5 16.13 14.46L17.76 17.71C17.29 18.16 17 18.8 17 19.5C17 20.88 18.12 22 19.5 22S22 20.88 22 19.5C22 18.12 20.88 17 19.5 17M4.5 20.5C3.95 20.5 3.5 20.05 3.5 19.5S3.95 18.5 4.5 18.5 5.5 18.95 5.5 19.5 5.05 20.5 4.5 20.5M13 19.5C13 20.05 12.55 20.5 12 20.5S11 20.05 11 19.5 11.45 18.5 12 18.5 13 18.95 13 19.5M7.25 12C7.25 11.45 7.7 11 8.25 11S9.25 11.45 9.25 12 8.8 13 8.25 13 7.25 12.55 7.25 12M11 4.5C11 3.95 11.45 3.5 12 3.5S13 3.95 13 4.5 12.55 5.5 12 5.5 11 5.05 11 4.5M14.75 12C14.75 11.45 15.2 11 15.75 11S16.75 11.45 16.75 12 16.3 13 15.75 13 14.75 12.55 14.75 12M19.5 20.5C18.95 20.5 18.5 20.05 18.5 19.5S18.95 18.5 19.5 18.5 20.5 18.95 20.5 19.5 20.05 20.5 19.5 20.5Z", // mdi:graph-outline
+  "alert": "M12,2L1,21H23M12,6L19.53,19H4.47M11,10V14H13V10M11,16V18H13V16", // mdi:alert-outline
 };
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 
 function icon(name, size = 16) {
   const svg = document.createElementNS(SVG_NS, "svg");
-  svg.setAttribute("viewBox", "0 0 16 16");
+  svg.setAttribute("viewBox", "0 0 24 24");
   svg.setAttribute("width", String(size));
   svg.setAttribute("height", String(size));
   svg.setAttribute("aria-hidden", "true");
   svg.setAttribute("class", "icon");
-  svg.setAttribute("fill", "none");
-  svg.setAttribute("stroke", "currentColor");
-  svg.setAttribute("stroke-width", "1.33333");
-  svg.setAttribute("stroke-linecap", "round");
-  svg.setAttribute("stroke-linejoin", "round");
-  for (const d of ICONS[name] || ICONS.circle) {
-    const path = document.createElementNS(SVG_NS, "path");
-    path.setAttribute("d", d);
-    svg.append(path);
-  }
+  svg.setAttribute("data-name", name);
+  svg.setAttribute("fill", "currentColor");
+  const path = document.createElementNS(SVG_NS, "path");
+  path.setAttribute("d", ICONS[name] || ICONS.circle);
+  svg.append(path);
   return svg;
 }
 
@@ -231,7 +192,7 @@ const MODALITY_ALIASES = {
   ppg: "biosignal", eeg: "brain", fmri: "brain", xray: "medical-image", "x-ray": "medical-image",
   ct: "medical-image", mri: "medical-image", imu: "motion", lidar: "range", radar: "range", depth: "range",
 };
-/* Modality colour tokens from the Figma Color collection; modalities without their own token share one. */
+/* Data colours (--wire-* in style.css) by modality; modalities without their own colour share one. */
 const MODALITY_TOKENS = {
   audio: "audio", speech: "audio", music: "audio",
   text: "text", document: "text", code: "text",
@@ -245,7 +206,8 @@ function modalityKey(modality) {
   if (MODALITY_ICONS[key]) return key;
   return MODALITY_ALIASES[key] || "other";
 }
-const modalityColour = (modality) => `var(--color-modality-${MODALITY_TOKENS[modalityKey(modality)] || "input"})`;
+const modalityColour = (modality) => `var(--wire-${MODALITY_TOKENS[modalityKey(modality)] || "input"})`;
+const wireColour = (token) => `var(--wire-${token || "input"})`;
 
 function modalityIcon(modality, size = 16) {
   const svg = document.createElementNS(SVG_NS, "svg");
@@ -266,15 +228,29 @@ function hydrateIcons() {
   for (const el of document.querySelectorAll("[data-icon]")) el.replaceChildren(icon(el.dataset.icon));
 }
 
-/** Tag (Figma 19:235). tone: neutral, accent, success, warning, danger, installed, refused. */
-function tag(label, tone = "neutral", iconName = null) {
-  return h("span", { class: `tag tag--${tone}` }, iconName ? icon(iconName, 11) : null, label);
+/** Status badge: the hue's 900 fill with its 200 label. tone: neutral, info, running, success, warning,
+    danger, new (the accent, for a sense not used yet). */
+function tag(label, tone = "neutral") {
+  return h("span", { class: `tag tag--${tone}`, text: label });
 }
-function setTag(el, label, tone, iconName = null) {
+function setTag(el, label, tone) {
   el.className = `tag tag--${tone}`;
-  el.replaceChildren(...(iconName ? [icon(iconName, 11)] : []), label);
+  el.textContent = label;
   el.hidden = false;
 }
+
+/** Callout: a rule down the left under a title strip. tone: neutral, info, success, warning, danger. */
+function callout(tone, title, body, { value = null, iconName = null, action = null } = {}) {
+  return h("div", { class: `callout callout--${tone}` },
+    h("div", { class: "callout-head" },
+      h("span", { class: "callout-title" }, iconName ? icon(iconName, 14) : null, title),
+      value ? h("span", { class: "callout-value", text: value }) : null),
+    body ? h("p", { class: "callout-body", text: body }) : null,
+    action);
+}
+
+/** A status light: a small square, coloured by state (ok, run, error, or idle). */
+const led = (tone = "idle") => h("span", { class: `led led--${tone}`, "aria-hidden": "true" });
 
 const store = {
   get(area, key) {
@@ -409,6 +385,33 @@ function syncControls() {
   $("chat-model").textContent = label;
   $("fit-model").textContent = label || "the model";
   $("senses-model").textContent = label || "the model";
+  renderStatus();
+}
+
+/** The status line on the band's footer: server, model, labelled set, job and senses, all from the API. */
+function renderStatus() {
+  const server = { loading: ["idle", "connecting"], ok: ["ok", "ok"], error: ["error", "error"] }[state.server];
+  $("status-server").replaceChildren(led(server[0]), server[1]);
+  const model = currentModel();
+  $("status-model").textContent = model ? model.name : "none";
+  const dataset = currentDataset();
+  $("status-set").textContent = dataset ? dataset.name : "none";
+  const job = state.job;
+  if (!job) {
+    $("status-job").replaceChildren("none");
+  } else {
+    const tone = job.status === "running" ? "run" : job.status === "done" ? "ok" : "error";
+    const parts = [
+      String(job.id).slice(0, 8),
+      (JOB_WORDS[job.status] || job.status).toLowerCase(),
+      `${job.seen} event${job.seen === 1 ? "" : "s"}`,
+      job.elapsed !== null ? seconds(job.elapsed) : null,
+    ];
+    $("status-job").replaceChildren(led(tone), parts.filter(Boolean).join(" · "));
+  }
+  const refused = refusedRun();
+  const active = (model ? (model.native || []).length : 0) + state.senses.length;
+  $("status-senses").textContent = model ? `${active} active${refused ? " · 1 refused" : ""}` : "none";
 }
 
 // ---------------------------------------------------------------- the New sense popover
@@ -438,11 +441,14 @@ async function loadModels() {
   select.disabled = true;
   select.replaceChildren(h("option", { value: "", text: "Loading models…" }));
   $("model-label").textContent = "Loading models…";
+  state.server = "loading";
   try {
     const models = await api("/api/models");
     state.models = Array.isArray(models) ? models : [];
+    state.server = "ok";
   } catch (err) {
     state.models = [];
+    state.server = "error";
     select.replaceChildren(h("option", { value: "", text: "Models could not be loaded" }));
     showError($("model-error"), err, loadModels);
     setModel("");
@@ -517,7 +523,7 @@ function renderModelInfo() {
   renderDropModalities();
 }
 
-/** Sense chips in the top bar (Figma 19:279): native, new (amber until used in chat), checking, refused. */
+/** Sense chips on the band: native, installed (marked new until used in chat), checking, refused. */
 function renderChips() {
   const list = $("sense-chips");
   const model = currentModel();
@@ -526,8 +532,8 @@ function renderChips() {
     return;
   }
   const chip = (cls, modality, meta, extra, title) =>
-    h("li", { class: `chip ${cls}`.trim(), title },
-      h("span", { class: "dot", style: `--dot: ${cls === "chip--refused" ? "var(--color-status-danger)" : modalityColour(modality)}` }),
+    h("li", { class: `chip ${cls}`.trim(), title, style: `--swatch: ${modalityColour(modality)}` },
+      modalityIcon(modality, 13),
       h("span", { class: "chip-label", text: capitalise(modality) }),
       h("span", { class: "chip-meta", text: meta }),
       extra);
@@ -537,12 +543,12 @@ function renderChips() {
     const fresh = !state.usedBridges.has(sense.bridge);
     const acc = toNumber(card.accuracy);
     const meta = [kindLabel(card.kind).toLowerCase(), acc !== null ? pct(acc) : null].filter(Boolean).join(" · ");
-    chips.push(chip(fresh ? "chip--new" : "", sense.modality, meta, fresh ? h("span", { class: "badge-new", text: "NEW" }) : null, `${capitalise(sense.modality)}: ${sense.bridge}`));
+    chips.push(chip("", sense.modality, meta, fresh ? tag("New", "new") : null, `${capitalise(sense.modality)}: ${sense.bridge}`));
   }
   const job = modelJob();
   const target = job && job.request ? job.request.modality : null;
   if (job && job.status === "running" && target && !state.senses.some((s) => s.modality === target)) {
-    chips.push(chip("", target, "checking…", null, `The agent is giving ${modelLabel(state.model)} a ${target} sense`));
+    chips.push(chip("chip--checking", target, "checking", null, `The agent is giving ${modelLabel(state.model)} a ${target} sense`));
   }
   const refused = refusedRun();
   if (refused && !state.senses.some((s) => s.modality === refused.modality)) {
@@ -623,7 +629,14 @@ function fallbackRun(job) {
   return { refused: first, installed: job.cards.get(job.installed) || null };
 }
 
-/** Senses on the model (Figma Sense row, 22:327): native, installed, and a run that installed nothing. */
+/** A modality icon in its data colour, for rows and tiles. */
+const modalityMark = (modality, size = 15) => {
+  const svg = modalityIcon(modality, size);
+  svg.style.color = modalityColour(modality);
+  return svg;
+};
+
+/** Senses on the model: native, installed, and a run that installed nothing. */
 function renderSenses(senses) {
   state.senses = senses;
   const list = $("senses-list");
@@ -632,9 +645,10 @@ function renderSenses(senses) {
   for (const m of model ? model.native || [] : []) {
     rows.push(
       h("li", { class: "sense-row sense-row--native" },
-        h("span", { class: "dot", style: `--dot: ${modalityColour(m)}` }),
-        h("span", { class: "sense-text" }, h("span", { class: "sense-title", text: capitalise(m) }), h("span", { class: "sense-sub", text: "Native" })),
-        tag("native")),
+        modalityMark(m),
+        h("span", { class: "sense-text" }, h("span", { class: "sense-title", text: capitalise(m) }), h("span", { class: "sense-sub", text: "Read by the model as is" })),
+        h("span"),
+        tag("Native")),
     );
   }
   for (const sense of senses) rows.push(senseItem(sense));
@@ -646,17 +660,18 @@ function renderSenses(senses) {
     const acc = refused.best ? toNumber(refused.best.accuracy) : null;
     rows.push(
       h("li", { class: "sense-row sense-row--refused" },
-        h("span", { class: "dot", style: "--dot: var(--color-status-danger)" }),
+        modalityMark(refused.modality),
         h("button", { type: "button", class: "sense-text", "data-bridge": refused.best ? refused.best.bridge : "", onclick: () => selectReport(refused.best && refused.best.bridge) },
           h("span", { class: "sense-title", text: capitalise(refused.modality) }),
           h("span", { class: "sense-sub", text: `Nothing installed for ${datasetTitle(refused.dataset)}` })),
-        acc !== null ? h("span", { class: "sense-value", text: pct(acc) }) : null,
-        tag("Refused", "refused", "ban")),
+        acc !== null ? h("span", { class: "sense-value", text: pct(acc) }) : h("span"),
+        tag("Refused", "danger")),
     );
   }
   list.replaceChildren(...rows);
   const active = (model ? (model.native || []).length : 0) + senses.length;
   $("senses-count").textContent = `${active} active${refused ? " · 1 refused" : ""}`;
+  renderStatus();
   renderChips();
   renderDropModalities();
   renderReport();
@@ -669,7 +684,7 @@ function senseItem(sense) {
   const errorEl = h("div", { class: "error", role: "alert", hidden: true });
   const remove = h("button", {
     type: "button",
-    class: "btn btn--ghost btn--small",
+    class: "btn btn--small btn--remove",
     text: "Remove",
     "aria-label": `Remove the ${sense.modality || ""} sense ${sense.bridge || ""}`.replace(/\s+/g, " "),
   });
@@ -678,11 +693,11 @@ function senseItem(sense) {
   return h(
     "li",
     { class: "sense-row sense-row--on" },
-    h("span", { class: "dot", style: `--dot: ${modalityColour(sense.modality)}` }),
+    modalityMark(sense.modality),
     h("button", { type: "button", class: "sense-text", "data-bridge": sense.bridge, title: `Show the report card of ${sense.bridge}`, onclick: () => selectReport(sense.bridge) },
       h("span", { class: "sense-title", text: capitalise(sense.modality) }),
       h("span", { class: "sense-sub", text: sub })),
-    acc !== null ? h("span", { class: "sense-value", text: pct(acc) }) : null,
+    acc !== null ? h("span", { class: "sense-value", text: pct(acc) }) : h("span"),
     remove,
     errorEl,
   );
@@ -737,8 +752,8 @@ function renderReport() {
 
   if (!all.length) {
     if (job && job.status === "running") {
-      // Screen 01: the agent is still verifying and no card has arrived.
-      setTag(verdictTag, "verifying", "accent");
+      // The agent is still verifying and no card has arrived.
+      setTag(verdictTag, "Verifying", "running");
       const kinds = planKinds(job);
       el.replaceChildren(
         h("p", {
@@ -747,7 +762,7 @@ function renderReport() {
             .filter(Boolean)
             .join(" · "),
         }),
-        h("p", { class: "note note--accent" }, icon("info", 14), h("span", { text: RULE_TEXT })),
+        callout("info", "Install rule", RULE_TEXT, { iconName: "info" }),
       );
       return;
     }
@@ -768,8 +783,8 @@ function renderReport() {
   exportButton.disabled = false;
   const shown = SHOWN[shownVerdict(card)];
   const kind = shown.kind;
-  if (kind === "installed") setTag(verdictTag, "Installed", "installed", "check");
-  else if (kind === "refused") setTag(verdictTag, "Refused", "refused", "ban");
+  if (kind === "installed") setTag(verdictTag, "Installed", "success");
+  else if (kind === "refused") setTag(verdictTag, "Refused", "danger");
   else setTag(verdictTag, shown.tag, "neutral");
 
   const chance = toNumber(card.chance);
@@ -804,9 +819,9 @@ function renderReport() {
   );
   el.replaceChildren(
     h("p", { class: "report-sub", text: context.join(" · "), title: card.bridge }),
-    h("div", { class: "headline" },
+    h("div", { class: "readout brackets" },
       h("div", { class: "display" },
-        h("span", { class: `display-value display-value--${kind}`, text: acc === null ? "n/a" : pct(acc) }),
+        h("span", { class: "display-value", text: acc === null ? "n/a" : pct(acc) }),
         h("span", { class: "display-caption", text: n !== null ? `on ${n} held-out questions` : "held-out accuracy" })),
       headlineNote.length ? h("p", { class: "report-chance", text: headlineNote.join(" · ") }) : null),
     h("div", { class: "metrics" },
@@ -815,24 +830,26 @@ function renderReport() {
         const role = CONTROL_ROLES[key] || { kind: "control", tag: "control" };
         return metricRow(CONTROL_LABELS[key] || humanise(key), value, role.kind, chance, role.tag);
       })),
-    h("p", { class: kind === "refused" ? "note note--danger" : "note" },
-      icon("info", 14),
-      h("span", { text: [scope, card.reason].filter(Boolean).join(" ") || "The agent gave no reason for this card." })),
+    chance !== null ? h("p", { class: "chance-key", text: `chance ${pct(chance)}` }) : null,
+    callout(
+      kind === "refused" ? "danger" : kind === "installed" ? "success" : "neutral",
+      kind === "refused" ? "Why it was refused" : kind === "installed" ? "Why it was installed" : "Agent's reason",
+      [scope, card.reason].filter(Boolean).join(" ") || "The agent gave no reason for this card.",
+    ),
   );
 }
 
-/** Metric row (Figma 22:126): label and tag, value, a bar, and the chance tick. */
+/** Metric row: label and badge, value, a bar, and the chance tick. */
 function metricRow(label, value, kind, chance, tagLabel) {
   const v = toNumber(value);
-  const tone = kind === "installed" ? "installed" : kind === "refused" ? "refused" : "neutral";
-  const tagIcon = kind === "installed" ? "check" : kind === "refused" ? "ban" : null;
+  const tone = kind === "installed" ? "success" : kind === "refused" ? "danger" : "neutral";
   return h(
     "div",
     { class: `metric metric--${kind}` },
     h("div", { class: "metric-head" },
       h("span", { class: "metric-label-group" },
         h("span", { class: "metric-label", text: label, title: label }),
-        tagLabel ? tag(tagLabel, tone, tagIcon) : null),
+        tagLabel ? tag(tagLabel, tone) : null),
       h("span", { class: "metric-value", text: v === null ? "n/a" : pct(v) })),
     h("div", { class: "track", "aria-hidden": "true" },
       h("div", { class: "fill", style: `width: ${v === null ? 0 : clamp01(v) * 100}%` }),
@@ -898,32 +915,32 @@ function verifying(job, bridge) {
   return open;
 }
 
-/** One port row (Figma 19:294): labels inside, dots on the node edge, tagged for wiring. */
+/** One port row: labels inside, square ports on the node edge, tagged for wiring. */
 function portRow(inLabel, outLabel, ids, colours, extraClass = "") {
   return h("div", { class: `port-row ${extraClass}`.trim() },
     h("span", { class: "port-label", text: inLabel || "" }),
     outLabel ? h("span", { class: "port-label", text: outLabel }) : null,
-    ids.in ? h("span", { class: "port port--in", "data-port": ids.in, style: `--port: ${colours.in || "var(--color-modality-input)"}` }) : null,
-    ids.out ? h("span", { class: "port port--out", "data-port": ids.out, style: `--port: ${colours.out || "var(--color-modality-input)"}` }) : null);
+    ids.in ? h("span", { class: "port port--in", "data-port": ids.in, style: `--port: ${colours.in || wireColour()}` }) : null,
+    ids.out ? h("span", { class: "port port--out", "data-port": ids.out, style: `--port: ${colours.out || wireColour()}` }) : null);
 }
 
-/** Graph node (Figma 23:487): header tile and title, port rows, footer chip and status, badge. */
-function graphNode({ nodeState = "default", iconEl, title, subtitle, ports, footer, status, statusTone, badge, onclick, pressed }) {
+/** Graph node: index, icon, title and badge in a head strip tinted by state, port rows, footer. */
+function graphNode({ nodeState = "default", idx, iconEl, title, subtitle, ports, footer, status, statusTone, badge, onclick, pressed }) {
   const tagName = onclick ? "button" : "div";
   const attrs = { class: `node node--${nodeState}${pressed ? " is-selected" : ""}` };
   if (onclick) Object.assign(attrs, { type: "button", onclick, "aria-pressed": String(Boolean(pressed)) });
   return h(tagName, attrs,
-    badge || null,
     h("span", { class: "node-head" },
+      idx ? h("span", { class: "node-idx", text: idx, "aria-hidden": "true" }) : null,
       h("span", { class: "node-tile" }, iconEl),
-      h("span", { class: "node-text" },
-        h("span", { class: "node-title", text: title }),
-        subtitle ? h("span", { class: "node-sub", text: subtitle }) : null)),
+      h("span", { class: "node-title", text: title }),
+      badge || null),
+    subtitle ? h("span", { class: "node-sub", text: subtitle }) : null,
     ports && ports.length ? h("span", { class: "node-ports" }, ports) : null,
     footer || status
       ? h("span", { class: "node-foot" },
           footer ? h("span", { class: "node-chip", text: footer }) : h("span"),
-          status ? h("span", { class: "node-status" }, h("span", { class: "dot", style: `--dot: ${statusTone || "var(--color-status-success)"}` }), status) : null)
+          status ? h("span", { class: "node-status", style: `--dot: ${statusTone || "var(--mcs-green-500)"}` }, led(), status) : null)
       : null);
 }
 
@@ -940,6 +957,8 @@ function renderGraph() {
     canvas.replaceChildren(h("p", { class: "graph-empty", text: "Choose a base model to see how a sense reaches it." }));
     return;
   }
+  let counter = 0;
+  const nextIdx = () => `N${String((counter += 1)).padStart(2, "0")}`;
 
   // Column 1: the labelled examples the agent fits and verifies on.
   const cards = job ? [...job.cards.values()] : [];
@@ -948,16 +967,17 @@ function renderGraph() {
   const scope = job && job.request ? job.request.scope : scopeInput ? scopeInput.value : "closed";
   const dataNode = dataset
     ? graphNode({
+        idx: nextIdx(),
         iconEl: icon("database"),
         title: dataset.title,
         subtitle: `${(dataset.labels || []).length} labels · ${dataset.n} ${dataset.modality || "audio"} clips`,
         ports: [
-          portRow("", "examples to fit", { out: "data-fit" }, { out: "var(--color-modality-data)" }),
-          portRow("", n !== null ? `${n} held out` : "held out", { out: "data-held" }, { out: "var(--color-modality-data)" }),
+          portRow("", "examples to fit", { out: "data-fit" }, { out: wireColour("data") }),
+          portRow("", n !== null ? `${n} held out` : "held out", { out: "data-held" }, { out: wireColour("data") }),
         ],
         footer: dataset.name,
         status: scope === "open" ? "any sound" : "these labels only",
-        statusTone: "var(--color-text-muted)",
+        statusTone: "var(--mcs-gray-600)",
       })
     : h("p", { class: "graph-empty", text: "No labelled set is chosen." });
 
@@ -967,22 +987,23 @@ function renderGraph() {
     group.append(h("p", { class: "group-empty", text: "The agent chooses which bridges to try when it runs. Press New sense to start." }));
   } else {
     const kinds = planKinds(job);
-    if (!kinds.length) group.append(h("p", { class: "group-empty", text: job.status === "running" ? "Planning…" : "No bridge was tried." }));
+    if (kinds.length) group.querySelector(".group-head").append(h("span", { class: "group-count", text: `· ${kinds.length} tried` }));
+    else group.append(h("p", { class: "group-empty", text: job.status === "running" ? "Planning…" : "No bridge was tried." }));
     for (const kind of kinds) {
       const fd = fitData(job, kind);
       const card = cards.find((c) => c.kind === kind) || null;
       const bridge = (card && card.bridge) || fd.bridge;
       let nodeState = "default";
       let status = "queued";
-      let tone = "var(--color-text-muted)";
+      let tone = "var(--mcs-gray-600)";
       if (card) {
         nodeState = SHOWN[shownVerdict(card)].node;
         status = pct(card.accuracy);
-        tone = nodeState === "refused" ? "var(--color-status-danger)" : "var(--color-status-success)";
+        tone = nodeState === "refused" ? "var(--mcs-red-500)" : nodeState === "installed" ? "var(--mcs-green-500)" : "var(--mcs-gray-400)";
       } else if (job.status === "running" && ((fd.started && !fd.built) || verifying(job, bridge))) {
         nodeState = "running";
         status = fd.built ? "testing" : "fitting";
-        tone = "var(--color-accent-default)";
+        tone = "var(--mcs-blue-500)";
       } else if (fd.built) {
         status = job.status === "running" ? "built" : "not verified";
       } else if (job.status !== "running") {
@@ -990,24 +1011,25 @@ function renderGraph() {
         status = "not built";
       }
       const ports = KIND_PORTS[kind] || ["input", "output"];
-      const wire = `var(--color-modality-${KIND_WIRE[kind] || "input"})`;
       const badge =
-        nodeState === "installed" ? tag("Installed", "installed", "check")
-        : nodeState === "refused" ? tag("Refused", "refused", "ban")
-        : nodeState === "running" ? tag("running", "accent")
-        : nodeState === "skipped" ? tag("skipped")
+        nodeState === "installed" ? tag("Installed", "success")
+        : nodeState === "refused" ? tag("Refused", "danger")
+        : nodeState === "running" ? tag("Running", "running")
+        : nodeState === "skipped" ? tag("Skipped")
+        : card ? tag(SHOWN[shownVerdict(card)].tag)
         : null;
       group.append(
         graphNode({
           nodeState,
+          idx: nextIdx(),
           iconEl: icon("plug"),
           title: `${kindLabel(kind)} bridge`,
           subtitle: [KIND_NOTES[kind], fd.layer !== null ? `block ${fd.layer}` : null].filter(Boolean).join(" · "),
-          ports: [portRow(ports[0], ports[1], { in: `bridge-in-${kind}`, out: `bridge-out-${kind}` }, { in: "var(--color-modality-data)", out: wire })],
+          ports: [portRow(ports[0], ports[1], { in: `bridge-in-${kind}`, out: `bridge-out-${kind}` }, { in: wireColour("data"), out: wireColour(KIND_WIRE[kind]) })],
           footer: fd.seconds !== null ? `fit ${seconds(fd.seconds)}` : bridge || kind,
           status,
           statusTone: tone,
-          badge: badge ? h("span", { class: "node-badge" }, badge) : null,
+          badge,
           onclick: card ? () => selectReport(card.bridge) : null,
           pressed: Boolean(card && card.bridge === state.reportBridge),
         }),
@@ -1017,15 +1039,15 @@ function renderGraph() {
     const checking = job.status === "running" && job.steps.has("verify") && !job.steps.has("decide");
     group.append(
       h("div", { class: `held-check${checking ? " is-running" : ""}` },
-        h("span", { class: "port port--in", "data-port": "held-in", style: "--port: var(--color-modality-data)" }),
-        icon(checking ? "loader" : "shield-check", 14),
+        h("span", { class: "port port--in", "data-port": "held-in", style: `--port: ${wireColour("data")}` }),
+        icon(checking ? "loader" : "shield-check", 15),
         h("span", { class: "held-text" },
           h("span", { class: "held-title", text: "Held-out check" }),
           h("span", {
             class: "held-sub",
             text: cards.length
               ? `${n !== null ? `${n} questions` : "held-out questions"} · ${nControls} controls · ${cards.length} of ${kinds.length} scored`
-              : checking ? "scoring…" : "not started",
+              : checking ? "scoring" : "not started",
           }))),
     );
   }
@@ -1040,19 +1062,20 @@ function renderGraph() {
   const natives = model.native || [];
   const modelPorts = [
     portRow(`${modality} · ${targetState}`, "reply", { in: "model-in-target", out: "model-out" },
-      { in: modalityColour(modality), out: "var(--color-accent-default)" },
+      { in: modalityColour(modality), out: wireColour("text") },
       `port-row--target port-row--${targetState.replace(/\s+/g, "-")}`),
     ...natives.map((m) => portRow(`${m} · native`, "", { in: `model-in-${m}` }, { in: modalityColour(m) })),
   ];
   const modelNode = graphNode({
     nodeState: "model",
+    idx: nextIdx(),
     iconEl: icon("cpu"),
     title: model.label,
     subtitle: `Base model · ${model.open_weights ? "open" : "closed"} weights`,
     ports: modelPorts,
     footer: model.name,
     status: model.available ? "ready" : "unavailable",
-    statusTone: model.available ? "var(--color-status-success)" : "var(--color-status-danger)",
+    statusTone: model.available ? "var(--mcs-green-500)" : "var(--mcs-red-500)",
   });
   modelNode.dataset.installedKind = sense ? sense.kind : "";
 
@@ -1068,7 +1091,7 @@ function renderGraph() {
   drawWires();
 }
 
-/** Draw the wires between port dots as curves, coloured by the data that flows. */
+/** Draw the wires between ports at right angles, coloured by the data that flows. */
 function drawWires() {
   const canvas = $("graph-canvas");
   const svg = canvas.querySelector("svg.wires");
@@ -1079,15 +1102,18 @@ function drawWires() {
     const el = canvas.querySelector(`[data-port="${id}"]`);
     if (!el) return null;
     const r = el.getBoundingClientRect();
-    return { x: r.left + r.width / 2 - box.left + canvas.scrollLeft, y: r.top + r.height / 2 - box.top + canvas.scrollTop };
+    return {
+      x: Math.round(r.left + r.width / 2 - box.left + canvas.scrollLeft),
+      y: Math.round(r.top + r.height / 2 - box.top + canvas.scrollTop),
+    };
   };
   const wire = (from, to, colour, dashed, faint) => {
     const a = at(from);
     const b = at(to);
     if (!a || !b) return;
-    const dx = Math.max(24, (b.x - a.x) / 2);
+    const mx = Math.round((a.x + b.x) / 2);
     const path = document.createElementNS(SVG_NS, "path");
-    path.setAttribute("d", `M${a.x},${a.y} C${a.x + dx},${a.y} ${b.x - dx},${b.y} ${b.x},${b.y}`);
+    path.setAttribute("d", a.y === b.y ? `M${a.x},${a.y} H${b.x}` : `M${a.x},${a.y} H${mx} V${b.y} H${b.x}`);
     path.setAttribute("class", `wire${dashed ? " wire--dashed" : ""}${faint ? " wire--faint" : ""}`);
     path.style.stroke = colour;
     svg.append(path);
@@ -1102,10 +1128,10 @@ function drawWires() {
     const card = [...job.cards.values()].find((c) => c.kind === kind);
     const refused = Boolean(card && shownVerdict(card) === "refused");
     const into = (card && card.verdict === "installed") || (!card && installedKind === kind);
-    wire("data-fit", `bridge-in-${kind}`, "var(--color-modality-data)", false, false);
-    wire(`bridge-out-${kind}`, "model-in-target", refused ? "var(--color-status-danger)" : `var(--color-modality-${KIND_WIRE[kind] || "input"})`, !into, refused);
+    wire("data-fit", `bridge-in-${kind}`, wireColour("data"), false, false);
+    wire(`bridge-out-${kind}`, "model-in-target", refused ? "var(--mcs-red-500)" : wireColour(KIND_WIRE[kind]), !into, refused);
   }
-  wire("data-held", "held-in", "var(--color-modality-data)", true, false);
+  wire("data-held", "held-in", wireColour("data"), true, false);
 }
 
 // ---------------------------------------------------------------- datasets and samples
@@ -1199,7 +1225,7 @@ function sampleItem(sample) {
   const modality = (currentDataset() || {}).modality || "audio";
   const play = h("button", { type: "button", class: "icon-button" });
   play.addEventListener("click", () => togglePlay(sample));
-  const attach = h("button", { type: "button", class: "btn btn--secondary btn--small" });
+  const attach = h("button", { type: "button", class: "btn btn--small" });
   attach.addEventListener("click", () => toggleSample(sample));
   const item = h(
     "li",
@@ -1374,7 +1400,7 @@ async function sendMessage(event) {
   }
 }
 
-/** A user turn (attachments above the bubble) and the model's answer under a name line (Figma 22:204). */
+/** A user turn (name line, attachments, message) and the model's answer under its own name line. */
 function appendTurn(model, message, files, samples) {
   const modality = (currentDataset() || {}).modality || "audio";
   const fileModality = (f) => (f.type && f.type.startsWith("audio") ? "audio" : "other");
@@ -1408,11 +1434,11 @@ function appendTurn(model, message, files, samples) {
     "article",
     { class: "turn" },
     h("div", { class: "msg msg--user" },
-      h("span", { class: "sr-only", text: "You:" }),
+      h("div", { class: "name-line" }, icon("user", 13), h("span", { class: "name", text: "You" })),
       sent.length ? h("ul", { class: "msg-files", "aria-label": "Attached files" }, sent) : null,
       h("p", { class: "bubble", text: message })),
     h("div", { class: "msg msg--model" },
-      h("div", { class: "name-line" }, icon("cpu", 14), h("span", { class: "name", text: model.label }), tags),
+      h("div", { class: "name-line" }, icon("cpu", 13), h("span", { class: "name", text: model.label }), tags),
       reply),
   );
   $("thread").append(root);
@@ -1426,8 +1452,8 @@ function fillReply(turn, result) {
   const kinds = [...new Set(used.filter((u) => u.kind !== "none").map((u) => u.kind))];
   const missing = used.some((u) => u.kind === "none");
   turn.tags.replaceChildren(
-    ...kinds.map((k) => tag(`heard via ${kindLabel(k).toLowerCase()} bridge`, "warning")),
-    ...(missing ? [tag("file not received", "danger")] : []),
+    ...kinds.map((k) => tag(`Heard via ${kindLabel(k).toLowerCase()} bridge`, "info")),
+    ...(missing ? [tag("File not received", "danger")] : []),
   );
   const parts = [h("p", { class: "msg-text", text: result.reply || "The model returned an empty reply." })];
   if (used.length) parts.push(h("ul", { class: "used-list", "aria-label": "How each file reached the model" }, used.map(usedItem)));
@@ -1460,7 +1486,7 @@ function usedItem(used) {
   );
 }
 
-/** The agent's verdict in the chat when a run ends (Figma Result card, 22:229). */
+/** The agent's verdict in the chat when a run ends, as a callout. */
 function postAgentResult(job, data) {
   const cards = [...job.cards.values()];
   const modality = capitalise((job.request && job.request.modality) || (cards[0] && cards[0].modality) || "sense");
@@ -1498,7 +1524,7 @@ function postAgentResult(job, data) {
     "article",
     { class: "turn msg msg--agent" },
     h("div", { class: "name-line" },
-      icon("sparkles", 14),
+      icon("agent", 13),
       h("span", { class: "name", text: "Agent" }),
       job.elapsed !== null ? h("span", { class: "name-meta", text: `· ${seconds(job.elapsed)}` }) : null),
     text ? h("p", { class: "msg-text", text }) : null,
@@ -1510,15 +1536,11 @@ function postAgentResult(job, data) {
 }
 
 function resultCard(verdict, title, value, body, bridge, linkText) {
-  return h(
-    "div",
-    { class: `result result--${verdict}` },
-    h("div", { class: "result-head" },
-      h("span", { class: "result-title" }, icon(verdict === "installed" ? "check-circle" : "ban", 16), title),
-      value ? h("span", { class: "result-value", text: value }) : null),
-    body ? h("p", { class: "result-body", text: body }) : null,
-    bridge ? h("button", { type: "button", class: "link-button", text: linkText || "Open report card →", onclick: () => selectReport(bridge) }) : null,
-  );
+  return callout(verdict === "installed" ? "success" : "danger", title, body, {
+    value,
+    iconName: verdict === "installed" ? "check-circle" : "ban",
+    action: bridge ? h("button", { type: "button", class: "link-button", text: linkText || "Open report card →", onclick: () => selectReport(bridge) }) : null,
+  });
 }
 
 function updateThreadEmpty() {
@@ -1700,7 +1722,7 @@ function appendEvent(job, event) {
       mark,
       h("span", { class: "event-message" }, h("span", { class: "sr-only", text: `${STATUS_WORDS[status]}: ` }), event.message || "")),
   );
-  $("log-count").textContent = `(${$("timeline").children.length})`;
+  $("log-count").textContent = String($("timeline").children.length);
 
   if (step === "done") {
     job.doneMessage = event.message || "";
@@ -1743,11 +1765,9 @@ function finishJob(job, data) {
   job.installed = data.installed || null;
   const outcome = $("trace-outcome");
   if (job.status === "failed") {
-    outcome.replaceChildren(
-      h("div", { class: "outcome", role: "alert" },
-        h("strong", { text: "The run failed. " }),
-        data.error || "The server gave no error text. Check the server log, then run the agent again."),
-    );
+    const failed = callout("danger", "Run failed", data.error || "The server gave no error text. Check the server log, then run the agent again.", { iconName: "alert" });
+    failed.setAttribute("role", "alert");
+    outcome.replaceChildren(failed);
   } else {
     outcome.replaceChildren();
   }
@@ -1809,7 +1829,7 @@ function stepCode(key, s) {
   return key;
 }
 
-/** The six Agent step cards (Figma 22:177), filled from the trace, plus any step the server adds. */
+/** The six steps of the agent run, filled from the trace, plus any step the server adds. */
 function renderSteps() {
   const job = state.job;
   const extra = job ? [...job.steps.keys()].filter((k) => !STEP_INDEX[k]) : [];
@@ -1820,42 +1840,60 @@ function renderSteps() {
       const def = STEP_INDEX[key] || { title: humanise(key), idle: "" };
       const s = job ? job.steps.get(key) : null;
       const status = job ? stepStatus(key, s, job) : "pending";
+      const word = status === "refused" && job && (job.status === "failed" || job.status === "lost") ? STEP_WORDS.failed : STEP_WORDS[status];
       const events = s ? s.events : [];
       const last = events[events.length - 1];
       let desc = last && last.message ? last.message : def.idle;
       if (!events.length && job && job.status !== "running") desc = key === "install" && job.status === "done" ? "Nothing to install." : "Not reached.";
       const time = events.length > 1 ? toNumber(last.t) - toNumber(events[0].t) : null;
+      const code = stepCode(key, s);
       return h(
         "li",
         { class: `step step--${status}`, title: last && last.message ? last.message : undefined },
         h("div", { class: "step-head" },
-          h("span", { class: "step-num" }, icon(STEP_ICONS[status], 14), h("span", { class: "t-overline", text: `Step ${i + 1}` })),
-          h("span", { class: "step-time", text: status === "running" ? "running" : time !== null && Number.isFinite(time) ? seconds(time) : "" })),
+          h("span", { class: "step-idx", text: String(i + 1).padStart(2, "0"), "aria-hidden": "true" }),
+          h("span", { class: "step-state" }, h("span", { class: "led", "aria-hidden": "true" }), word),
+          h("span", { class: "step-time", text: time !== null && Number.isFinite(time) ? seconds(time) : "" })),
         h("p", { class: "step-title", text: def.title }),
         h("p", { class: "step-desc", text: desc }),
-        h("p", { class: "step-code", text: stepCode(key, s), title: stepCode(key, s) }),
-        h("span", { class: "sr-only", text: `Status: ${status}` }),
+        h("p", { class: "step-code", text: code, title: code }),
       );
     }),
   );
 }
 
+/** The run's progress as a one-pixel line along the band: the share of the six steps that have finished. */
+function renderProgress() {
+  const bar = $("run-progress-bar");
+  const job = state.job;
+  if (!job) {
+    bar.style.width = "0";
+    delete bar.dataset.state;
+    return;
+  }
+  const finished = STEPS.filter((s) => ["done", "refused"].includes(stepStatus(s.key, job.steps.get(s.key), job))).length;
+  bar.style.width = `${(job.status === "running" ? finished / STEPS.length : 1) * 100}%`;
+  bar.dataset.state = job.status === "running" ? "running" : job.status === "done" ? "done" : "failed";
+}
+
 function renderTraceHead() {
   const job = state.job;
   const pill = $("trace-status");
+  renderProgress();
+  renderStatus();
   if (!job) {
     pill.hidden = true;
     $("trace-request").textContent = "Not run yet. Press New sense to start the agent.";
     $("trace-elapsed").textContent = "";
     return;
   }
-  if (job.status === "running") setTag(pill, "running", "accent");
-  else if (job.status === "failed") setTag(pill, "failed", "danger");
-  else if (job.status === "lost") setTag(pill, JOB_WORDS.lost.toLowerCase(), "warning");
-  else if (fallbackRun(job)) setTag(pill, "refused · fallback installed", "warning");
-  else if (job.installed) setTag(pill, "sense installed", "success");
-  else if (job.status === "done") setTag(pill, "refused", "danger");
-  else setTag(pill, (JOB_WORDS[job.status] || job.status).toLowerCase(), "neutral");
+  if (job.status === "running") setTag(pill, "Running", "running");
+  else if (job.status === "failed") setTag(pill, "Failed", "danger");
+  else if (job.status === "lost") setTag(pill, JOB_WORDS.lost, "warning");
+  else if (fallbackRun(job)) setTag(pill, "Refused · fallback installed", "warning");
+  else if (job.installed) setTag(pill, "Sense installed", "success");
+  else if (job.status === "done") setTag(pill, "Refused", "danger");
+  else setTag(pill, JOB_WORDS[job.status] || job.status, "neutral");
   const req = job.request;
   const reached = [...job.steps.keys()].filter((k) => STEP_INDEX[k]).length;
   $("trace-request").textContent = req
@@ -1883,27 +1921,18 @@ function resetTrace() {
   syncControls();
 }
 
-/** Full log: swaps the sense graph for every event of the run, as the server sent them. */
+/** Event log tab: swaps the sense graph for every event of the run, as the server sent them. */
 function setLogVisible(show) {
   state.showLog = show;
   $("log-view").hidden = !show;
   $("graph-canvas").hidden = show;
-  $("log-button").setAttribute("aria-pressed", String(show));
+  $("log-button").setAttribute("aria-selected", String(show));
+  $("graph-tab").setAttribute("aria-selected", String(!show));
   if (show) scrollToEnd($("log-view"));
   else drawWires();
 }
 
 // ---------------------------------------------------------------- start
-
-/** Figma (the team design) or Henad (Michael's design system: square, ruled, MCS colours). Visual only. */
-function setTheme(theme) {
-  const henad = theme === "henad";
-  if (henad) document.documentElement.dataset.theme = "henad";
-  else delete document.documentElement.dataset.theme;
-  store.set("localStorage", "sense.theme", henad ? "henad" : null);
-  $("theme-button").setAttribute("aria-checked", String(henad));
-  requestAnimationFrame(drawWires); // port positions move with the type
-}
 
 function updateScopeHint() {
   const scope = document.querySelector('input[name="scope"]:checked');
@@ -1936,8 +1965,8 @@ function bindEvents() {
     closeFit(false);
   });
 
-  $("theme-button").addEventListener("click", () => setTheme(document.documentElement.dataset.theme === "henad" ? "figma" : "henad"));
-  $("log-button").addEventListener("click", () => setLogVisible(!state.showLog));
+  $("graph-tab").addEventListener("click", () => setLogVisible(false));
+  $("log-button").addEventListener("click", () => setLogVisible(true));
   $("export-button").addEventListener("click", exportReport);
 
   const box = $("message");
@@ -1978,7 +2007,6 @@ function bindEvents() {
 
 function init() {
   hydrateIcons();
-  $("theme-button").setAttribute("aria-checked", String(document.documentElement.dataset.theme === "henad"));
   bindEvents();
   updateScopeHint();
   renderAttachments();
