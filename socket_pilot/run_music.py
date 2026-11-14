@@ -8,6 +8,11 @@ Two questions:
       rock, classical held out  paired plug fitted on the other eight genres
       text-only                 plug fitted on caption text, no music and no labels
       environmental sounds only the ESC-50 plug from the first pilot
+
+GTZAN holds 14 duplicate recordings (byte-identical files, so their CLAP embeddings have cosine 1). By default
+each duplicate group goes to one split whole, and the one recording filed under two genres (metal.00058 =
+rock.00016) is left out of everything, including the rock-or-classical tests. --keep-duplicates reproduces the
+first version of this script, whose split put 5 of the 200 held-out tracks next to an identical copy in fit or dev.
 """
 
 from __future__ import annotations
@@ -33,6 +38,64 @@ def zscore(a: np.ndarray, ref: np.ndarray) -> np.ndarray:
     return (a - ref.mean(0)) / (ref.std(0) + 1e-8)
 
 
+DUPLICATE_COSINE = 0.999  # the same rule as sense.datasets: at or above this, two clips are one recording
+
+
+def duplicate_groups(emb: np.ndarray, members: np.ndarray) -> list[list[int]]:
+    """Groups of `members` (indices into emb) whose embeddings are near-identical, joined transitively."""
+    u = unit(emb[members])
+    parent = list(range(len(members)))
+
+    def find(i: int) -> int:
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    for i, j in zip(*np.nonzero(np.triu(u @ u.T >= DUPLICATE_COSINE, k=1))):
+        a, b = find(int(i)), find(int(j))
+        if a != b:
+            parent[max(a, b)] = min(a, b)
+    groups: dict[int, list[int]] = {}
+    for i in range(len(members)):
+        groups.setdefault(find(i), []).append(int(members[i]))
+    return sorted(groups.values(), key=lambda g: g[0])
+
+
+def split_tracks(emb: np.ndarray, y: np.ndarray, n_genres: int, rng: np.random.Generator, keep_duplicates: bool):
+    """Per genre: 60 tracks fit, 20 dev, the rest test, in a seeded order. Unless keep_duplicates, a recording under
+    two genres is left out of everything and each group of duplicates goes to one split whole; with no duplicates
+    the result, and the rng's state afterwards, are the same as with keep_duplicates.
+    Returns fit, dev, test (index arrays), the left-out indices and the number of duplicate groups kept together."""
+    left_out: list[int] = []
+    if not keep_duplicates:
+        u = unit(emb)
+        across = np.triu((u @ u.T >= DUPLICATE_COSINE) & (y[:, None] != y[None, :]), k=1)
+        left_out = sorted({int(i) for pair in zip(*np.nonzero(across)) for i in pair})
+    usable = ~np.isin(np.arange(len(y)), left_out)
+    fit_idx, dev_idx, test_idx = [], [], []
+    kept_together = 0
+    for g in range(n_genres):
+        members = np.where((y == g) & usable)[0]
+        if keep_duplicates:
+            order = rng.permutation(members)
+            fit_idx += list(order[:60])
+            dev_idx += list(order[60:80])
+            test_idx += list(order[80:])
+            continue
+        groups = duplicate_groups(emb, members)
+        kept_together += sum(len(group) > 1 for group in groups)
+        fit: list[int] = []
+        dev: list[int] = []
+        test: list[int] = []
+        for k in rng.permutation(len(groups)):
+            (fit if len(fit) < 60 else dev if len(dev) < 20 else test).extend(groups[k])
+        fit_idx += fit
+        dev_idx += dev
+        test_idx += test
+    return (*map(lambda a: np.array(a, dtype=np.int64), (fit_idx, dev_idx, test_idx)), left_out, kept_together)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--host", required=True)
@@ -42,6 +105,8 @@ def main() -> None:
     ap.add_argument("--out", required=True)
     ap.add_argument("--layers", default="0,1,2,3")
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--keep-duplicates", action="store_true",
+                    help="split as the first version did, ignoring GTZAN's duplicate recordings (for comparison)")
     args = ap.parse_args()
     layers = [int(x) for x in args.layers.split(",")]
 
@@ -53,13 +118,15 @@ def main() -> None:
     genre_text = unit(gt["text_emb"].astype(np.float64))
     rock, classical = names.index("rock"), names.index("classical")
 
-    fit_idx, dev_idx, test_idx = [], [], []
-    for g in range(len(names)):
-        order = rng.permutation(np.where(y == g)[0])
-        fit_idx += list(order[:60])
-        dev_idx += list(order[60:80])
-        test_idx += list(order[80:])
-    fit_idx, dev_idx, test_idx = map(np.array, (fit_idx, dev_idx, test_idx))
+    fit_idx, dev_idx, test_idx, left_out, kept_together = split_tracks(emb, y, len(names), rng, args.keep_duplicates)
+    usable = ~np.isin(np.arange(len(y)), left_out)
+    split = {
+        "duplicates": "kept as in the first version" if args.keep_duplicates else "each group in one split",
+        "left_out": [str(gt["files"][i]) for i in left_out],
+        "duplicate_groups_kept_in_one_split": kept_together,
+        "sizes": {"fit": len(fit_idx), "dev": len(dev_idx), "test": len(test_idx)},
+    }
+    print(f"split: {split}")
 
     host = Host(args.host)
     ids5 = [host.token_id(letter) for letter in LETTERS]
@@ -131,7 +198,7 @@ def main() -> None:
 
     # ---- rock or classical
     rc_test = test_idx[np.isin(y[test_idx], [rock, classical])]
-    rc_all = np.where(np.isin(y, [rock, classical]))[0]
+    rc_all = np.where(np.isin(y, [rock, classical]) & usable)[0]
     two = {}
 
     p, a = two_way(rc_test, host.slots)
@@ -180,7 +247,8 @@ def main() -> None:
         print(f"[{task}]  accuracy %  (95% CI)")
         for name, (m, lo, hi) in rows.items():
             print(f"  {name:54s} {m:5.1f}  [{lo:5.1f}, {hi:5.1f}]")
-    out = {"host": Path(args.host).parents[1].name, "socket_layer": L, "dev_sweep": sweep, "test": results, "seconds": round(time.time() - t_start, 1)}
+    out = {"host": Path(args.host).parents[1].name, "socket_layer": L, "split": split, "dev_sweep": sweep, "test": results,
+           "seconds": round(time.time() - t_start, 1)}
     Path(args.out).write_text(json.dumps(out, indent=2))
     print(f"wrote {args.out} in {out['seconds']}s")
 
