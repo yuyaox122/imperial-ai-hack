@@ -36,9 +36,9 @@ Pick one on the board, then put your login here. The lead can change the split.
 
 | Area | Owner (GitHub login) | Folders |
 |---|---|---|
-| 1. Agent autonomy and research | unclaimed | `agent/` |
-| 2. Harness core and verification | unclaimed | `sense/`, `server/`, `scripts/`, `socket_pilot/` |
-| 3. Interface and design | unclaimed | `web/`, `design/` |
+| 1. Agent autonomy and research | `JLiu1206` (Jayden) | `agent/` |
+| 2. Harness core and verification | `micfong-z` (Michael) | `sense/`, `server/`, `scripts/`, `socket_pilot/` |
+| 3. Interface and design | `advcode118` (Alex) | `web/`, `design/` |
 | 4. Data platform, real task, demo and submission | unclaimed | `integrations/`, `eval/`, `demo/`, `docs/`, `README.md` |
 
 Tests live in `tests/`; each owner keeps the tests for their own folders.
