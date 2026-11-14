@@ -41,12 +41,12 @@ chance is 20% unless stated. Full tables are in `socket_pilot/README.md`.
 | Finding | Number |
 |---|---|
 | Vector bridge, sounds it was fitted on (ESC-50), Qwen3.5-0.8B and 2B | 99.0% and 96.8%, against 19.2% and 19.0% with swapped audio |
-| Time to fit the vector bridge | 0.5 to 1.0 seconds |
-| Vector bridge, music genre on held-out tracks of seen genres (GTZAN) | 84.9%; rock or classical 100% on 40 tracks |
-| Vector bridge, rock or classical when both genres were left out of fitting | 53.5%, where chance is 50% |
+| Time to fit the vector bridge | 0.5 to 1.3 seconds per block; about 25 seconds with the layer choice (5 blocks, each scored on 200 dev questions) |
+| Vector bridge, music genre on held-out tracks of seen genres (GTZAN, de-duplicated split) | 83.7% on 196 tracks; rock or classical 94.9% on 39 tracks |
+| Vector bridge, rock or classical when both genres were left out of fitting | 51.8%, where chance is 50% |
 | Text bridge, sounds never fitted on (nearest caption pasted into the prompt), Qwen3.5-0.8B | 83.2% |
 | Vector bridge fitted on caption text only, same unseen sounds | 53.2% |
-| Text bridge, rock or classical | 66.5%, where chance is 50% |
+| Text bridge, rock or classical | 63.8%, where chance is 50% |
 | Model-to-model: text-only SmolLM2-1.7B reading Qwen3.5-2B's states for an image, map fitted on words only (COCO) | 62.5%, against 24.0% with no image; Qwen3.5-2B itself scores 97.8% |
 
 What this means for the product:
