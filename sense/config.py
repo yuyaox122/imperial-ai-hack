@@ -3,6 +3,7 @@
   SENSE_FAKE=1          use fake models, specialist and data: no weights, no downloads (tests, interface work)
   SENSE_HOME            where installed senses are stored (default: <repo>/.sense)
   SENSE_DATA_DIR        cached specialist embeddings as .npz (default: <repo>/socket_pilot/artifacts)
+  SENSE_SETS_DIR        labelled sets built from folders by sense.datasets.from_folder (default: <SENSE_HOME>/datasets)
   SENSE_HF_CACHE        extra Hugging Face cache directory holding the base-model weights
   SENSE_QWEN_0P8B       Hugging Face id or local path (default: Qwen/Qwen3.5-0.8B)
   SENSE_QWEN_2B         Hugging Face id or local path (default: Qwen/Qwen3.5-2B)
@@ -56,6 +57,10 @@ def home() -> Path:
 
 def data_dir() -> Path:
     return Path(os.environ.get("SENSE_DATA_DIR", REPO / "socket_pilot" / "artifacts"))
+
+
+def sets_dir() -> Path:
+    return Path(os.environ.get("SENSE_SETS_DIR", home() / "datasets"))
 
 
 def hf_cache() -> str | None:

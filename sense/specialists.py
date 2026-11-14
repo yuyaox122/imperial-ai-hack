@@ -5,6 +5,12 @@ Public surface (do not rename):
   Specialist.dim                              embedding size
   Specialist.embed_files(paths) -> [n, dim]   one embedding per file
   Specialist.embed_texts(texts) -> [n, dim]   text embeddings in the same space
+  AUDIO_EXTENSIONS                            file suffixes the audio specialist reads (what soundfile reads; not .m4a)
+  Specialist.name, Specialist.label           model id or path ("laion/clap-htsat-unfused"), and a display name
+  Specialist.embed_seconds_per_file           mean seconds per embedded file so far; None before the first
+  Specialist.loaded                           whether the weights are in memory (always True in fake mode)
+  describe(modality) -> dict                  {"name", "label", "modality", "dim", "embed_seconds_per_file",
+                                              "loaded"} for the agent's trace; plain JSON values; loads nothing
 
 The audio specialist is CLAP (config.model_source("clap")); it takes 48 kHz mono and uses the middle
 10 seconds of longer files. Reference implementation: socket_pilot/clap_embed_gtzan.py.
@@ -19,6 +25,7 @@ from __future__ import annotations
 import hashlib
 import re
 import threading
+import time
 from functools import lru_cache
 from math import gcd
 from pathlib import Path
@@ -28,6 +35,8 @@ import numpy as np
 
 from sense import config
 
+AUDIO_EXTENSIONS = {".wav", ".mp3", ".flac", ".ogg", ".opus", ".aif", ".aiff", ".au"}  # what soundfile reads; not .m4a
+
 
 class Specialist(Protocol):
     modality: str
@@ -36,6 +45,16 @@ class Specialist(Protocol):
     def embed_files(self, paths: list[Path]) -> np.ndarray: ...
 
     def embed_texts(self, texts: list[str]) -> np.ndarray: ...
+
+    # For the agent's trace (see describe).
+    name: str
+    label: str
+
+    @property
+    def embed_seconds_per_file(self) -> float | None: ...
+
+    @property
+    def loaded(self) -> bool: ...
 
 
 def get_specialist(modality: str) -> Specialist:
@@ -49,16 +68,60 @@ def _specialist(modality: str, fake: bool) -> Specialist:
     return FakeSpecialist() if fake else ClapSpecialist()
 
 
+def describe(modality: str) -> dict:
+    """Facts about the specialist for `modality`, as plain JSON values for the agent's trace. It reads the cached
+    instance only: it never loads weights or imports torch, so `loaded` is False for CLAP until the first embed
+    call and `embed_seconds_per_file` is None until a file has been embedded. An unknown modality raises the
+    same ValueError as get_specialist."""
+    spec = get_specialist(modality)
+    per_file = getattr(spec, "embed_seconds_per_file", None)
+    return {
+        "name": str(getattr(spec, "name", type(spec).__name__)),
+        "label": str(getattr(spec, "label", type(spec).__name__)),
+        "modality": str(spec.modality),
+        "dim": int(spec.dim),
+        "embed_seconds_per_file": None if per_file is None else round(float(per_file), 6),
+        "loaded": bool(getattr(spec, "loaded", False)),
+    }
+
+
+# ----------------------------------------------------------------------------- timing
+class _EmbedTiming:
+    """Counts the files a specialist has embedded and the seconds that took, for the agent's trace. Thread-safe,
+    with its own lock, so reading the figure never waits for an embedding in progress."""
+
+    def __init__(self) -> None:
+        self._timing_lock = threading.Lock()
+        self._embed_seconds = 0.0
+        self._embed_count = 0
+
+    def _record_embed(self, seconds: float, n_files: int) -> None:
+        if n_files <= 0:
+            return
+        with self._timing_lock:
+            self._embed_seconds += seconds
+            self._embed_count += n_files
+
+    @property
+    def embed_seconds_per_file(self) -> float | None:
+        """Mean seconds to embed one file so far, or None before the first file."""
+        with self._timing_lock:
+            return self._embed_seconds / self._embed_count if self._embed_count else None
+
+
 # ----------------------------------------------------------------------------- CLAP
-class ClapSpecialist:
+class ClapSpecialist(_EmbedTiming):
     """Frozen CLAP (laion/clap-htsat-unfused by default). Loads on the first embed call and keeps one instance."""
 
     modality = "audio"
+    label = "CLAP"
     SR = 48_000
     WINDOW_S = 10
     BATCH = 8
 
     def __init__(self) -> None:
+        super().__init__()
+        self.name = config.model_source("clap")
         self.dim = 512
         self._model = None
         self._proc = None
@@ -86,6 +149,10 @@ class ClapSpecialist:
         self._proc = proc
         self.dim = int(getattr(model.config, "projection_dim", self.dim))
 
+    @property
+    def loaded(self) -> bool:
+        return self._model is not None
+
     def _features(self, out) -> np.ndarray:
         import torch
 
@@ -95,9 +162,12 @@ class ClapSpecialist:
     def embed_files(self, paths: list[Path]) -> np.ndarray:
         import torch
 
+        started = time.perf_counter()  # the timing leaves out the one-off model load and any wait for the lock
         wavs = [_load_middle(Path(p), self.SR, self.WINDOW_S) for p in paths]
+        reading = time.perf_counter() - started
         with self._lock:
             self._ensure_loaded()
+            started = time.perf_counter()
             out = []
             for start in range(0, len(wavs), self.BATCH):
                 batch = wavs[start : start + self.BATCH]
@@ -108,6 +178,7 @@ class ClapSpecialist:
                 with torch.no_grad():
                     feats = self._model.get_audio_features(**{k: v.to(self._device) for k, v in inputs.items()})
                 out.append(self._features(feats))
+            self._record_embed(reading + time.perf_counter() - started, len(wavs))
         return np.concatenate(out).astype(np.float32) if out else np.zeros((0, self.dim), np.float32)
 
     def embed_texts(self, texts: list[str]) -> np.ndarray:
@@ -210,12 +281,15 @@ def _concept_freq(k: int) -> float:
     return 300.0 + 25.0 * k
 
 
-class FakeSpecialist:
+class FakeSpecialist(_EmbedTiming):
     """Deterministic stand-in for CLAP. Each fake concept has a prototype vector; a fake audio file is a pure
     tone whose frequency names its concept, and text is embedded by the concepts it mentions."""
 
     modality = "audio"
     dim = FAKE_DIM
+    name = "fake-clap"
+    label = "Fake CLAP (tones, fake mode)"
+    loaded = True  # nothing to load
     NOISE = 0.5  # norm of the per-example noise, against unit-norm prototypes
 
     def example(self, concept: int, rng: np.random.Generator) -> np.ndarray:
@@ -236,7 +310,10 @@ class FakeSpecialist:
         return np.array(out, dtype=np.float32).reshape(len(texts), FAKE_DIM)
 
     def embed_files(self, paths: list[Path]) -> np.ndarray:
-        return np.array([self._embed_file(Path(p)) for p in paths], dtype=np.float32).reshape(len(paths), FAKE_DIM)
+        started = time.perf_counter()
+        out = np.array([self._embed_file(Path(p)) for p in paths], dtype=np.float32).reshape(len(paths), FAKE_DIM)
+        self._record_embed(time.perf_counter() - started, len(paths))
+        return out
 
     def _embed_file(self, path: Path) -> np.ndarray:
         import soundfile as sf

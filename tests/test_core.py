@@ -19,6 +19,7 @@ from sense.verify import verify
 def fake_home(monkeypatch, tmp_path):
     monkeypatch.setenv("SENSE_FAKE", "1")
     monkeypatch.setenv("SENSE_HOME", str(tmp_path / "home"))
+    monkeypatch.delenv("SENSE_SETS_DIR", raising=False)  # folder sets live under SENSE_HOME, so the test sees none
     assert config.fake()
     return tmp_path / "home"
 
