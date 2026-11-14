@@ -395,7 +395,20 @@ function syncControls() {
   send.replaceChildren(icon(state.chatting ? "loader" : "arrow-up"));
   if (state.chatting) send.setAttribute("aria-busy", "true");
   else send.removeAttribute("aria-busy");
-  $("chat-stop").hidden = !state.chatting;
+  const working = state.chats.find((chat) => chat.messages.some((m) => m.status === "pending"));
+  const elsewhere = working && working.id !== state.chatId;
+  const activity = $("chat-activity");
+  activity.hidden = !elsewhere;
+  // Do not repeatedly announce or replace a focused navigation button on unrelated updates.
+  if (activity.dataset.chat !== String(elsewhere ? working.id : "")) {
+    activity.dataset.chat = elsewhere ? String(working.id) : "";
+    activity.replaceChildren(...(elsewhere ? [
+      h("span", { text: `Replying in “${working.title}”. You can browse chats while it finishes.` }),
+      h("button", { type: "button", class: "link-button", text: "View working chat", onclick: () => switchChat(working.id) }),
+    ] : []));
+  }
+  $("chat-stop").hidden = !state.chatting || Boolean(elsewhere);
+  $("thread").setAttribute("aria-busy", String(Boolean(working && !elsewhere)));
   for (const button of document.querySelectorAll(".msg-actions button")) button.disabled = state.chatting;
 
   const label = usable ? model.label : "";
@@ -437,7 +450,9 @@ function openFit(anchor) {
   const pop = $("fit-popover");
   pop.hidden = false;
   pop.dataset.anchor = anchor === $("add-sense-button") ? "report" : "top";
+  if (!pop.open) pop.showModal();
   $("new-sense-button").setAttribute("aria-expanded", "true");
+  $("add-sense-button").setAttribute("aria-expanded", "true");
   const target = $("fit-auto").checked ? $("fit-goal") : $("dataset-select");
   target.focus();
 }
@@ -445,8 +460,10 @@ function openFit(anchor) {
 function closeFit(returnFocus) {
   const pop = $("fit-popover");
   if (pop.hidden) return;
+  pop.close();
   pop.hidden = true;
   $("new-sense-button").setAttribute("aria-expanded", "false");
+  $("add-sense-button").setAttribute("aria-expanded", "false");
   if (returnFocus) $(pop.dataset.anchor === "report" ? "add-sense-button" : "new-sense-button").focus();
 }
 
@@ -581,6 +598,21 @@ function renderBrain() {
   brainView.update(levels);
   const lit = Object.keys(regions).filter((g) => regions[g].level !== "refused").length;
   $("brain-meta").textContent = model ? `${lit} of ${Object.keys(SenseBrain.REGIONS).length} regions` : "";
+  const entries = Object.entries(regions).flatMap(([g, r]) => r.senses.map((s) => ({ ...s, region: SenseBrain.REGIONS[g].role })));
+  const summary = entries.map((s) => `${s.region}: ${s.title}, ${s.sub}`).join(". ");
+  canvas.setAttribute("aria-label", summary || "Choose a model to see its senses");
+  // Text and keyboard equivalents of the canvas hover/click targets.
+  const access = $("brain-access");
+  const signature = JSON.stringify(entries);
+  if (access.dataset.signature !== signature) {
+    access.dataset.signature = signature;
+    access.replaceChildren(...entries.map((s) => h("li", {},
+      s.bridge ? h("button", {
+        type: "button", class: "link-button", text: `${s.title} · ${s.sub}`,
+        "aria-label": `${s.region}: ${s.title}, ${s.sub}. Open report`,
+        onclick: () => selectReport(s.bridge),
+      }) : h("span", { text: `${s.title} · ${s.sub}` }))));
+  }
 }
 
 function showBrainTip(g, e) {
@@ -1496,6 +1528,7 @@ async function requestReply(chat, record) {
   for (const sample of samples) form.append("sample_ids", sample.id);
 
   record.status = "pending";
+  chat.updatedAt = Date.now();
   record.error = null;
   record.turn.reply.replaceChildren(h("p", { class: "msg-text pending", text: "Waiting for the model" }));
   record.turn.tags.replaceChildren();
@@ -1516,6 +1549,7 @@ async function requestReply(chat, record) {
   } finally {
     state.chatting = false;
     state.chatAbort = null;
+    chat.updatedAt = Date.now();
     saveChats();
     renderChats();
     syncControls();
@@ -2215,16 +2249,32 @@ function resetTrace() {
 /** Event log tab: swaps the sense graph for every event of the run, as the server sent them. */
 /** The inspector's tabs. The graph needs more room than the others, so its tab widens the inspector. */
 function setTab(name) {
+  const selected = document.querySelector(`.insp-tabs [data-tab="${name}"]`);
+  if (!selected || selected.disabled) return;
   state.tab = name;
   const views = { report: "report-view", run: "run-view", graph: "graph-view", log: "log-view" };
   for (const [key, id] of Object.entries(views)) $(id).hidden = key !== name;
-  for (const tab of document.querySelectorAll(".insp-tabs .tab")) tab.setAttribute("aria-selected", String(tab.dataset.tab === name));
+  for (const tab of document.querySelectorAll(".insp-tabs .tab")) {
+    tab.setAttribute("aria-selected", String(tab.dataset.tab === name));
+    tab.tabIndex = tab.dataset.tab === name ? 0 : -1;
+  }
   $("workspace").classList.toggle("is-wide", name === "graph");
   if (name === "log") scrollToEnd($("log-view"));
   if (name === "graph") requestAnimationFrame(drawWires);
 }
 
 // ---------------------------------------------------------------- runs and replay
+
+function openRuns() {
+  closeFit(false);
+  const dialog = $("runs-dialog");
+  if (!dialog.open) dialog.showModal();
+  loadRuns();
+}
+
+function closeRuns() {
+  if ($("runs-dialog").open) $("runs-dialog").close();
+}
 
 async function loadRuns() {
   showError($("runs-error"), null);
@@ -2247,6 +2297,8 @@ function renderRuns() {
   const list = $("runs-list");
   const job = state.job;
   const busy = jobRunning() || state.starting;
+  $("runs-summary").textContent = jobRunning() ? (job.replay ? "Replaying" : "Running") : `${state.runs.length} recorded`;
+  $("runs-current").hidden = !job;
   const replayOf = job && job.replay ? job.replay.of : null;
   const rows = [];
   if (jobRunning() && !job.replay) {
@@ -2297,7 +2349,10 @@ async function startReplay(run) {
     state.job.replay = { of: run.id, recorded: run.recorded, speed: state.replaySpeed };
     renderTraceHead();
     renderRuns();
+    closeRuns();
+    $("run-tab").focus();
   } catch (err) {
+    if (!$("runs-dialog").open) $("runs-dialog").showModal();
     showError($("runs-error"), err, () => startReplay(run));
   } finally {
     state.starting = false;
@@ -2343,6 +2398,7 @@ function saveChats() {
   }
   const chats = state.chats.slice(0, 40).map((chat) => ({
     id: chat.id,
+    updatedAt: chat.updatedAt || null,
     messages: chat.messages.slice(-100).map(({ model, message, files, samples, status, result, error }) => ({
       model, message, files: files.map((f) => ({ name: f.name, type: f.type })), samples, status, result, error,
     })),
@@ -2366,6 +2422,7 @@ function restoreChats() {
       return true;
     }).slice(0, 40).map((c) => ({
       id: c.id, turns: 0, title: "New chat", frag: null,
+      updatedAt: toNumber(c.updatedAt),
       messages: c.messages.filter((m) => m && typeof m.message === "string" && m.model && typeof m.model.name === "string").slice(-100).map((m) => ({
         model: { name: m.model.name, label: typeof m.model.label === "string" ? m.model.label : m.model.name },
         message: m.message,
@@ -2395,6 +2452,10 @@ function restoreChats() {
 
 /** Park the open conversation's messages so another chat can use the thread; replies still land in them. */
 function stashThread(chat) {
+  if (state.editing?.chat === chat) cancelEdit();
+  chat.draft = $("message").value;
+  chat.draftFiles = [...state.files];
+  chat.draftSamples = new Map(state.attachedSamples);
   const frag = document.createDocumentFragment();
   for (const el of [...$("thread").children]) if (el.id !== "thread-empty") frag.append(el);
   chat.frag = frag;
@@ -2404,6 +2465,12 @@ function showChat(chat) {
   if (state.editing) cancelEdit();
   showError($("chat-error"), null);
   state.chatId = chat.id;
+  $("message").value = chat.draft || "";
+  state.files = chat.draftFiles || [];
+  state.attachedSamples = new Map(chat.draftSamples || []);
+  autosize($("message"));
+  renderAttachments();
+  for (const id of state.sampleRefs.keys()) syncSampleItem(id);
   if (chat.frag) $("thread").append(chat.frag);
   chat.frag = null;
   updateThreadEmpty();
@@ -2415,6 +2482,7 @@ function showChat(chat) {
 
 /** New chat: an empty thread, same model and senses. An empty current chat is reused. */
 function newChat() {
+  $("chat-search").value = "";
   const current = currentChat();
   if (current.turns === 0 && !$("thread").querySelector(".turn")) {
     $("message").focus();
@@ -2433,21 +2501,42 @@ function switchChat(id) {
   if (!target) return;
   stashThread(currentChat());
   showChat(target);
+  $("message").focus();
 }
 
 function renderChats() {
   const list = $("chats-list");
-  list.replaceChildren(...state.chats.map((chat) =>
-    h("li", {},
-      h("button", {
-        type: "button",
-        class: `chat-item${chat.id === state.chatId ? " is-active" : ""}`,
-        "aria-current": chat.id === state.chatId ? "true" : null,
-        onclick: () => switchChat(chat.id),
-      },
-        h("span", { class: "chat-item-title", text: chat.title }),
-        h("span", { class: "chat-item-meta", text: chat.turns ? `${chat.turns} message${chat.turns === 1 ? "" : "s"}` : "empty" })))));
-  $("chats-count").textContent = String(state.chats.length);
+  const query = $("chat-search").value.trim().toLowerCase();
+  const chats = state.chats.filter((chat) => !query || chat.title.toLowerCase().includes(query)
+    || chat.messages.some((m) => m.message.toLowerCase().includes(query) || (m.result?.reply || "").toLowerCase().includes(query)));
+  const working = (chat) => chat.messages.some((m) => m.status === "pending");
+  const groups = [
+    ["Working", chats.filter(working)],
+    ["Current chat", chats.filter((c) => !working(c) && c.id === state.chatId)],
+    ["Previous chats", chats.filter((c) => !working(c) && c.id !== state.chatId).sort((a, b) => (b.updatedAt || b.id) - (a.updatedAt || a.id))],
+  ];
+  const focusedId = list.contains(document.activeElement) ? document.activeElement.dataset.chatId : null;
+  list.replaceChildren(...groups.filter(([, items]) => items.length).map(([label, items]) =>
+    h("section", { class: "chat-group", "aria-label": label },
+      h("h3", { class: "chat-group-title", text: label }),
+      h("ul", {}, ...items.map((chat) => {
+        const last = chat.messages.at(-1);
+        const status = working(chat) ? "Replying…" : last?.status === "failed" ? "Needs attention" : chat.turns ? `${chat.turns} message${chat.turns === 1 ? "" : "s"}` : "Ready to start";
+        const date = chat.updatedAt ? new Date(chat.updatedAt).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "";
+        return h("li", {}, h("button", {
+          type: "button",
+          class: `chat-item${chat.id === state.chatId ? " is-active" : ""}`,
+          "aria-current": chat.id === state.chatId ? "true" : null,
+          "data-chat-id": chat.id,
+          title: chat.title,
+          onclick: () => switchChat(chat.id),
+        },
+          h("span", { class: "chat-item-title", text: chat.title }),
+          h("span", { class: `chat-item-meta${working(chat) ? " is-working" : ""}`, text: [status, date].filter(Boolean).join(" · ") })));
+      })))));
+  if (!chats.length) list.append(h("p", { class: "chats-empty", text: "No matching chats. Try another word." }));
+  if (focusedId) list.querySelector(`[data-chat-id="${focusedId}"]`)?.focus();
+  $("chats-count").textContent = query ? `${chats.length} of ${state.chats.length}` : String(state.chats.length);
 }
 
 /** Terminal view: one look switch (CSS does the rest), remembered in this browser. */
@@ -2474,7 +2563,7 @@ const COMMANDS = [
   { cmd: "fit", help: "Give the model a new sense (opens New sense)" },
   { cmd: "samples", help: "Pick a sample clip to attach" },
   { cmd: "replay", args: "[n]", help: "Replay the n-th most recent run (default 1)" },
-  { cmd: "runs", help: "Reload the runs list" },
+  { cmd: "runs", help: "Open recorded runs and replay" },
   { cmd: "report", help: "Show the report card" },
   { cmd: "run", help: "Show the agent run" },
   { cmd: "graph", help: "Show the sense graph" },
@@ -2522,7 +2611,7 @@ function runCommand(text) {
   else if (cmd === "term") setMode(!document.body.classList.contains("mode-term"));
   else if (cmd === "samples") toggleSamples(true);
   else if (cmd === "fit" || cmd === "sense") openFit($("new-sense-button"));
-  else if (cmd === "runs") loadRuns();
+  else if (cmd === "runs") openRuns();
   else if (["report", "run", "graph", "log"].includes(cmd)) setTab(cmd);
   else if (cmd === "replay") {
     const n = Math.max(1, parseInt(args[0], 10) || 1);
@@ -2552,6 +2641,22 @@ function updateScopeHint() {
 }
 
 function bindEvents() {
+  // Native dialogs make the background inert; keep Tab in the dialog rather than browser chrome.
+  document.addEventListener("keydown", (e) => {
+    const dialog = document.querySelector("dialog[open]");
+    if (!dialog || e.key !== "Tab") return;
+    const controls = [...dialog.querySelectorAll("button, input, select, textarea, a[href], [tabindex]")]
+      .filter((el) => !el.disabled && el.tabIndex >= 0 && el.getClientRects().length);
+    const first = controls[0], last = controls.at(-1);
+    if (!first) { e.preventDefault(); return; }
+    if (e.shiftKey && document.activeElement === first) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && document.activeElement === last) {
+      e.preventDefault();
+      first.focus();
+    }
+  });
   $("chat-stop").addEventListener("click", () => state.chatAbort?.abort());
   $("job-stop").addEventListener("click", cancelJob);
   $("fit-goal").addEventListener("input", syncControls);
@@ -2588,9 +2693,7 @@ function bindEvents() {
   $("new-sense-button").addEventListener("click", (e) => ($("fit-popover").hidden ? openFit(e.currentTarget) : closeFit(true)));
   $("add-sense-button").addEventListener("click", (e) => openFit(e.currentTarget));
   $("fit-close").addEventListener("click", () => closeFit(true));
-  document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape" && !$("fit-popover").hidden) closeFit(true);
-  });
+  $("fit-popover").addEventListener("cancel", (e) => { e.preventDefault(); closeFit(true); });
   document.addEventListener("mousedown", (e) => {
     const pop = $("fit-popover");
     if (pop.hidden || pop.contains(e.target)) return;
@@ -2599,6 +2702,25 @@ function bindEvents() {
   });
 
   for (const tab of document.querySelectorAll(".insp-tabs .tab")) tab.addEventListener("click", () => setTab(tab.dataset.tab));
+  document.querySelector(".insp-tabs").addEventListener("keydown", (e) => {
+    if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key)) return;
+    const tabs = [...document.querySelectorAll(".insp-tabs .tab:not(:disabled)")];
+    const index = tabs.indexOf(e.target);
+    if (index < 0) return;
+    e.preventDefault();
+    const next = e.key === "Home" ? 0 : e.key === "End" ? tabs.length - 1 : (index + (e.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length;
+    setTab(tabs[next].dataset.tab);
+    tabs[next].focus();
+  });
+  $("chat-search").addEventListener("input", renderChats);
+  $("runs-button").addEventListener("click", openRuns);
+  $("runs-close").addEventListener("click", closeRuns);
+  $("runs-dialog").addEventListener("close", () => $("runs-button").focus());
+  $("runs-current").addEventListener("click", () => {
+    closeRuns();
+    setTab("run");
+    $("run-tab").focus();
+  });
   $("runs-refresh").addEventListener("click", loadRuns);
   $("new-chat-button").addEventListener("click", newChat);
   $("mode-button").addEventListener("click", () => setMode(!document.body.classList.contains("mode-term")));
@@ -2616,6 +2738,7 @@ function bindEvents() {
   }
   // As in other chat harnesses, Ctrl/Cmd+K focuses the composer from anywhere.
   document.addEventListener("keydown", (e) => {
+    if (document.querySelector("dialog[open]")) return;
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
       e.preventDefault();
       $("message").focus();

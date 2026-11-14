@@ -1,5 +1,21 @@
 # How Figma drove the interface
 
+## Current layout: chat-first, runs on demand (#44 / PR #48)
+
+The latest build keeps Henad's tokens and the brain card, with chats | conversation | inspector.
+The sidebar groups Working, Current chat and Previous chats, with searchable message history and
+last-activity timestamps. Draft text and attachments stay with their chat while switching within the page.
+Saved conversations survive reload; draft text and uploaded bytes do not.
+
+Open **Runs** at the foot of the chat sidebar (or type `/runs`) to see recorded outcomes and replay speed.
+Replay closes this dialog and shows progress above the conversation; **View current run** opens the inspector.
+The New sense and Runs dialogs support Escape and contained keyboard focus. Inspector tabs support
+arrow keys, Home and End; text links below the brain open the same reports as canvas clicks.
+Larger controls, brighter secondary text, a skip-to-message link and reflow down to 320px improve access.
+
+The Figma frame references below document the earlier layouts; they have not yet been recaptured for this layout.
+Replay/demo instructions should use the Runs button rather than an always-visible runs column.
+
 The web interface in `web/` (`index.html`, `app.js`, `style.css`) has had two designs, and both live in the team Figma file
 [Imperial-AI-Hackathon](https://www.figma.com/design/9DxXU1h0aHjw8Mc8vUwl8O/Imperial-AI-Hackathon?node-id=0-1).
 
