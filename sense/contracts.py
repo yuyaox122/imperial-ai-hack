@@ -56,7 +56,8 @@ class SenseInput:
     layer: int | None = None  # kind "vector": the block after which the vector is written
     image: bytes | None = None  # kind "image": PNG or JPEG bytes
     detail: str = ""  # one line for the interface, e.g. 'nearest caption: "a dog barks"'
-    tool: ToolHandle | None = None  # kind "tool": the model hears the file only by calling this tool
+    tool: ToolHandle | None = None  # kind "tool": the model learns about the file only by calling this tool,
+    #                                 which asks the specialist
 
 
 @dataclass

@@ -14,8 +14,9 @@ Public surface (do not rename):
       without, the 3 nearest labels of the dataset, or the 3 nearest captions of datasets.caption_bank().
       For models that can call tools (ModelInfo.tools); it does not check that itself, see availability.
   build(kind, model, dataset, scope) -> Bridge
-      Build one bridge kind the way an agent run does: "vector" fits on dataset.fit_idx; "text" and "tool" use
-      the dataset's labels for scope "closed" and the caption bank for scope "open". Other kinds: ValueError.
+      Build one bridge kind the way an agent run does: "vector" fits on dataset.fit_idx (ValueError when
+      model.info.open_weights is False); "text" and "tool" use the dataset's labels for scope "closed" and the
+      caption bank for scope "open". Other kinds: ValueError.
   load_bridge(directory) -> Bridge
       Reload a bridge saved with Bridge.save.
   describe(bridge) -> dict
@@ -632,8 +633,15 @@ _BUILDABLE = ("vector", "text", "tool")
 def build(kind: str, model: BaseModel, dataset: LabelledSet, scope: str) -> Bridge:
     """Build one bridge of `kind` for `model`, as an agent run does: a vector bridge is fitted on
     dataset.fit_idx; a text or tool bridge uses the dataset's labels for scope "closed" and the caption bank
-    for scope "open", so that it can describe any sound, not only the labelled ones."""
+    for scope "open", so that it can describe any sound, not only the labelled ones. A vector bridge is refused
+    when model.info.open_weights is False, as availability() says, even for a test double such as the fake-api
+    FakeModel that could take vector inputs."""
     if kind == "vector":
+        if not model.info.open_weights:
+            raise ValueError(
+                f"{model.info.label} is not an open-weight model, so it cannot take a vector bridge. "
+                "Use the text bridge."
+            )
         return fit_vector_bridge(model, dataset, dataset.fit_idx)
     if kind == "text":
         return make_text_bridge(model, dataset if scope == "closed" else None)

@@ -15,7 +15,8 @@ Local open-weight models implement contracts.OpenModel:
 Fake mode (SENSE_FAKE=1) lists two deterministic models for tests and interface work, both FakeModel:
   "fake"                         open-weight, no tools: takes the vector and text bridges
   "fake-api"                     not open-weight, can call tools: stands in for an API model, so it takes the
-                                 text and tool bridges (FakeModel itself would also take vector inputs)
+                                 text and tool bridges (FakeModel itself would also take vector inputs, but
+                                 bridges.build refuses to build a vector bridge for it, as for a real API model)
 
 Prompt shape: one line per input ("Audio clip: <4 slot tokens>" or "Audio clip: <text>"), then the message or
 the question. API models may be added in sense/models_api.py, which is imported here if it exists.

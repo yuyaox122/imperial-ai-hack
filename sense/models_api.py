@@ -19,8 +19,12 @@ bad clip number, an unknown function or arguments that are not a JSON object com
 text. The assistant turn with its tool calls and one "tool" message per call are added, and the model is asked
 again. After TOOL_ROUNDS rounds of tool calls the last request is sent with tool_choice "none", so the model
 must answer. A request in which the model may call the tool allows up to TOOL_CALL_TOKENS completion tokens (a
-tool call does not fit in the 16 tokens of a letter answer); the forced last request has the usual limit. The
-final answer is checked as before.
+tool call does not fit in the 16 tokens of a letter answer); the forced last request has the caller's limit
+(max_new_tokens, or 16 for a letter). The answer still keeps to the caller's limit: when the model answers in
+a request that allowed more, and the API reports more completion tokens than the limit, the same messages are
+sent once more with tool_choice "none" and the caller's limit, and that reply is the answer. So a tool input
+does not let chat(max_new_tokens=32) reply at greater length (if the API reported no token counts, the reply is
+kept as it came). The final answer is checked as before.
 
 Answer cache. Every multiple-choice answer that passes that check is kept on disk, so a repeat agent run gets
 the same verification answers without asking the API again (the LLM planner's requests, which do not go through
@@ -34,8 +38,9 @@ are written to a temporary name and renamed into place, because choose() runs fo
 SENSE_API_CACHE=0 to turn the cache off, or delete the directory to forget the answers. chat() replies are never
 cached.
 
-usage() counts requests sent to the API by chat() and choose() (including any that failed, and every round of a
-question with tool calls), answers served from the cache, and the prompt and completion tokens the API reported.
+usage() counts requests sent to the API by chat() and choose() (including any that failed, every round of a
+question with tool calls, and a request sent again because the reply was too long), answers served from the
+cache, and the prompt and completion tokens the API reported.
 """
 
 from __future__ import annotations
@@ -145,8 +150,9 @@ class OpenAIChatModel:
         if not handles:
             return _answer(self._send(**request, max_completion_tokens=limit, messages=messages), allow_truncated)
         tools = [_listen_function(handles)]
-        for round_ in range(TOOL_ROUNDS + 1):
-            last = round_ == TOOL_ROUNDS  # tool calls are used up: the model must answer now
+        rounds = 0  # rounds of tool calls so far
+        while True:
+            last = rounds == TOOL_ROUNDS  # tool calls are used up (or the reply was too long): answer now
             response = self._send(
                 **request,
                 max_completion_tokens=limit if last else max(limit, TOOL_CALL_TOKENS),
@@ -154,13 +160,19 @@ class OpenAIChatModel:
                 tools=tools,
                 tool_choice="none" if last else "auto",
             )
+            if last:
+                break
             reply = response.choices[0].message
             calls = list(getattr(reply, "tool_calls", None) or [])
-            if last or not calls:
-                break
+            if not calls:
+                if _tokens(getattr(response, "usage", None), "completion_tokens") <= limit:
+                    break
+                rounds = TOOL_ROUNDS  # the reply ran past the caller's limit: ask again within it
+                continue
             messages.append(_assistant_turn(reply, calls))
             for call in calls:
                 messages.append({"role": "tool", "tool_call_id": call.id, "content": _run_tool(call, handles)})
+            rounds += 1
         return _answer(response, allow_truncated)
 
     def chat(self, message: str, inputs: list[SenseInput], max_new_tokens: int = 96) -> str:

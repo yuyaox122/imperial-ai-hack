@@ -25,8 +25,11 @@ API model: there each question is asked three times (the bridge, swapped input a
 request, or up to three requests for a tool-bridge question, where the model may call the tool in two rounds
 before it answers; the lookup and specialist-alone controls ask nothing (sense.models_api caches the answers, so
 verifying the same questions again asks the API nothing). A tool bridge is scored like any other: its "swapped"
-control hands the model the tool of a clip of another label. Fewer items give a wider interval: the card's `n`
-says how many were scored and its `interval` how certain the accuracy is. An explicit max_items is used as given.
+control hands the model the tool of a clip of another label. When the model passes the options as candidates,
+the tool's "Best match" is the specialist's own zero-shot choice, so a tool bridge's accuracy mostly shows what
+the specialist decides; compare it with specialist_alone to see what the base model adds. Fewer items give a
+wider interval: the card's `n` says how many were scored and its `interval` how certain the accuracy is. An
+explicit max_items is used as given.
 
 free_text asks held-out clips from the same split (dataset.test_idx) an open question instead (dataset.question
 plus " Answer in a few words.") and counts how often the reply names the true label, under the same swapped and

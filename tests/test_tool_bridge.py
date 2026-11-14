@@ -211,6 +211,31 @@ def test_an_embedding_of_the_wrong_size_is_refused(tool_bridge):
         tool_bridge.from_embedding(np.ones(7))
 
 
+def test_text_embeddings_of_another_size_are_refused(tool_bridge, gtzan, monkeypatch):
+    """A specialist whose text embeddings do not match the clips (another specialist, or fake mode against a real
+    bridge) is a build problem, not a model mistake: it raises instead of answering the model."""
+    class NarrowSpecialist(RecordingSpecialist):
+        def embed_texts(self, texts):
+            return np.ones((len(texts), 7), dtype=np.float32)
+
+    tool = tool_bridge.from_embedding(gtzan.emb[gtzan.test_idx[0]]).tool
+    monkeypatch.setattr(specialists, "get_specialist", lambda modality: NarrowSpecialist())
+    with pytest.raises(ValueError, match="text embeddings have 7 values .* Build it again"):
+        tool.call({"candidates": ["rock"]})
+
+
+def test_the_candidate_cache_is_cleared_when_full(tool_bridge, gtzan, recorder, monkeypatch):
+    monkeypatch.setattr(bridges, "_TEXT_CACHE_SIZE", 2)
+    tool = tool_bridge.from_embedding(gtzan.emb[gtzan.test_idx[0]]).tool
+    tool.call({"candidates": ["rock", "jazz"]})
+    assert set(tool_bridge._text_cache) == {"rock music", "jazz music"}
+    assert "Best match: " in tool.call({"candidates": ["pop"]})  # a third phrase does not fit: start again
+    assert set(tool_bridge._text_cache) == {"pop music"}
+    tool.call({"candidates": ["rock"]})
+    assert recorder.texts == [["rock music", "jazz music"], ["pop music"], ["rock music"]]  # embedded again
+    assert len(tool_bridge._text_cache) <= 2
+
+
 def test_prepare_embeds_a_file(tool_bridge, tmp_path):
     rock = FAKE_CONCEPTS.index("rock")
     path = tmp_path / "song.wav"
@@ -273,6 +298,13 @@ def test_build_each_kind(api_model, gtzan):
     }
     assert built[("vector", "closed")].n_fit == len(gtzan.fit_idx)
     assert built[("tool", "closed")].model_name == "fake-api"
+
+
+def test_build_refuses_a_vector_bridge_for_a_model_that_is_not_open_weight(api_model, gtzan):
+    """fake-api stands in for an API model: FakeModel could read vector inputs, but build() must refuse, as it
+    would for openai-chat, so a test with fake-api catches a run that tries the vector bridge on an API model."""
+    with pytest.raises(ValueError, match="Fake API model .* is not an open-weight model.*Use the text bridge"):
+        bridges.build("vector", api_model, gtzan, "closed")
 
 
 @pytest.mark.parametrize("kind", ["image", "native", "audio"])

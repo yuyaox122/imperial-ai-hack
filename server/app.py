@@ -51,9 +51,9 @@ All JSON. Errors: {"detail": "<what went wrong and what to do>"} with a 4xx or 5
        -> {"reply": str, "used": [{"bridge", "kind", "source", "detail"}]}
           `used` lists how each file reached the model; a file whose modality has no installed sense, or that
           cannot be read, is reported with kind "none" and is not shown to the model. For kind "tool" (the model
-          could call the listen tool to hear the file) the detail says whether the model called it and what the
-          last call returned: "the model called listen 1 time: Similarity ... Best match: rock." or "the model
-          could call listen but did not".
+          could call the listen tool, which asks CLAP about the file) the detail says whether the model called it
+          and what the last call returned: "the model called listen 1 time: Similarity ... Best match: rock." or
+          "the model could call listen but did not".
           400 for an empty message; 409 while an agent run holds a different local model.
   GET  /                                            web/index.html; other files under web/ are served at /static/
 

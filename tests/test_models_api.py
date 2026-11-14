@@ -473,6 +473,43 @@ def test_chat_with_a_tool_input(api):
     assert second["messages"][-1]["content"] == ANSWER
 
 
+def budgets(create):
+    return [(c.kwargs["tool_choice"], c.kwargs["max_completion_tokens"]) for c in create.call_args_list]
+
+
+def test_a_reply_after_a_tool_call_keeps_to_the_callers_limit(api):
+    """The answer round allows TOOL_CALL_TOKENS in case the model calls again; a longer reply is asked for again
+    within max_new_tokens, so free_text compares the bridge and no-input replies at the same budget."""
+    create = api.client.chat.completions.create
+    create.side_effect = [
+        calling(tool_call({"clip": 1}), usage=(30, 12)),
+        completion("It is a dog barking twice in a quiet room, then a car.", usage=(50, 14)),
+        completion("A dog barking", finish="length", usage=(50, 8)),
+    ]
+    model = api.module.OpenAIChatModel()
+    assert model.chat("What is it?", [tool_input()], max_new_tokens=8) == "A dog barking"
+    assert budgets(create) == [("auto", api.module.TOOL_CALL_TOKENS), ("auto", api.module.TOOL_CALL_TOKENS), ("none", 8)]
+    second, third = (c.kwargs for c in create.call_args_list[1:])
+    assert third["messages"] == second["messages"]  # the same question, asked again within the limit
+    assert model.usage() == {"calls": 3, "cache_hits": 0, "prompt_tokens": 130, "completion_tokens": 34}
+
+
+def test_a_reply_within_the_limit_is_kept(api):
+    create = api.client.chat.completions.create
+    create.side_effect = [calling(tool_call({"clip": 1}), usage=(30, 12)), completion("A dog.", usage=(50, 3))]
+    assert api.module.OpenAIChatModel().chat("What is it?", [tool_input()], max_new_tokens=8) == "A dog."
+    assert budgets(create) == [("auto", api.module.TOOL_CALL_TOKENS), ("auto", api.module.TOOL_CALL_TOKENS)]
+
+
+def test_a_long_reply_without_a_tool_call_is_asked_for_again_within_the_limit(api):
+    create = api.client.chat.completions.create
+    create.side_effect = [completion("x " * 100, usage=(30, 100)), completion("A dog", finish="length", usage=(30, 8))]
+    inp = tool_input()
+    assert api.module.OpenAIChatModel().chat("What is it?", [inp], max_new_tokens=8) == "A dog"
+    assert budgets(create) == [("auto", api.module.TOOL_CALL_TOKENS), ("none", 8)]
+    assert inp.tool.calls == []
+
+
 def test_without_tool_inputs_no_tools_are_offered(api):
     api.module.OpenAIChatModel().choose([ChoiceItem("Which sound?", ["cat", "dog"])])
     kwargs = api.client.chat.completions.create.call_args.kwargs
