@@ -1,6 +1,7 @@
 """The research seam: Linkup search, Hugging Face Hub and dataset viewer, the on-disk cache, fake answers.
 
-No test touches the network: every live-mode test patches research._http. The Hub and viewer fixtures in
+No external network is used. Transport integration tests use loopback HTTP servers;
+other live-mode tests patch research._http. The Hub and viewer fixtures in
 tests/fixtures/research/ were recorded on 2026-11-14; linkup_structured_from_docs.json was built by hand from
 the documented response shape (see its "_note").
 Run: SENSE_FAKE=1 .venv/bin/python -m pytest -q tests/test_agent_research.py
@@ -338,7 +339,7 @@ def test_http_uses_the_redirect_guard(monkeypatch):
 
     monkeypatch.setattr(research.urllib.request, "build_opener", build_opener)
     with pytest.raises(urllib.error.URLError):
-        research._http("GET", "https://huggingface.co/api/models/a/b", timeout=1)
+        direct_transport("GET", "https://huggingface.co/api/models/a/b", timeout=1)
     assert seen == [research._RedirectGuard]
 
 
@@ -460,7 +461,16 @@ class ControlledResponse:
         return chunk
 
 
+def direct_transport(method, url, *, timeout, max_bytes=research.MAX_RESPONSE_BYTES, **kwargs):
+    """Exercise worker internals with controlled responses; no process supervisor."""
+    from agent import _http_transport
+    output = io.BytesIO()
+    _http_transport.fetch(method, url, timeout=timeout, max_bytes=max_bytes, sink=output.write, **kwargs)
+    return output.getvalue()
+
+
 def transport(monkeypatch, response):
+    monkeypatch.setattr(research, "_http", direct_transport)
     from types import SimpleNamespace
     monkeypatch.setattr(research.urllib.request, "build_opener",
                         lambda *a: SimpleNamespace(open=lambda *a, **k: response))
@@ -540,6 +550,7 @@ def test_sample_passes_remaining_deadline_to_stream(monkeypatch, live_mode, tmp_
 
 
 def install_sample_transport(monkeypatch, responses, clock=None):
+    monkeypatch.setattr(research, "_http", direct_transport)
     from types import SimpleNamespace
     opened = []
     def viewer(endpoint, **params):
@@ -561,49 +572,6 @@ def install_sample_transport(monkeypatch, responses, clock=None):
     return opened
 
 
-def test_chunk_framing_trickle_cannot_extend_download_deadline(monkeypatch, live_mode, tmp_path):
-    """Exercise CPython's actual HTTPResponse chunk parser over a local socket pair.
-
-    Every byte arrives before the socket timeout; a per-read timeout alone cannot
-    stop the parser's internal readline from consuming the entire slow header.
-    """
-    import http.client
-    import socket
-    import threading
-    import time
-    from types import SimpleNamespace
-
-    client, server = socket.socketpair()
-    stop = threading.Event()
-    server.sendall(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n")
-    response = http.client.HTTPResponse(client)
-    response.begin()
-    def send_body():
-        try:
-            for byte in b"0" * 60 + b"1\r\nx\r\n0\r\n\r\n":
-                if stop.wait(0.01):
-                    return
-                server.sendall(bytes([byte]))
-        except OSError:
-            pass
-    sender = threading.Thread(target=send_body, daemon=True)
-    monkeypatch.setattr(research.urllib.request, "build_opener",
-                        lambda *a: SimpleNamespace(open=lambda *a, **k: response))
-    sender.start()
-    started = time.monotonic()
-    try:
-        with pytest.raises(research.ResearchUnavailable):
-            research.download("https://example.org/audio.wav", tmp_path / "audio.wav", timeout=0.12)
-        assert time.monotonic() - started < 0.5
-        assert not (tmp_path / "audio.wav").exists()
-    finally:
-        stop.set()
-        client.close()
-        server.close()
-        sender.join(timeout=1)
-
-
-
 def test_download_error_body_is_not_an_unbudgeted_transfer(monkeypatch, live_mode, tmp_path):
     class UnreadableBody(io.BytesIO):
         def read(self, *args):
@@ -615,3 +583,203 @@ def test_download_error_body_is_not_an_unbudgeted_transfer(monkeypatch, live_mod
         research.download("https://example.org/x", tmp_path / "audio.wav", max_bytes=10)
     assert caught.value.bytes_received == 0 and body.closed
     assert not (tmp_path / "audio.wav").exists()
+
+
+@pytest.fixture
+def local_http():
+    """Real urllib ownership and process supervision, with no external requests."""
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    servers = []
+    def start(respond):
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                try:
+                    respond(self)
+                except (BrokenPipeError, ConnectionResetError):
+                    pass  # The bounded client deliberately closes slow streams.
+            do_POST = do_GET
+            def log_message(self, *args):
+                pass
+        try:
+            server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        except PermissionError:
+            pytest.skip("sandbox denies loopback listeners; run transport checks with local-network permission")
+        thread = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01})
+        thread.start()
+        servers.append((server, thread))
+        return f"http://127.0.0.1:{server.server_port}"
+    yield start
+    for server, thread in servers:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=1)
+        assert not thread.is_alive()
+
+
+def send_response(handler, body=b"{}", status=200, **headers):
+    handler.send_response(status)
+    handler.send_header("Content-Length", str(len(body)))
+    for name, value in headers.items():
+        handler.send_header(name, value)
+    handler.end_headers()
+    handler.wfile.write(body)
+
+
+@pytest.mark.parametrize("body", [b"{}", b"RIFF0123WAVE", b"", b"x" * 150000])
+def test_real_content_length_response_succeeds(local_http, live_mode, tmp_path, body):
+    url = local_http(lambda h: send_response(h, body))
+    dest = tmp_path / "audio.wav"
+    assert research.download(url, dest, max_bytes=len(body)) == len(body)
+    assert dest.read_bytes() == body
+
+
+def test_owned_content_length_socket_is_not_reused_after_final_chunk(monkeypatch):
+    import http.client
+    import socket
+    client, server = socket.socketpair()
+    try:
+        server.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n{}")
+        response = http.client.HTTPResponse(client)
+        response.begin()
+        client.close()  # urllib relinquishes ownership to the response's fp.
+        transport(monkeypatch, response)
+        assert direct_transport("GET", "http://local/", timeout=1) == b"{}"
+    finally:
+        client.close()
+        server.close()
+
+
+@pytest.mark.parametrize("status", [301, 302, 303, 307, 308])
+def test_redirect_handler_never_drains_body(status):
+    from types import SimpleNamespace
+    class NeverRead(io.BytesIO):
+        def read(self, *args):
+            pytest.fail("redirect body must not be drained")
+    body = NeverRead(b"x" * 100000)
+    handler = research._RedirectGuard()
+    handler.parent = SimpleNamespace(open=lambda *args, **kwargs: "followed")
+    request = urllib.request.Request("http://local/a")
+    request.timeout = 1
+    assert getattr(handler, f"http_error_{status}")(request, body, status, "redirect", {"location": "/b"}) == "followed"
+    assert body.closed
+
+
+def test_redirect_body_not_downloaded_and_authorization_removed(local_http, live_mode):
+    import time
+    seen = []
+    target = local_http(lambda h: (seen.append(h.headers.get("Authorization")), send_response(h)))
+    def redirect(h):
+        h.send_response(302)
+        h.send_header("Location", target)
+        h.send_header("Content-Length", "99999999")
+        h.end_headers()
+        time.sleep(0.7)  # Following must not wait for or consume this body.
+    source = local_http(redirect)
+    assert research._http("GET", source, headers={"Authorization": "Bearer secret"}, timeout=0.5, max_bytes=2) == b"{}"
+    assert seen == [None]
+
+
+@pytest.mark.parametrize("phase", ["status", "headers", "redirect_headers", "chunk_framing", "body"])
+def test_network_deadline_kills_and_reaps_worker(local_http, live_mode, tmp_path, monkeypatch, phase):
+    import time
+    processes = []
+    real_popen = research.subprocess.Popen
+    def record_process(*args, **kwargs):
+        process = real_popen(*args, **kwargs)
+        processes.append(process)
+        return process
+    monkeypatch.setattr(research.subprocess, "Popen", record_process)
+    def drip(h):
+        if phase == "redirect_headers" and h.path == "/":
+            send_response(h, b"", status=302, Location="/slow")
+            return
+        if phase == "status":
+            wire = b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n{}"
+        elif phase in ("headers", "redirect_headers"):
+            h.wfile.write(b"HTTP/1.1 200 OK\r\n")
+            wire = b"X-Slow: " + b"a" * 40 + b"\r\nContent-Length: 2\r\n\r\n{}"
+        elif phase == "chunk_framing":
+            h.wfile.write(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n")
+            wire = b"0" * 40 + b"1\r\nx\r\n0\r\n\r\n"
+        else:
+            h.wfile.write(b"HTTP/1.1 200 OK\r\nContent-Length: 40\r\n\r\n")
+            wire = b"x" * 40
+        for byte in wire:
+            h.wfile.write(bytes([byte]))
+            h.wfile.flush()
+            time.sleep(0.02)
+    url = local_http(drip)
+    started = time.monotonic()
+    with pytest.raises(research.ResearchUnavailable, match="deadline") as caught:
+        research.download(url, tmp_path / "audio.wav", timeout=0.2)
+    assert time.monotonic() - started < 0.6
+    assert caught.value.transfer_incomplete
+    assert len(processes) == 1 and processes[0].poll() is not None
+    assert not (tmp_path / "audio.wav").exists()
+
+
+def test_real_oversize_and_truncated_responses_are_rejected(local_http, live_mode, tmp_path):
+    url = local_http(lambda h: send_response(h, b"x" * 10000))
+    with pytest.raises(research.ResearchUnavailable, match="byte limit") as caught:
+        research.download(url, tmp_path / "audio.wav", max_bytes=10)
+    assert caught.value.bytes_received == 11
+    def truncated(h):
+        h.wfile.write(b"HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\nabc")
+    url = local_http(truncated)
+    with pytest.raises(research.ResearchUnavailable, match="IncompleteRead") as caught:
+        research.download(url, tmp_path / "audio.wav")
+    assert caught.value.bytes_received == 3
+    assert not (tmp_path / "audio.wav").exists()
+
+
+@pytest.mark.parametrize("operation", ["mkdir", "write_bytes", "replace"])
+def test_save_failure_preserves_transfer_accounting(monkeypatch, live_mode, tmp_path, operation):
+    monkeypatch.setattr(research, "_http", returning(b"audio"))
+    def fail(*args, **kwargs):
+        raise OSError("disk full")
+    if operation == "replace":
+        monkeypatch.setattr(research.os, operation, fail)
+    else:
+        monkeypatch.setattr(Path, operation, fail)
+    with pytest.raises(research.ResearchUnavailable, match="disk full") as caught:
+        research.download("http://local/a", tmp_path / "audio.wav")
+    assert caught.value.bytes_received == 5
+    assert caught.value.transfer_incomplete
+    assert not list(tmp_path.glob("*.part"))
+    assert not (tmp_path / "audio.wav").exists()
+
+
+def test_stalled_dns_is_killed_without_leaving_a_worker(monkeypatch):
+    """Hang getaddrinfo inside the real child; no DNS or external connection occurs."""
+    import time
+    real_popen = research.subprocess.Popen
+    processes = []
+    def stall_dns(args, **kwargs):
+        bootstrap = ("import runpy,socket,sys,time; "
+                     "socket.getaddrinfo=lambda *a,**k: time.sleep(5); "
+                     "runpy.run_path(sys.argv[1],run_name='__main__')")
+        process = real_popen(args[:-1] + ["-c", bootstrap, args[-1]], **kwargs)
+        processes.append(process)
+        return process
+    monkeypatch.setattr(research.subprocess, "Popen", stall_dns)
+    started = time.monotonic()
+    with pytest.raises(research.ResearchUnavailable, match="deadline") as caught:
+        research._http("GET", "http://127.0.0.1/", timeout=0.2)
+    assert time.monotonic() - started < 0.6
+    assert caught.value.transfer_incomplete
+    assert len(processes) == 1 and processes[0].poll() is not None
+
+
+def test_real_http_status_and_cache_fallback(local_http, live_mode):
+    state = {"status": 200}
+    url = local_http(lambda h: send_response(h, b'{"id":"o/d"}', status=state["status"]))
+    assert research._fetch_json("GET", url, timeout=1) == ({"id": "o/d"}, "live")
+    state["status"] = 503
+    assert research._fetch_json("GET", url, timeout=1) == ({"id": "o/d"}, "cache")
+    state["status"] = 404
+    assert research._fetch_json("GET", url, timeout=1, absent=(404,)) == (None, "live")
+    with pytest.raises(urllib.error.HTTPError) as caught:
+        research._http("GET", url, timeout=1)
+    assert caught.value.code == 404
+    assert caught.value.bytes_received == 0

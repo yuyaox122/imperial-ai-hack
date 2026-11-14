@@ -10,7 +10,7 @@ Public surface (do not rename):
   viewer(endpoint, **params) -> dict        GET https://datasets-server.huggingface.co/<endpoint>?<params>
   download(url, dest, *, timeout=20.0, max_bytes=20_000_000) -> int   bytes written to dest
 
-Every request goes through _http, the only function that opens a connection (tests patch it).
+Every request goes through _http, which supervises an isolated HTTP worker (tests patch _http).
 Linkup: POST https://api.linkup.so/v1/search with "Authorization: Bearer $LINKUP_API_KEY" (read at call time,
 after sense.config has loaded .env), structured output and sources; HTTP 429 means rate limit or no credit.
 A key with whitespace or control characters is refused ("LINKUP_API_KEY is malformed", never the value). A
@@ -39,8 +39,10 @@ import http.client
 import json
 import os
 import re
-import socket
-import threading
+import io
+import math
+import subprocess
+import sys
 import time
 import urllib.error
 import urllib.parse
@@ -51,6 +53,8 @@ from pathlib import Path
 from typing import Callable
 
 from sense import config
+
+from ._http_transport import ResearchUnavailable, _RedirectGuard
 
 LINKUP_URL = "https://api.linkup.so/v1/search"
 HUB_API = "https://huggingface.co/api"
@@ -63,10 +67,6 @@ _HUB_ID = re.compile(r"^[\w.-]+(/[\w.-]+)?$")
 _ENDPOINT = re.compile(r"^[a-z][a-z-]*$")
 _NO_REPO = (404,)
 _FAKE_URL = "https://example.org/fake/"
-
-
-class ResearchUnavailable(RuntimeError):
-    """No answer: no network, no key, an HTTP error, or fake mode, and nothing cached."""
 
 
 @dataclass
@@ -251,19 +251,26 @@ def download(url: str, dest: Path, *, timeout: float = 20.0, max_bytes: int = 20
             exc.close()
         failure = ResearchUnavailable(f"download from {_host(url)} failed: {cause}")
         failure.bytes_received = getattr(exc, "bytes_received", 0)
+        failure.transfer_incomplete = getattr(exc, "transfer_incomplete", False)
         raise failure from exc
     if len(data) > max_bytes:
         failure = ResearchUnavailable(f"download from {_host(url)} is {len(data):,} bytes, over the {max_bytes:,} limit")
         failure.bytes_received = len(data)
         raise failure
     dest = Path(dest)
-    dest.parent.mkdir(parents=True, exist_ok=True)
     tmp = dest.with_name(f".{dest.name}.{uuid.uuid4().hex[:8]}.part")
     try:
-        tmp.write_bytes(data)
-        os.replace(tmp, dest)
-    finally:
-        tmp.unlink(missing_ok=True)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            tmp.write_bytes(data)
+            os.replace(tmp, dest)
+        finally:
+            tmp.unlink(missing_ok=True)
+    except OSError as exc:
+        failure = ResearchUnavailable(f"could not save download under {dest.parent}: {exc}")
+        failure.bytes_received = len(data)
+        failure.transfer_incomplete = True
+        raise failure from exc
     return len(data)
 
 
@@ -280,83 +287,54 @@ def _check_download_url(url: str) -> None:
 
 
 # ----------------------------------------------------------------------------- network and cache
-class _RedirectGuard(urllib.request.HTTPRedirectHandler):
-    """Follows a redirect only to http or https, and drops Authorization when it leaves the original host and
-    port or downgrades https to http."""
-
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
-        try:
-            old, new = urllib.parse.urlsplit(req.full_url), urllib.parse.urlsplit(newurl)
-            same_place = (old.hostname, old.port) == (new.hostname, new.port)
-        except ValueError:
-            raise ResearchUnavailable(f"refused a redirect from {_host(req.full_url)} to an invalid URL") from None
-        if new.scheme not in ("http", "https"):
-            scheme = new.scheme or "schemeless"
-            raise ResearchUnavailable(f"refused a redirect from {_host(req.full_url)} to a {scheme} URL")
-        redirected = super().redirect_request(req, fp, code, msg, headers, newurl)
-        if redirected is not None and (not same_place or (old.scheme, new.scheme) == ("https", "http")):
-            redirected.remove_header("Authorization")
-        return redirected
-
-
 def _http(method: str, url: str, *, body: dict | None = None, headers: dict | None = None,
           timeout: float, max_bytes: int = MAX_RESPONSE_BYTES) -> bytes:
-    """Open a connection and read a bounded body within timeout, with one overflow probe byte.
+    """Bound all network phases with a killable, reaped stdlib worker.
 
-    urllib/OS errors retain their type and carry bytes_received for discarded body data.
-    Connection setup uses urllib's timeout; DNS resolution is controlled by the OS.
+    The deadline includes worker startup. OS process creation/scheduling and
+    reaping add unavoidable overhead; server-controlled I/O cannot extend it.
+    Body bytes are capped at max_bytes plus one overflow sentinel. No worker
+    or socket continues running after this call returns, including on failure.
     """
+    if not math.isfinite(timeout) or timeout <= 0:
+        raise ResearchUnavailable("response deadline reached")
+    if not isinstance(max_bytes, int) or max_bytes < 0:
+        raise ResearchUnavailable("invalid response byte limit")
     deadline = time.monotonic() + timeout
-    data = json.dumps(body).encode() if body is not None else None
-    all_headers = {"User-Agent": USER_AGENT, "Accept": "application/json, */*"}
-    if data is not None:
-        all_headers["Content-Type"] = "application/json"
-    all_headers.update(headers or {})
-    request = urllib.request.Request(url, data=data, headers=all_headers, method=method)
-    opener = urllib.request.build_opener(_RedirectGuard)
-    payload = bytearray()
-    try:
-        with opener.open(request, timeout=timeout) as response:
-            # The socket belongs to this response (urllib does not pool it). A
-            # watchdog also bounds internal chunk-framing reads, which may perform
-            # multiple socket reads inside HTTPResponse.read1 under a trickle stream.
-            sock = getattr(getattr(getattr(response, "fp", None), "raw", None), "_sock", None)
-            timer = None
-            if sock is not None and hasattr(sock, "shutdown"):
-                timer = threading.Timer(max(0, deadline - time.monotonic()), _stop_stream, args=(sock,))
-                timer.daemon = True
-                timer.start()
-            try:
-                while True:
-                    remaining = deadline - time.monotonic()
-                    if remaining <= 0:
-                        raise ResearchUnavailable("response deadline reached")
-                    # Shrink each wait to the remaining wall time; read1 returns
-                    # available data rather than waiting to fill a large read.
-                    if sock is not None:
-                        sock.settimeout(remaining)
-                    chunk = response.read1(min(64 * 1024, max_bytes + 1 - len(payload)))
-                    payload.extend(chunk)
-                    if len(payload) > max_bytes:
-                        raise ResearchUnavailable(f"the answer from {_host(url)} is over the {max_bytes:,} byte limit")
-                    if time.monotonic() >= deadline:
-                        raise ResearchUnavailable("response deadline reached")
-                    if not chunk:
-                        break
-            finally:
-                if timer is not None:
-                    timer.cancel()
-    except _NETWORK_ERRORS as exc:
-        exc.bytes_received = len(payload) + len(getattr(exc, "partial", b""))
-        raise
-    return bytes(payload)
-
-
-def _stop_stream(sock: socket.socket) -> None:
-    try:
-        sock.shutdown(socket.SHUT_RDWR)
-    except OSError:
-        pass  # The response may already have closed while the timer was firing.
+    request = json.dumps(dict(method=method, url=url, body=body, headers=headers,
+                              timeout=timeout, max_bytes=max_bytes)).encode()
+    worker = Path(__file__).with_name("_http_transport.py")
+    # Isolated stdlib startup avoids app imports and executes no site hooks.
+    # Secrets are sent through the pipe, never command arguments or disk.
+    with subprocess.Popen([sys.executable, "-I", "-S", str(worker)], stdin=subprocess.PIPE,
+                          stdout=subprocess.PIPE, stderr=subprocess.PIPE) as process:
+        try:
+            output, error = process.communicate(request, timeout=max(0, deadline - time.monotonic()))
+        except subprocess.TimeoutExpired as exc:
+            process.kill()
+            output, _ = process.communicate()
+            failure = ResearchUnavailable("response deadline reached")
+            failure.bytes_received = len(output)
+            failure.transfer_incomplete = True
+            raise failure from exc
+        except BaseException:
+            process.kill()
+            process.communicate()
+            raise
+    if process.returncode:
+        try:
+            record = json.loads(error)
+        except (ValueError, UnicodeError):
+            record = {"message": "HTTP worker exited without a result", "transfer_incomplete": True}
+        if "status" in record:
+            failure = urllib.error.HTTPError(url, record["status"], record.get("message", "HTTP error"),
+                                             {}, io.BytesIO())
+        else:
+            failure = ResearchUnavailable(record.get("message", "HTTP worker failed"))
+        failure.bytes_received = max(len(output), record.get("bytes_received", 0))
+        failure.transfer_incomplete = record.get("transfer_incomplete", True)
+        raise failure
+    return output
 
 
 _NETWORK_ERRORS = (OSError, http.client.HTTPException, ResearchUnavailable)  # URLError and timeouts are OSError

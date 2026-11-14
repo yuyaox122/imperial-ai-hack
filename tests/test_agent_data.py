@@ -543,3 +543,39 @@ def test_fake_dataset_claim_keeps_explicit_fake_provenance(monkeypatch):
     monkeypatch.setenv("SENSE_FAKE", "1")
     _, claims, _ = find_datasets(DataNeed("labelled", "closed", [], "r"), "audio", "g")
     assert "Fake claim for tests" in claims[0].statement
+
+
+def test_failed_local_save_stops_sample_after_one_transfer(monkeypatch, tmp_path):
+    monkeypatch.setenv("SENSE_FAKE", "0")
+    viewer = FakeViewer(40, lambda i: i % 2, [AUDIO_FEATURE, class_label(["a", "b"])])
+    monkeypatch.setattr(research, "viewer", viewer)
+    transfers = []
+    def http(*args, **kwargs):
+        transfers.append(args)
+        return b"audio"
+    monkeypatch.setattr(research, "_http", http)
+    def fail_save(*args, **kwargs):
+        raise OSError("disk full")
+    monkeypatch.setattr(Path, "write_bytes", fail_save)
+    with pytest.raises(DataUnavailable, match="5 discarded bytes.*disk full"):
+        fetch_sample(CAND, tmp_path / "sample", "closed")
+    assert len(transfers) == 1
+    assert not (tmp_path / "sample").exists()
+
+
+def test_uncertain_transfer_without_returned_bytes_stops_sample(monkeypatch, tmp_path):
+    monkeypatch.setenv("SENSE_FAKE", "0")
+    viewer = FakeViewer(40, lambda i: i % 2, [AUDIO_FEATURE, class_label(["a", "b"])])
+    monkeypatch.setattr(research, "viewer", viewer)
+    transfers = []
+    def http(*args, **kwargs):
+        transfers.append(args)
+        error = ResearchUnavailable("response deadline reached")
+        error.bytes_received = 0
+        error.transfer_incomplete = True
+        raise error
+    monkeypatch.setattr(research, "_http", http)
+    with pytest.raises(DataUnavailable, match="discarded bytes.*deadline"):
+        fetch_sample(CAND, tmp_path / "sample", "closed")
+    assert len(transfers) == 1
+    assert not (tmp_path / "sample").exists()

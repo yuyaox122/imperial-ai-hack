@@ -403,10 +403,10 @@ def _download_one(src: str, dest: Path, label: str, idx: int, budget: int, timeo
             return None
         return research.download(src, target, timeout=timeout, max_bytes=min(FILE_MAX_BYTES, budget))
     except research.ResearchUnavailable as exc:
-        if getattr(exc, "bytes_received", 0):
+        if getattr(exc, "bytes_received", 0) or getattr(exc, "transfer_incomplete", False):
             # Abort after any partially transferred failure: discarded bytes cannot fuel
             # repeated oversized or broken transfers outside the sample's byte budget.
-            raise DataUnavailable(f"sample transfer stopped after {exc.bytes_received} discarded bytes: {exc}") from exc
+            raise DataUnavailable(f"sample transfer stopped after {getattr(exc, "bytes_received", 0)} discarded bytes: {exc}") from exc
         return None
     except (OSError, ValueError):
         return None
