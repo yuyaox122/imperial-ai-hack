@@ -43,7 +43,6 @@ const KIND_PORTS = {
   native: ["input", "input"],
 };
 const KIND_WIRE = { vector: "embedding", text: "text", tool: "text", image: "image", native: "input" };
-const VERDICT_LABELS = { installed: "installed", rejected: "refused", candidate: "candidate" };
 const SCOPE_LABELS = { closed: "These categories only", open: "Any sound" };
 const SCOPE_HINTS = {
   closed: "The agent checks that the model tells these labels apart on held-out clips.",
@@ -299,7 +298,25 @@ const seconds = (t) => (toNumber(t) === null ? "" : `${t < 0.1 ? t.toFixed(2) : 
 const capitalise = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : "");
 const humanise = (key) => capitalise(String(key).replace(/_/g, " "));
 const kindLabel = (kind) => KIND_LABELS[kind] || capitalise(kind || "unknown");
-const verdictKind = (card) => (card.verdict === "installed" ? "installed" : card.verdict === "rejected" ? "refused" : "candidate");
+/** How a card is drawn. The API's verdict, except that a bridge the planner put after the one it
+    installed was not needed rather than refused: screen 02 draws it as a plain candidate. */
+function shownVerdict(card) {
+  if (card.verdict === "installed") return "installed";
+  if (card.verdict !== "rejected") return "candidate";
+  const job = modelJob();
+  if (job && job.installed && job.cards.get(card.bridge) === card) {
+    const kinds = planKinds(job);
+    const installed = job.cards.get(job.installed);
+    if (installed && kinds.indexOf(card.kind) > kinds.indexOf(installed.kind)) return "not-needed";
+  }
+  return "refused";
+}
+const SHOWN = {
+  installed: { kind: "installed", tag: "installed", node: "installed" },
+  refused: { kind: "refused", tag: "refused", node: "refused" },
+  candidate: { kind: "candidate", tag: "candidate", node: "default" },
+  "not-needed": { kind: "candidate", tag: "not installed", node: "default" },
+};
 const bestCard = (cards) => cards.reduce((a, c) => (a && toNumber(a.accuracy) >= toNumber(c.accuracy) ? a : c), null);
 const NUMBER_WORDS = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"];
 const numberWord = (n) => NUMBER_WORDS[n] || String(n);
@@ -749,10 +766,11 @@ function renderReport() {
   state.reportBridge = card.bridge;
   state.reportCard = card;
   exportButton.disabled = false;
-  const kind = verdictKind(card);
+  const shown = SHOWN[shownVerdict(card)];
+  const kind = shown.kind;
   if (kind === "installed") setTag(verdictTag, "Installed", "installed", "check");
   else if (kind === "refused") setTag(verdictTag, "Refused", "refused", "ban");
-  else setTag(verdictTag, "candidate", "neutral");
+  else setTag(verdictTag, shown.tag, "neutral");
 
   const chance = toNumber(card.chance);
   const n = toNumber(card.n);
@@ -792,7 +810,7 @@ function renderReport() {
         h("span", { class: "display-caption", text: n !== null ? `on ${n} held-out questions` : "held-out accuracy" })),
       headlineNote.length ? h("p", { class: "report-chance", text: headlineNote.join(" · ") }) : null),
     h("div", { class: "metrics" },
-      metricRow(`${kindLabel(card.kind)} bridge`, acc, kind, chance, VERDICT_LABELS[card.verdict] || "candidate"),
+      metricRow(`${kindLabel(card.kind)} bridge`, acc, kind, chance, shown.tag),
       controls.map(([key, value]) => {
         const role = CONTROL_ROLES[key] || { kind: "control", tag: "control" };
         return metricRow(CONTROL_LABELS[key] || humanise(key), value, role.kind, chance, role.tag);
@@ -958,7 +976,7 @@ function renderGraph() {
       let status = "queued";
       let tone = "var(--color-text-muted)";
       if (card) {
-        nodeState = card.verdict === "installed" ? "installed" : card.verdict === "rejected" ? "refused" : "default";
+        nodeState = SHOWN[shownVerdict(card)].node;
         status = pct(card.accuracy);
         tone = nodeState === "refused" ? "var(--color-status-danger)" : "var(--color-status-success)";
       } else if (job.status === "running" && ((fd.started && !fd.built) || verifying(job, bridge))) {
@@ -1082,7 +1100,7 @@ function drawWires() {
   const installedKind = modelNode ? modelNode.dataset.installedKind : "";
   for (const kind of planKinds(job)) {
     const card = [...job.cards.values()].find((c) => c.kind === kind);
-    const refused = Boolean(card && card.verdict === "rejected");
+    const refused = Boolean(card && shownVerdict(card) === "refused");
     const into = (card && card.verdict === "installed") || (!card && installedKind === kind);
     wire("data-fit", `bridge-in-${kind}`, "var(--color-modality-data)", false, false);
     wire(`bridge-out-${kind}`, "model-in-target", refused ? "var(--color-status-danger)" : `var(--color-modality-${KIND_WIRE[kind] || "input"})`, !into, refused);
@@ -1474,12 +1492,8 @@ function postAgentResult(job, data) {
       "See why →",
     );
   }
-  const earlier = job.doneData || {};
-  const text = [
-    job.doneMessage,
-    data.installed && earlier.replaced ? `It replaced the earlier ${earlier.replaced} sense.` : null,
-    !data.installed && earlier.kept ? `Chat keeps using the earlier ${earlier.kept} sense.` : null,
-  ].filter(Boolean).join(" ");
+  // The done event's message already names an earlier sense the run replaced or kept (done.data).
+  const text = job.doneMessage;
   const msg = h(
     "article",
     { class: "turn msg msg--agent" },
@@ -1690,7 +1704,6 @@ function appendEvent(job, event) {
 
   if (step === "done") {
     job.doneMessage = event.message || "";
-    job.doneData = event.data || {}; // "replaced" or "kept": the sense installed before this run
     return;
   }
   if (step === "error") return;

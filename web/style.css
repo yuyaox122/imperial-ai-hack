@@ -726,11 +726,10 @@ fieldset { margin: 0; padding: 0; border: 0; min-width: 0; }
   justify-content: space-between;
   align-items: start;
   gap: var(--space-32);
-  padding: var(--space-24) var(--space-20) var(--space-24);
+  padding: var(--space-16) var(--space-20);
 }
 .graph-col { position: relative; z-index: 1; display: flex; flex-direction: column; gap: var(--space-32); }
-.graph-col:first-of-type { padding-top: var(--space-24); }
-.graph-col:last-child { padding-top: var(--space-24); }
+.graph-col:not(.graph-col--bridges) { padding-top: var(--space-24); }
 .graph-empty { grid-column: 1 / -1; font: 400 13px/19px var(--font-sans); color: var(--color-text-muted); }
 
 .wires { position: absolute; inset: 0; z-index: 0; pointer-events: none; overflow: visible; }
@@ -951,7 +950,7 @@ button.node--refused:hover { border-color: var(--color-status-danger); }
   font: 400 11px/15px var(--font-sans);
   color: var(--color-text-secondary);
   display: -webkit-box;
-  -webkit-line-clamp: 4;
+  -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
