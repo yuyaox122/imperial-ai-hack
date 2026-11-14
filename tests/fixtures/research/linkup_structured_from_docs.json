@@ -1,0 +1,35 @@
+{
+ "_note": "CONSTRUCTED BY HAND on 2026-11-14 from the documented Linkup /v1/search response shape (outputType structured, includeSources true); NOT a recorded response, because no LINKUP_API_KEY was available. Statements and URLs are illustrative.",
+ "data": {
+  "specialists": [
+   {
+    "hub_id": "laion/clap-htsat-unfused",
+    "statement": "Illustrative statement built from the documented shape: CLAP reports a zero-shot accuracy on ESC-50.",
+    "source_url": "https://example.org/docs-shape/clap",
+    "source_name": "Illustrative source",
+    "metric": "zero-shot accuracy on ESC-50",
+    "value": 0.9
+   },
+   {
+    "hub_id": "example/another-audio-encoder",
+    "statement": "Illustrative statement with no number.",
+    "source_url": "https://example.org/docs-shape/other",
+    "source_name": "Illustrative source",
+    "metric": null,
+    "value": null
+   }
+  ]
+ },
+ "sources": [
+  {
+   "name": "Illustrative source",
+   "url": "https://example.org/docs-shape/clap",
+   "content": "Illustrative page text built from the documented shape. This content is deliberately longer than three hundred characters so that the parser's truncation of a source's content to a 300-character snippet is exercised by the tests. It repeats itself to reach that length: illustrative page text, illustrative page text, illustrative page text, illustrative page text, illustrative page text, illustrative page text."
+  },
+  {
+   "name": "Illustrative source",
+   "url": "https://example.org/docs-shape/other",
+   "content": "Short illustrative content."
+  }
+ ]
+}

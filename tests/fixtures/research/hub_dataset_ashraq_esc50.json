@@ -1,0 +1,43 @@
+{
+ "_id": "632f5fd52f6c2bb7f62e6cec",
+ "id": "ashraq/esc50",
+ "author": "ashraq",
+ "sha": "e3e2a63ffff66b9a9735524551e3818e96af03ee",
+ "lastModified": "2023-01-07T08:35:28.000Z",
+ "private": false,
+ "gated": false,
+ "disabled": false,
+ "tags": [
+  "size_categories:1K<n<10K",
+  "format:parquet",
+  "modality:audio",
+  "modality:text",
+  "library:datasets",
+  "library:dask",
+  "library:mlcroissant",
+  "library:polars",
+  "region:us"
+ ],
+ "description": "https://github.com/karolpiczak/ESC-50\nThe dataset is available under the terms of the Creative Commons Attribution Non-Commercial license.\nK. J. Piczak. ESC: Dataset for Environmental Sound Classification. Proceedings of the 23rd Annual ACM Conference on Multimedia, Brisbane, Australia, 2015.\n[DOI: http://dx.doi.org/10.1145/2733373.2806390]\n",
+ "downloads": 7307,
+ "likes": 40,
+ "siblings": [
+  {
+   "rfilename": ".gitattributes"
+  },
+  {
+   "rfilename": "README.md"
+  },
+  {
+   "rfilename": "data/train-00000-of-00002-2f1ab7b824ec751f.parquet"
+  },
+  {
+   "rfilename": "data/train-00001-of-00002-27425e5c1846b494.parquet"
+  },
+  {
+   "rfilename": "dataset_infos.json"
+  }
+ ],
+ "createdAt": "2022-09-24T19:51:49.000Z",
+ "usedStorage": 4386198994
+}
