@@ -44,6 +44,7 @@ _Listener = Callable[[str, TraceEvent | None, list[ReportCard] | None], None]
 _lock = threading.Lock()
 _jobs: dict[str, JobState] = {}
 _cancel_requested: set[str] = set()
+_terminal_published: set[str] = set()  # closes cancellation before terminal listeners run
 _latest_id: str | None = None
 _listeners: list[_Listener] = []
 _notify_lock = threading.Lock()  # serialises listener calls across jobs
@@ -78,13 +79,13 @@ def _start(request: FitRequest, run: Callable) -> str:
 def cancel(job_id: str) -> bool:
     """Request a cooperative stop at the next trace event or worker return.
 
-    Return True while the job is running, including repeated requests, or False
-    for unknown/already terminal jobs. Cancellation ends as failed/"Cancelled.";
+    Return True while the job is running before its terminal trace event, including
+    repeated requests, or False for unknown jobs or once error/done is published. Cancellation ends as failed/"Cancelled.";
     it does not interrupt ongoing computation or undo completed side effects.
     """
     with _lock:
         job = _jobs.get(job_id)
-        if job is None or job.status != "running":
+        if job is None or job.status != "running" or job_id in _terminal_published:
             return False
         _cancel_requested.add(job_id)
         return True
@@ -131,6 +132,10 @@ def _run(job: JobState, run: Callable) -> None:
         with _lock:
             if job.id in _cancel_requested:
                 raise _Cancelled("Cancelled.")
+            if event.step in ("error", "done"):
+                # Reserve the terminal outcome atomically with publication. Listeners
+                # run outside this lock and may call cancel, which must now refuse.
+                _terminal_published.add(job.id)
             job.events.append(event)
         _notify(job.id, event, None)
 
@@ -163,6 +168,7 @@ def _run(job: JobState, run: Callable) -> None:
             job.installed = installed
             job.status = "done"
         _cancel_requested.discard(job.id)
+        _terminal_published.discard(job.id)
 
     if cancellation_event is not None:
         _notify(job.id, cancellation_event, None)

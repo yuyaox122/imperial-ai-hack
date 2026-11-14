@@ -180,6 +180,7 @@ def test_fit_error_not_duplicated(world, monkeypatch):
 def fresh_jobs(monkeypatch):
     monkeypatch.setattr(jobs, '_jobs', {})
     monkeypatch.setattr(jobs, '_cancel_requested', set())
+    monkeypatch.setattr(jobs, '_terminal_published', set())
     monkeypatch.setattr(jobs, '_latest_id', None)
     monkeypatch.setattr(jobs, '_listeners', [])
 
@@ -339,3 +340,30 @@ def test_cancel_before_return_without_another_event(world, fresh_jobs, monkeypat
     job = wait_for(job_id)
     assert job.status == 'failed' and job.error == 'Cancelled.'
     assert len(job.events) == 1 and job.events[0].step == 'error'
+
+
+@pytest.mark.parametrize('terminal', ['error', 'done'])
+def test_cancel_from_terminal_listener_preserves_outcome(world, fresh_jobs, tmp_path, terminal):
+    attempts, finals = [], []
+    completed = threading.Event()
+    def listen(job_id, event, cards):
+        if event is not None and event.step == terminal:
+            attempts.append(jobs.cancel(job_id))
+        if event is None:
+            finals.append((job_id, cards))
+            completed.set()
+    jobs.add_listener(listen)
+    file = tmp_path / 'missing' if terminal == 'error' else world.wav
+    job = wait_for(jobs.start_auto('fake', file, 'recognise sounds'))
+    assert completed.wait(2)
+    assert attempts == [False]
+    assert len(finals) == 1 and finals[0][0] == job.id
+    errors = [event for event in job.events if event.step == 'error']
+    if terminal == 'error':
+        assert job.status == 'failed' and job.error.startswith('ValueError:')
+        assert 'does not exist' in job.error
+        assert len(errors) == 1 and 'does not exist' in errors[0].message
+        assert finals[0][1] == []
+    else:
+        assert job.status == 'done' and job.error is None and job.installed == 'vector:x'
+        assert not errors and finals[0][1] == job.cards
