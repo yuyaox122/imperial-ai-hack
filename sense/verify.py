@@ -2,6 +2,10 @@
 
 Public surface (do not rename):
   verify(model, bridge, dataset, request, text_bridge=None, max_items=None, seed=0) -> ReportCard
+  free_text(model, bridge, dataset, max_items=100, seed=0, max_new_tokens=32) -> dict
+      how often the model's free-text reply names the true label of a held-out clip, with controls
+  labels_named(text, labels) -> list[int]
+      indices of the labels a text names; the matching rule free_text uses
 
 Each held-out example (dataset.test_idx, at most max_items) becomes a five-option question: dataset.question,
 the true label and four other labels in a seeded random order. Chance is 0.2 (or 1/len(labels) if fewer than
@@ -21,10 +25,16 @@ API model: there each question is asked three times (the bridge, swapped input a
 request; the lookup and specialist-alone controls ask nothing (sense.models_api caches the answers, so verifying
 the same questions again asks the API nothing). Fewer items give a wider interval: the card's `n` says how many
 were scored and its `interval` how certain the accuracy is. An explicit max_items is used as given.
+
+free_text asks the same held-out clips an open question instead (dataset.question plus " Answer in a few
+words.") and counts how often the reply names the true label, under the same swapped and no-input controls.
+It returns a plain dict for a results file; nothing it measures goes on the ReportCard.
 """
 
 from __future__ import annotations
 
+import re
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -169,3 +179,135 @@ def _unseen_classes(model: BaseModel, bridge: Bridge, dataset: LabelledSet, max_
     options, answers = five_options(dataset.y[test], n_labels, rng)
     inputs = [[refit.from_embedding(dataset.emb[i], _source(dataset, i))] for i in test]
     return _accuracy(model, dataset, options, answers, inputs)
+
+
+# ----------------------------------------------------------------------------- free-text answers
+FREE_TEXT_SUFFIX = " Answer in a few words."
+FREE_TEXT_EXAMPLES = 10
+
+
+def free_text(
+    model: BaseModel,
+    bridge: Bridge,
+    dataset: LabelledSet,
+    max_items: int = 100,
+    seed: int = 0,
+    max_new_tokens: int = 32,
+) -> dict:
+    """How often the model's free-text reply names the true label of a held-out clip, through `bridge`.
+
+    Each held-out clip (dataset.test_idx, at most max_items, drawn with `seed`) is sent with dataset.question
+    plus " Answer in a few words." and no options, under three conditions:
+      "bridge"    the clip through the bridge
+      "swapped"   a clip of a different label through the bridge, in its place
+      "no_input"  no clip at all
+    Each condition reports, as shares of its n replies: names_true (the reply names the true label),
+    names_true_only (the true label and no other label: the headline), names_other (at least one wrong label)
+    and names_none (no label), with a 95% Wilson interval for names_true_only.
+
+    This measures whether the reply names the label, not whether the rest of the reply is true: "jazz, played
+    on a kazoo" counts as naming jazz. A label is named when labels_named finds it: every word of the label
+    appears as a whole word of the reply, in any order, or as a simple plural ("dogs" names "dog"); case,
+    hyphens and punctuation are ignored and "hiphop" equals "hip hop". A reply that describes the sound without
+    using the label's words ("a ticking clock" for "clock tick") is counted as naming nothing.
+
+    Returns a plain-JSON dict: model, dataset, bridge, kind, question, n, seed, max_new_tokens, result (the
+    "bridge" condition), controls ("swapped", "no_input"), examples (up to 10 bridge-condition replies spread
+    over the held-out clips), seconds and created. Nothing here goes on the ReportCard.
+    """
+    if bridge.model_name != model.info.name:
+        raise ValueError(f"{bridge.name} was built for {bridge.model_name}, not {model.info.name}; build it for this model.")
+    started = time.monotonic()
+    rng = np.random.default_rng(seed)
+    test = _subsample(dataset.test_idx, max_items, rng)
+    if len(test) == 0:
+        raise ValueError(f"Dataset {dataset.name} has no held-out examples to score free-text answers on.")
+    swap = _swap_partners(test, dataset.y, rng)
+    prompt = dataset.question + FREE_TEXT_SUFFIX
+    truth = dataset.y[test]
+
+    def replies(inputs: list[list[SenseInput]]) -> list[str]:
+        return [model.chat(prompt, inp, max_new_tokens=max_new_tokens) for inp in inputs]
+
+    said = {
+        "bridge": replies([[bridge.from_embedding(dataset.emb[i], _source(dataset, i))] for i in test]),
+        "swapped": replies([[bridge.from_embedding(dataset.emb[j], _source(dataset, j))] for j in swap]),
+        "no_input": replies([[] for _ in test]),
+    }
+    named = {condition: [labels_named(r, dataset.labels) for r in rs] for condition, rs in said.items()}
+    stats = {condition: _naming_stats(hits, truth) for condition, hits in named.items()}
+    picks = sorted({int(round(k)) for k in np.linspace(0, len(test) - 1, min(FREE_TEXT_EXAMPLES, len(test)))})
+    examples = [
+        {
+            "source": _source(dataset, int(test[k])),
+            "label": dataset.labels[int(truth[k])],
+            "reply": said["bridge"][k],
+            "named": [dataset.labels[c] for c in named["bridge"][k]],
+        }
+        for k in picks
+    ]
+    return {
+        "model": model.info.name,
+        "dataset": dataset.name,
+        "bridge": bridge.name,
+        "kind": bridge.kind,
+        "question": prompt,
+        "n": int(len(test)),
+        "seed": seed,
+        "max_new_tokens": max_new_tokens,
+        "result": stats["bridge"],
+        "controls": {"swapped": stats["swapped"], "no_input": stats["no_input"]},
+        "examples": examples,
+        "seconds": round(time.monotonic() - started, 2),
+        "created": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    }
+
+
+def labels_named(text: str, labels: list[str]) -> list[int]:
+    """Indices of the labels that `text` names, in label order.
+
+    Both sides are normalised: lowercase, "_" and "-" and every other non-alphanumeric character become spaces,
+    whitespace is collapsed, and "hip hop" is read as "hiphop". A label is named when every word of the label
+    appears as a whole word of the text, in any order, either as it is or as a simple plural variant: the word
+    plus "s" or "es", or the word without a trailing "s". So "dogs barking" names "dog", "waves of the sea"
+    names "sea waves" and "Hip-hop" names "hip hop", but "rockabilly" does not name "rock". A label with no
+    letters or digits is never named.
+    """
+    said = set(_match_words(text))
+    out = []
+    for k, label in enumerate(labels):
+        words = _match_words(label)
+        if words and all(_word_forms(w) & said for w in words):
+            out.append(k)
+    return out
+
+
+def _match_words(text: str) -> list[str]:
+    """Lowercase words for labels_named: non-alphanumerics (including "_" and "-") split words; "hip hop" -> "hiphop"."""
+    text = " ".join(re.sub(r"[\W_]+", " ", text.lower()).split())
+    return re.sub(r"\bhip hop\b", "hiphop", text).split()
+
+
+def _word_forms(word: str) -> set[str]:
+    """A label word and the simple plural variants that also count as naming it."""
+    forms = {word, word + "s", word + "es"}
+    if len(word) > 1 and word.endswith("s"):
+        forms.add(word[:-1])
+    return forms
+
+
+def _naming_stats(named: list[list[int]], truth: np.ndarray) -> dict:
+    """Shares of replies that name the true label, only the true label, a wrong label, or no label."""
+    n = len(named)
+    true = np.array([int(t) in hits for hits, t in zip(named, truth)], dtype=bool)
+    other = np.array([any(h != int(t) for h in hits) for hits, t in zip(named, truth)], dtype=bool)
+    none = np.array([not hits for hits in named], dtype=bool)
+    true_only = true & ~other
+    return {
+        "n": n,
+        "names_true": round(float(true.mean()), 4),
+        "names_true_only": round(float(true_only.mean()), 4),
+        "names_other": round(float(other.mean()), 4),
+        "names_none": round(float(none.mean()), 4),
+        "interval": _wilson(float(true_only.mean()), n),
+    }
