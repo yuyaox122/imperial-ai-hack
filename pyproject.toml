@@ -18,6 +18,10 @@ dependencies = [
 ]
 
 [dependency-groups]
+databricks = [
+    "databricks-sdk>=0.166.0",
+    "mlflow-skinny>=3.18.0",
+]
 dev = ["pytest>=8.0", "httpx>=0.27"]
 
 [tool.uv]
