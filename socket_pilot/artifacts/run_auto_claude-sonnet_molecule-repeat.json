@@ -1,0 +1,2059 @@
+{
+  "id": "a2e586b8db59",
+  "origin": "server",
+  "recorded": "2026-11-15T08:14:38+00:00",
+  "request": {
+    "model": "claude-sonnet",
+    "dataset": "molecule-dataset-4b5b167f3e",
+    "modality": "molecule",
+    "scope": "closed"
+  },
+  "status": "done",
+  "events": [
+    {
+      "step": "detect",
+      "status": "start",
+      "message": "Detecting the contents of mystery.smi.",
+      "data": {},
+      "t": 0.0
+    },
+    {
+      "step": "detect",
+      "status": "ok",
+      "message": "mystery.smi holds 1 SMILES string (COc1cc(C=O)ccc1O), so it describes molecules. Since Claude Sonnet 5.5 does not read molecule files and no specialist is wired for them, the agent will write an adapter: code that turns the file into something Claude Sonnet 5.5 reads.",
+      "data": {
+        "file": "mystery.smi",
+        "goal": "What does this molecule smell like?",
+        "modality": "molecule",
+        "format": "smiles",
+        "how": "content",
+        "detail": "mystery.smi holds 1 SMILES string (COc1cc(C=O)ccc1O), so it describes molecules.",
+        "flow": "adapter"
+      },
+      "t": 0.037
+    },
+    {
+      "step": "design",
+      "status": "start",
+      "message": "Designing an adapter that lets Claude Sonnet 5.5 sense mystery.smi: What does this molecule smell like?",
+      "data": {
+        "file": "mystery.smi",
+        "goal": "What does this molecule smell like?"
+      },
+      "t": 0.037
+    },
+    {
+      "step": "design",
+      "status": "ok",
+      "message": "A text adapter for molecule (smiles) files: Parse the SMILES and report the canonical structure, molecular formula, functional groups, and relevant molecular descriptors. These facts help the model identify the molecule and assess its likely odor, though structure alone may not determine smell reliably.",
+      "data": {
+        "modality": "molecule",
+        "format": "smiles",
+        "route": "text",
+        "description": "Parse the SMILES and report the canonical structure, molecular formula, functional groups, and relevant molecular descriptors. These facts help the model identify the molecule and assess its likely odor, though structure alone may not determine smell reliably.",
+        "libraries": [
+          "rdkit"
+        ],
+        "question": "Which odor description best matches this molecule?",
+        "label_hint": "Odor descriptors or odor categories.",
+        "labels": [
+          "vanilla like",
+          "floral",
+          "fruity",
+          "sulfurous",
+          "odorless"
+        ],
+        "probe_plan": "dataset",
+        "probe_reason": "Odor labels require empirical or curated sensory knowledge rather than being facts a structure-generation script can compute.",
+        "install": [],
+        "detection": {
+          "modality": "molecule",
+          "format": "smiles",
+          "how": "content",
+          "detail": "mystery.smi holds 1 SMILES string (COc1cc(C=O)ccc1O), so it describes molecules."
+        },
+        "toolbox": [
+          "numpy",
+          "scipy",
+          "PIL",
+          "json",
+          "csv",
+          "math",
+          "struct",
+          "zipfile",
+          "gzip",
+          "io",
+          "re",
+          "xml.etree",
+          "statistics",
+          "trimesh",
+          "rdkit",
+          "soundfile",
+          "matplotlib",
+          "ffmpeg (via subprocess)",
+          "ffprobe (via subprocess)",
+          "adapter_kit (this harness's helper module, on the adapter's path: import adapter_kit. video_frames(path, n=6) -> PIL frames and video_summary(path) -> dict, for video; contact_sheet(images) -> one PIL image; load_mesh(path), mesh_views(path, views=4) -> PIL renders and mesh_summary(path) -> dict with a plain description, for 3D meshes; read_molecule(path), molecule_summary(path) -> dict with a plain description and molecule_image(path), for molecules; read_coordinates(path) -> [(lat, lon)], coordinate_summary(lat, lon) -> dict and nearest_places(lat, lon), for coordinates; ValueError when a file cannot be read)"
+        ],
+        "head_preview": "COc1cc(C=O)ccc1O"
+      },
+      "t": 3.455
+    },
+    {
+      "step": "build",
+      "status": "start",
+      "message": "Writing adapt(path) with rdkit and running it on mystery.smi in the sandbox.",
+      "data": {
+        "libraries": [
+          "rdkit"
+        ],
+        "sandboxed": true,
+        "max_attempts": 3
+      },
+      "t": 3.455
+    },
+    {
+      "step": "build",
+      "status": "ok",
+      "message": "The adapter ran on mystery.smi after 1 attempt (0.2 s).",
+      "data": {
+        "attempts": 1,
+        "libraries": [
+          "rdkit",
+          "re"
+        ],
+        "code_sha256": "29a1e66a242d814e218f765954c4c86ddbc52d67fcd0604b520a99f6609d148d",
+        "code": "def adapt(path):\n    from rdkit import Chem\n    from rdkit.Chem import Descriptors, rdMolDescriptors, Crippen, Lipinski\n    import re\n\n    try:\n        with open(path, 'r', encoding='utf-8', errors='replace') as f:\n            raw = f.read(100000)\n    except Exception as e:\n        return {'text': 'Could not read molecule file: ' + str(e)}\n\n    mol = None\n    source = ''\n    for line in raw.splitlines():\n        line = line.strip()\n        if not line or line.startswith('#'):\n            continue\n        candidates = [line, line.split()[0]]\n        for candidate in candidates:\n            try:\n                mol = Chem.MolFromSmiles(candidate)\n            except Exception:\n                mol = None\n            if mol is not None and mol.GetNumAtoms():\n                source = candidate\n                break\n        if mol is not None and mol.GetNumAtoms():\n            break\n    if mol is None:\n        return {'text': 'Could not parse a SMILES molecule from the file. File content: ' + raw[:1000]}\n\n    lines = ['Input SMILES: ' + source]\n    try:\n        lines.append('Canonical isomeric SMILES: ' + Chem.MolToSmiles(mol, canonical=True, isomericSmiles=True))\n        lines.append('Molecular formula: ' + rdMolDescriptors.CalcMolFormula(mol))\n        lines.append('Molecular weight: %.2f g/mol; exact mass: %.4f Da' % (Descriptors.MolWt(mol), Descriptors.ExactMolWt(mol)))\n        lines.append('Heavy atoms: %d; formal charge: %+d; disconnected components: %d' % (mol.GetNumHeavyAtoms(), Chem.GetFormalCharge(mol), len(Chem.GetMolFrags(mol))))\n        lines.append('Rings: %d total, %d aromatic; rotatable bonds: %d' % (rdMolDescriptors.CalcNumRings(mol), rdMolDescriptors.CalcNumAromaticRings(mol), Lipinski.NumRotatableBonds(mol)))\n        lines.append('Hydrogen-bond donors: %d; acceptors: %d; topological polar surface area: %.1f A^2; calculated logP: %.2f' % (Lipinski.NumHDonors(mol), Lipinski.NumHAcceptors(mol), rdMolDescriptors.CalcTPSA(mol), Crippen.MolLogP(mol)))\n    except Exception:\n        pass\n\n    patterns = [\n        ('aldehyde', '[CX3H1](=O)[#6]'),\n        ('ketone', '[#6][CX3](=O)[#6]'),\n        ('carboxylic acid', '[CX3](=O)[OX2H1]'),\n        ('ester', '[CX3](=O)[OX2][#6]'),\n        ('amide', '[CX3](=O)[NX3]'),\n        ('phenol', '[OX2H][c]'),\n        ('alcohol', '[OX2H][CX4]'),\n        ('aryl ether', '[c][OX2][#6]'),\n        ('aliphatic ether', '[CX4][OX2][CX4]'),\n        ('amine', '[NX3;H0,H1,H2;!$(NC=O)]'),\n        ('nitrile', '[CX2]#N'),\n        ('nitro', '[N+](=O)[O-]'),\n        ('thiol', '[SX2H]'),\n        ('sulfide', '[#6][SX2][#6]'),\n        ('alkene', '[CX3]=[CX3]'),\n        ('alkyne', '[CX2]#[CX2]'),\n        ('halogen substituent', '[F,Cl,Br,I]')\n    ]\n    groups = []\n    for name, smarts in patterns:\n        try:\n            query = Chem.MolFromSmarts(smarts)\n            matches = mol.GetSubstructMatches(query, uniquify=True)\n            if matches:\n                groups.append('%s (%d)' % (name, len(matches)))\n        except Exception:\n            pass\n    if groups:\n        lines.append('Detected structural groups: ' + ', '.join(groups) + '.')\n    try:\n        rings = mol.GetRingInfo().AtomRings()\n        for ring in rings:\n            atoms = [mol.GetAtomWithIdx(i) for i in ring]\n            if len(ring) == 6 and all(a.GetIsAromatic() and a.GetSymbol() == 'C' for a in atoms):\n                substituents = []\n                ring_set = set(ring)\n                for pos, idx in enumerate(ring):\n                    atom = mol.GetAtomWithIdx(idx)\n                    for neighbor in atom.GetNeighbors():\n                        if neighbor.GetIdx() not in ring_set and neighbor.GetAtomicNum() > 1:\n                            substituents.append((pos, neighbor.GetSymbol(), neighbor.GetIdx()))\n                if len(substituents) >= 2:\n                    pairs = []\n                    for i in range(len(substituents)):\n                        for j in range(i + 1, len(substituents)):\n                            a, b = substituents[i], substituents[j]\n                            d = abs(a[0] - b[0])\n                            d = min(d, 6 - d)\n                            if d:\n                                pairs.append('%s and %s substituents separated by %d ring bond%s' % (a[1], b[1], d, '' if d == 1 else 's'))\n                    if pairs:\n                        lines.append('Benzene ring substitution: ' + '; '.join(pairs) + '.')\n    except Exception:\n        pass\n    return {'text': '\\n'.join(lines)[:4000]}\n",
+        "preview": "Input SMILES: COc1cc(C=O)ccc1O\nCanonical isomeric SMILES: COc1cc(C=O)ccc1O\nMolecular formula: C8H8O3\nMolecular weight: 152.15 g/mol; exact mass: 152.0473 Da\nHeavy atoms: 11; formal charge: +0; disconnected components: 1\nRings: 1 total, 1 aromatic; rotatable bonds: 2\nHydrogen-bond donors: 1; accep...",
+        "output_kind": "text",
+        "notes": [],
+        "seconds": 0.177
+      },
+      "t": 19.779
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Searching the Hugging Face Hub and the web for labelled probe files.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "search",
+        "goal": "What does this molecule smell like?",
+        "modality": "molecule"
+      },
+      "t": 19.779
+    },
+    {
+      "step": "data",
+      "status": "ok",
+      "message": "Found 20 candidate datasets for labelled probe files.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "search",
+        "queries": [
+          "molecule odor",
+          "odor prediction",
+          "olfaction",
+          "odor descriptors",
+          "molecular scent",
+          "molecule smell",
+          "odor",
+          "smell",
+          "odorant",
+          "scent"
+        ],
+        "origin": "llm+rule",
+        "found": 20,
+        "top": [
+          "kordelfrance/scentience-olfaction-skills",
+          "SamuelCagnani/olfacto-odor-138-ptbr",
+          "Hari5115/molecular-odor-dataset",
+          "DeweiFeng/SmellNet",
+          "Voxel51/NYC_Smells",
+          "scento/perfume-database",
+          "kordelfrance/olfaction-vision-language-dataset",
+          "Hobin0329/SmellNet",
+          "Strangefiction/olfaction-vision-language-dataset",
+          "SalutefaceAAC/code-smell-detection",
+          "jonaskoenig/ML-Python-Code-Smells",
+          "smellak/gifford-screens-s1"
+        ],
+        "web": {
+          "used": true,
+          "reason": null,
+          "origin": "live",
+          "hub_ids": [],
+          "tables": [],
+          "refused": []
+        },
+        "excluded": []
+      },
+      "t": 22.802
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Trying kordelfrance/scentience-olfaction-skills.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "kordelfrance/scentience-olfaction-skills",
+        "source": "kordelfrance/scentience-olfaction-skills",
+        "kind": "hub",
+        "downloads": 114,
+        "found_by": "hub",
+        "licence": "apache-2.0",
+        "url": "https://huggingface.co/datasets/kordelfrance/scentience-olfaction-skills"
+      },
+      "t": 22.802
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of kordelfrance/scentience-olfaction-skills.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "kordelfrance/scentience-olfaction-skills",
+        "source": "kordelfrance/scentience-olfaction-skills",
+        "kind": "hub"
+      },
+      "t": 22.802
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "kordelfrance/scentience-olfaction-skills does not fit: the viewer's splits of kordelfrance/scentience-olfaction-skills failed: HTTP 500 from datasets-server.huggingface.co: No (supported) data files found in kordelfrance/scentience-olfaction-skills",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "kordelfrance/scentience-olfaction-skills",
+        "source": "kordelfrance/scentience-olfaction-skills",
+        "kind": "hub",
+        "reason": "the viewer's splits of kordelfrance/scentience-olfaction-skills failed: HTTP 500 from datasets-server.huggingface.co: No (supported) data files found in kordelfrance/scentience-olfaction-skills"
+      },
+      "t": 22.983
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of kordelfrance/scentience-olfaction-skills.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "kordelfrance/scentience-olfaction-skills",
+        "source": "kordelfrance/scentience-olfaction-skills",
+        "kind": "folder"
+      },
+      "t": 22.983
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "kordelfrance/scentience-olfaction-skills does not fit: kordelfrance/scentience-olfaction-skills holds no .mol/.sdf/.smi files",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "kordelfrance/scentience-olfaction-skills",
+        "source": "kordelfrance/scentience-olfaction-skills",
+        "kind": "folder",
+        "reason": "kordelfrance/scentience-olfaction-skills holds no .mol/.sdf/.smi files"
+      },
+      "t": 23.16
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "Could not use kordelfrance/scentience-olfaction-skills: inspect: the viewer's splits of kordelfrance/scentience-olfaction-skills failed: HTTP 500 from datasets-server.huggingface.co: No (supported) data files found in kordelfrance/scentience-olfaction-skills; folder: kordelfrance/scentience-olfaction-skills holds no .mol/.sdf/.smi files",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "kordelfrance/scentience-olfaction-skills",
+        "source": "kordelfrance/scentience-olfaction-skills",
+        "kind": "folder",
+        "reason": "inspect: the viewer's splits of kordelfrance/scentience-olfaction-skills failed: HTTP 500 from datasets-server.huggingface.co: No (supported) data files found in kordelfrance/scentience-olfaction-skills; folder: kordelfrance/scentience-olfaction-skills holds no .mol/.sdf/.smi files"
+      },
+      "t": 23.16
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Trying SamuelCagnani/olfacto-odor-138-ptbr.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "SamuelCagnani/olfacto-odor-138-ptbr",
+        "source": "SamuelCagnani/olfacto-odor-138-ptbr",
+        "kind": "hub",
+        "downloads": 194,
+        "found_by": "hub",
+        "licence": "mit",
+        "url": "https://huggingface.co/datasets/SamuelCagnani/olfacto-odor-138-ptbr"
+      },
+      "t": 23.16
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of SamuelCagnani/olfacto-odor-138-ptbr.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "SamuelCagnani/olfacto-odor-138-ptbr",
+        "source": "SamuelCagnani/olfacto-odor-138-ptbr",
+        "kind": "hub"
+      },
+      "t": 23.16
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "SamuelCagnani/olfacto-odor-138-ptbr does not fit: SamuelCagnani/olfacto-odor-138-ptbr has no input column for molecule: wanted a column named like smiles/smile/mol/molecule with fitting values (columns: image)",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "SamuelCagnani/olfacto-odor-138-ptbr",
+        "source": "SamuelCagnani/olfacto-odor-138-ptbr",
+        "kind": "hub",
+        "reason": "SamuelCagnani/olfacto-odor-138-ptbr has no input column for molecule: wanted a column named like smiles/smile/mol/molecule with fitting values (columns: image)"
+      },
+      "t": 25.16
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of SamuelCagnani/olfacto-odor-138-ptbr.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "SamuelCagnani/olfacto-odor-138-ptbr",
+        "source": "SamuelCagnani/olfacto-odor-138-ptbr",
+        "kind": "folder"
+      },
+      "t": 25.16
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "SamuelCagnani/olfacto-odor-138-ptbr does not fit: SamuelCagnani/olfacto-odor-138-ptbr holds no .mol/.sdf/.smi files",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "SamuelCagnani/olfacto-odor-138-ptbr",
+        "source": "SamuelCagnani/olfacto-odor-138-ptbr",
+        "kind": "folder",
+        "reason": "SamuelCagnani/olfacto-odor-138-ptbr holds no .mol/.sdf/.smi files"
+      },
+      "t": 25.341
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "Could not use SamuelCagnani/olfacto-odor-138-ptbr: inspect: SamuelCagnani/olfacto-odor-138-ptbr has no input column for molecule: wanted a column named like smiles/smile/mol/molecule with fitting values (columns: image); folder: SamuelCagnani/olfacto-odor-138-ptbr holds no .mol/.sdf/.smi files",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "SamuelCagnani/olfacto-odor-138-ptbr",
+        "source": "SamuelCagnani/olfacto-odor-138-ptbr",
+        "kind": "folder",
+        "reason": "inspect: SamuelCagnani/olfacto-odor-138-ptbr has no input column for molecule: wanted a column named like smiles/smile/mol/molecule with fitting values (columns: image); folder: SamuelCagnani/olfacto-odor-138-ptbr holds no .mol/.sdf/.smi files"
+      },
+      "t": 25.341
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Trying Hari5115/molecular-odor-dataset.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "Hari5115/molecular-odor-dataset",
+        "source": "Hari5115/molecular-odor-dataset",
+        "kind": "hub",
+        "downloads": 82,
+        "found_by": "hub",
+        "licence": "mit",
+        "url": "https://huggingface.co/datasets/Hari5115/molecular-odor-dataset"
+      },
+      "t": 25.341
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of Hari5115/molecular-odor-dataset.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "Hari5115/molecular-odor-dataset",
+        "source": "Hari5115/molecular-odor-dataset",
+        "kind": "hub"
+      },
+      "t": 25.341
+    },
+    {
+      "step": "data",
+      "status": "ok",
+      "message": "Hari5115/molecular-odor-dataset fits: input smiles, label its 0/1 columns.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "Hari5115/molecular-odor-dataset",
+        "source": "Hari5115/molecular-odor-dataset",
+        "kind": "hub",
+        "mapping": {
+          "config": "default",
+          "split": "train",
+          "input_columns": [
+            "smiles"
+          ],
+          "input_kind": "text",
+          "template": "{smiles}",
+          "extension": ".smi",
+          "label_column": "",
+          "label_kind": "multihot",
+          "label_names": [
+            "fruity",
+            "green",
+            "sweet",
+            "floral",
+            "herbal",
+            "woody",
+            "fatty",
+            "fresh",
+            "waxy",
+            "spicy",
+            "citrus",
+            "sulfurous",
+            "tropical",
+            "oily",
+            "nutty",
+            "earthy",
+            "rose",
+            "balsamic",
+            "apple",
+            "vegetable",
+            "meaty",
+            "ethereal",
+            "roasted",
+            "caramellic",
+            "winey",
+            "pineapple",
+            "musty",
+            "pungent",
+            "creamy",
+            "cheesy",
+            "minty",
+            "onion",
+            "burnt",
+            "powdery",
+            "berry",
+            "aldehydic",
+            "camphoreous",
+            "honey",
+            "pear",
+            "melon",
+            "buttery",
+            "leafy",
+            "savory",
+            "animal",
+            "cocoa"
+          ],
+          "label_separator": null,
+          "media_type": null,
+          "origin": "rule",
+          "reason": "rule: input smiles; label the 0/1 columns (multihot)",
+          "folder_depth": null
+        }
+      },
+      "t": 27.406
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Fetching labelled files from Hari5115/molecular-odor-dataset.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "fetch",
+        "hub_id": "Hari5115/molecular-odor-dataset",
+        "source": "Hari5115/molecular-odor-dataset",
+        "kind": "hub",
+        "folder": "<tmp>/repeat_home/fetched/probes/molecule/Hari5115__molecular-odor-dataset"
+      },
+      "t": 27.406
+    },
+    {
+      "step": "data",
+      "status": "ok",
+      "message": "Fetched 150 files in 8 labels from Hari5115/molecular-odor-dataset.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "fetch",
+        "hub_id": "Hari5115/molecular-odor-dataset",
+        "source": "Hari5115/molecular-odor-dataset",
+        "kind": "hub",
+        "counts": {
+          "fruity": 20,
+          "sweet": 20,
+          "green": 20,
+          "floral": 20,
+          "woody": 20,
+          "herbal": 20,
+          "fatty": 20,
+          "waxy": 10
+        },
+        "rows_seen": 1200,
+        "skipped": {
+          "no_label": 4,
+          "multi_label": 603
+        },
+        "bytes": 3751
+      },
+      "t": 57.3
+    },
+    {
+      "step": "data",
+      "status": "ok",
+      "message": "Using Hari5115/molecular-odor-dataset: 8 labels (fruity, sweet, green, floral, woody, herbal, fatty, waxy).",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "Hari5115/molecular-odor-dataset",
+        "source": "Hari5115/molecular-odor-dataset",
+        "kind": "hub",
+        "labels": [
+          "fruity",
+          "sweet",
+          "green",
+          "floral",
+          "woody",
+          "herbal",
+          "fatty",
+          "waxy"
+        ],
+        "licence": "mit"
+      },
+      "t": 57.3
+    },
+    {
+      "step": "data",
+      "status": "ok",
+      "message": "Using 150 dataset probe files in 8 labels (fatty, floral, fruity, green, herbal, sweet, waxy, woody); all are held out, since the adapter was written before they existed.",
+      "data": {
+        "name": "molecule-dataset-4b5b167f3e",
+        "provenance": "dataset",
+        "source": "https://huggingface.co/datasets/Hari5115/molecular-odor-dataset",
+        "licence": "mit",
+        "labels": [
+          "fatty",
+          "floral",
+          "fruity",
+          "green",
+          "herbal",
+          "sweet",
+          "waxy",
+          "woody"
+        ],
+        "counts": {
+          "fatty": 20,
+          "floral": 20,
+          "fruity": 20,
+          "green": 20,
+          "herbal": 20,
+          "sweet": 20,
+          "waxy": 10,
+          "woody": 20
+        },
+        "n": 150,
+        "split": {
+          "fit": 90,
+          "dev": 30,
+          "test": 30
+        },
+        "meta": {
+          "folder": "<tmp>/repeat_home/fetched/probes/molecule/Hari5115__molecular-odor-dataset",
+          "copied_to": "<tmp>/repeat_home/probes/molecule-dataset-4b5b167f3e",
+          "per_label": {
+            "fatty": 20,
+            "floral": 20,
+            "fruity": 20,
+            "green": 20,
+            "herbal": 20,
+            "sweet": 20,
+            "waxy": 10,
+            "woody": 20
+          },
+          "duplicates_collapsed": 0,
+          "conflicts_dropped": [],
+          "capped": 0,
+          "skipped": {
+            "hidden": 0,
+            "empty": 0,
+            "subfolders": 0,
+            "other_types": 0
+          },
+          "suffixes": null,
+          "warnings": [],
+          "seed": 0,
+          "min_per_label": 5,
+          "max_per_label": 40
+        },
+        "label_leaks": [],
+        "fetched": {
+          "hub_id": "Hari5115/molecular-odor-dataset",
+          "url": "https://huggingface.co/datasets/Hari5115/molecular-odor-dataset",
+          "title": "Hari5115/molecular-odor-dataset",
+          "kind": "hub",
+          "source": "Hari5115/molecular-odor-dataset",
+          "licence": "mit",
+          "licence_source": "the Hub dataset card",
+          "label_values": {
+            "fruity": "fruity",
+            "sweet": "sweet",
+            "green": "green",
+            "floral": "floral",
+            "woody": "woody",
+            "herbal": "herbal",
+            "fatty": "fatty",
+            "waxy": "waxy"
+          },
+          "counts": {
+            "fruity": 20,
+            "sweet": 20,
+            "green": 20,
+            "floral": 20,
+            "woody": 20,
+            "herbal": 20,
+            "fatty": 20,
+            "waxy": 10
+          },
+          "mapping": {
+            "config": "default",
+            "split": "train",
+            "input_columns": [
+              "smiles"
+            ],
+            "input_kind": "text",
+            "template": "{smiles}",
+            "extension": ".smi",
+            "label_column": "",
+            "label_kind": "multihot",
+            "label_names": [
+              "fruity",
+              "green",
+              "sweet",
+              "floral",
+              "herbal",
+              "woody",
+              "fatty",
+              "fresh",
+              "waxy",
+              "spicy",
+              "citrus",
+              "sulfurous",
+              "tropical",
+              "oily",
+              "nutty",
+              "earthy",
+              "rose",
+              "balsamic",
+              "apple",
+              "vegetable",
+              "meaty",
+              "ethereal",
+              "roasted",
+              "caramellic",
+              "winey",
+              "pineapple",
+              "musty",
+              "pungent",
+              "creamy",
+              "cheesy",
+              "minty",
+              "onion",
+              "burnt",
+              "powdery",
+              "berry",
+              "aldehydic",
+              "camphoreous",
+              "honey",
+              "pear",
+              "melon",
+              "buttery",
+              "leafy",
+              "savory",
+              "animal",
+              "cocoa"
+            ],
+            "label_separator": null,
+            "media_type": null,
+            "origin": "rule",
+            "reason": "rule: input smiles; label the 0/1 columns (multihot)",
+            "folder_depth": null
+          },
+          "rows_seen": 1200,
+          "skipped": {
+            "no_label": 4,
+            "multi_label": 603
+          },
+          "notes": [
+            "rule: input smiles; label the 0/1 columns (multihot)",
+            "the dataset gives several labels per row: only rows carrying exactly one of the chosen labels are kept (603 rows with two or more were dropped); other labels a row carries are ignored"
+          ],
+          "tried": [
+            {
+              "hub_id": "kordelfrance/scentience-olfaction-skills",
+              "reason": "inspect: the viewer's splits of kordelfrance/scentience-olfaction-skills failed: HTTP 500 from datasets-server.huggingface.co: No (supported) data files found in kordelfrance/scentience-olfaction-skills; folder: kordelfrance/scentience-olfaction-skills holds no .mol/.sdf/.smi files"
+            },
+            {
+              "hub_id": "SamuelCagnani/olfacto-odor-138-ptbr",
+              "reason": "inspect: SamuelCagnani/olfacto-odor-138-ptbr has no input column for molecule: wanted a column named like smiles/smile/mol/molecule with fitting values (columns: image); folder: SamuelCagnani/olfacto-odor-138-ptbr holds no .mol/.sdf/.smi files"
+            }
+          ]
+        }
+      },
+      "t": 57.348
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Searching the Hugging Face Hub and the web for labelled files of other categories.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "search",
+        "goal": "What does this molecule smell like?",
+        "modality": "molecule"
+      },
+      "t": 57.349
+    },
+    {
+      "step": "data",
+      "status": "ok",
+      "message": "Found 20 candidate datasets for labelled files of other categories.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "search",
+        "queries": [
+          "molecular odor",
+          "odor prediction",
+          "olfaction",
+          "odor descriptors",
+          "molecule smell",
+          "odor",
+          "smell",
+          "odorant",
+          "scent"
+        ],
+        "origin": "llm+rule",
+        "found": 20,
+        "top": [
+          "kordelfrance/scentience-olfaction-skills",
+          "SamuelCagnani/olfacto-odor-138-ptbr",
+          "DeweiFeng/SmellNet",
+          "Voxel51/NYC_Smells",
+          "scento/perfume-database",
+          "kordelfrance/olfaction-vision-language-dataset",
+          "Hobin0329/SmellNet",
+          "Strangefiction/olfaction-vision-language-dataset",
+          "SalutefaceAAC/code-smell-detection",
+          "jonaskoenig/ML-Python-Code-Smells",
+          "smellak/gifford-screens-s1",
+          "Dennishuang85/scent-engine-annotations"
+        ],
+        "web": {
+          "used": true,
+          "reason": null,
+          "origin": "memo",
+          "hub_ids": [],
+          "tables": [],
+          "refused": []
+        },
+        "excluded": [
+          {
+            "source": "Hari5115/molecular-odor-dataset",
+            "reason": "in exclude_sources"
+          }
+        ]
+      },
+      "t": 60.146
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Trying kordelfrance/scentience-olfaction-skills.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "kordelfrance/scentience-olfaction-skills",
+        "source": "kordelfrance/scentience-olfaction-skills",
+        "kind": "hub",
+        "downloads": 114,
+        "found_by": "hub",
+        "licence": "apache-2.0",
+        "url": "https://huggingface.co/datasets/kordelfrance/scentience-olfaction-skills"
+      },
+      "t": 60.146
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of kordelfrance/scentience-olfaction-skills.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "kordelfrance/scentience-olfaction-skills",
+        "source": "kordelfrance/scentience-olfaction-skills",
+        "kind": "hub"
+      },
+      "t": 60.146
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "kordelfrance/scentience-olfaction-skills does not fit: the viewer's splits of kordelfrance/scentience-olfaction-skills failed: HTTP 500 from datasets-server.huggingface.co: No (supported) data files found in kordelfrance/scentience-olfaction-skills",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "kordelfrance/scentience-olfaction-skills",
+        "source": "kordelfrance/scentience-olfaction-skills",
+        "kind": "hub",
+        "reason": "the viewer's splits of kordelfrance/scentience-olfaction-skills failed: HTTP 500 from datasets-server.huggingface.co: No (supported) data files found in kordelfrance/scentience-olfaction-skills"
+      },
+      "t": 60.299
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of kordelfrance/scentience-olfaction-skills.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "kordelfrance/scentience-olfaction-skills",
+        "source": "kordelfrance/scentience-olfaction-skills",
+        "kind": "folder"
+      },
+      "t": 60.299
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "kordelfrance/scentience-olfaction-skills does not fit: kordelfrance/scentience-olfaction-skills holds no .mol/.sdf/.smi files",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "kordelfrance/scentience-olfaction-skills",
+        "source": "kordelfrance/scentience-olfaction-skills",
+        "kind": "folder",
+        "reason": "kordelfrance/scentience-olfaction-skills holds no .mol/.sdf/.smi files"
+      },
+      "t": 60.466
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "Could not use kordelfrance/scentience-olfaction-skills: inspect: the viewer's splits of kordelfrance/scentience-olfaction-skills failed: HTTP 500 from datasets-server.huggingface.co: No (supported) data files found in kordelfrance/scentience-olfaction-skills; folder: kordelfrance/scentience-olfaction-skills holds no .mol/.sdf/.smi files",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "kordelfrance/scentience-olfaction-skills",
+        "source": "kordelfrance/scentience-olfaction-skills",
+        "kind": "folder",
+        "reason": "inspect: the viewer's splits of kordelfrance/scentience-olfaction-skills failed: HTTP 500 from datasets-server.huggingface.co: No (supported) data files found in kordelfrance/scentience-olfaction-skills; folder: kordelfrance/scentience-olfaction-skills holds no .mol/.sdf/.smi files"
+      },
+      "t": 60.466
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Trying SamuelCagnani/olfacto-odor-138-ptbr.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "SamuelCagnani/olfacto-odor-138-ptbr",
+        "source": "SamuelCagnani/olfacto-odor-138-ptbr",
+        "kind": "hub",
+        "downloads": 194,
+        "found_by": "hub",
+        "licence": "mit",
+        "url": "https://huggingface.co/datasets/SamuelCagnani/olfacto-odor-138-ptbr"
+      },
+      "t": 60.466
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of SamuelCagnani/olfacto-odor-138-ptbr.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "SamuelCagnani/olfacto-odor-138-ptbr",
+        "source": "SamuelCagnani/olfacto-odor-138-ptbr",
+        "kind": "hub"
+      },
+      "t": 60.466
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "SamuelCagnani/olfacto-odor-138-ptbr does not fit: SamuelCagnani/olfacto-odor-138-ptbr has no input column for molecule: wanted a column named like smiles/smile/mol/molecule with fitting values (columns: image)",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "SamuelCagnani/olfacto-odor-138-ptbr",
+        "source": "SamuelCagnani/olfacto-odor-138-ptbr",
+        "kind": "hub",
+        "reason": "SamuelCagnani/olfacto-odor-138-ptbr has no input column for molecule: wanted a column named like smiles/smile/mol/molecule with fitting values (columns: image)"
+      },
+      "t": 62.484
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of SamuelCagnani/olfacto-odor-138-ptbr.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "SamuelCagnani/olfacto-odor-138-ptbr",
+        "source": "SamuelCagnani/olfacto-odor-138-ptbr",
+        "kind": "folder"
+      },
+      "t": 62.484
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "SamuelCagnani/olfacto-odor-138-ptbr does not fit: SamuelCagnani/olfacto-odor-138-ptbr holds no .mol/.sdf/.smi files",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "SamuelCagnani/olfacto-odor-138-ptbr",
+        "source": "SamuelCagnani/olfacto-odor-138-ptbr",
+        "kind": "folder",
+        "reason": "SamuelCagnani/olfacto-odor-138-ptbr holds no .mol/.sdf/.smi files"
+      },
+      "t": 62.753
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "Could not use SamuelCagnani/olfacto-odor-138-ptbr: inspect: SamuelCagnani/olfacto-odor-138-ptbr has no input column for molecule: wanted a column named like smiles/smile/mol/molecule with fitting values (columns: image); folder: SamuelCagnani/olfacto-odor-138-ptbr holds no .mol/.sdf/.smi files",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "SamuelCagnani/olfacto-odor-138-ptbr",
+        "source": "SamuelCagnani/olfacto-odor-138-ptbr",
+        "kind": "folder",
+        "reason": "inspect: SamuelCagnani/olfacto-odor-138-ptbr has no input column for molecule: wanted a column named like smiles/smile/mol/molecule with fitting values (columns: image); folder: SamuelCagnani/olfacto-odor-138-ptbr holds no .mol/.sdf/.smi files"
+      },
+      "t": 62.753
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Trying DeweiFeng/SmellNet.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "DeweiFeng/SmellNet",
+        "source": "DeweiFeng/SmellNet",
+        "kind": "hub",
+        "downloads": 6743,
+        "found_by": "hub",
+        "licence": "mit",
+        "url": "https://huggingface.co/datasets/DeweiFeng/SmellNet"
+      },
+      "t": 62.753
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of DeweiFeng/SmellNet.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "DeweiFeng/SmellNet",
+        "source": "DeweiFeng/SmellNet",
+        "kind": "hub"
+      },
+      "t": 62.753
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "DeweiFeng/SmellNet does not fit: DeweiFeng/SmellNet has no input column for molecule: wanted a column named like smiles/smile/mol/molecule with fitting values (columns: NO2, C2H5OH, VOC, CO, Alcohol, LPG)",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "DeweiFeng/SmellNet",
+        "source": "DeweiFeng/SmellNet",
+        "kind": "hub",
+        "reason": "DeweiFeng/SmellNet has no input column for molecule: wanted a column named like smiles/smile/mol/molecule with fitting values (columns: NO2, C2H5OH, VOC, CO, Alcohol, LPG)"
+      },
+      "t": 64.462
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of DeweiFeng/SmellNet.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "DeweiFeng/SmellNet",
+        "source": "DeweiFeng/SmellNet",
+        "kind": "folder"
+      },
+      "t": 64.462
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "DeweiFeng/SmellNet does not fit: DeweiFeng/SmellNet holds no .mol/.sdf/.smi files",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "DeweiFeng/SmellNet",
+        "source": "DeweiFeng/SmellNet",
+        "kind": "folder",
+        "reason": "DeweiFeng/SmellNet holds no .mol/.sdf/.smi files"
+      },
+      "t": 65.232
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "Could not use DeweiFeng/SmellNet: inspect: DeweiFeng/SmellNet has no input column for molecule: wanted a column named like smiles/smile/mol/molecule with fitting values (columns: NO2, C2H5OH, VOC, CO, Alcohol, LPG); folder: DeweiFeng/SmellNet holds no .mol/.sdf/.smi files",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "DeweiFeng/SmellNet",
+        "source": "DeweiFeng/SmellNet",
+        "kind": "folder",
+        "reason": "inspect: DeweiFeng/SmellNet has no input column for molecule: wanted a column named like smiles/smile/mol/molecule with fitting values (columns: NO2, C2H5OH, VOC, CO, Alcohol, LPG); folder: DeweiFeng/SmellNet holds no .mol/.sdf/.smi files"
+      },
+      "t": 65.232
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Trying Voxel51/NYC_Smells.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "Voxel51/NYC_Smells",
+        "source": "Voxel51/NYC_Smells",
+        "kind": "hub",
+        "downloads": 4884,
+        "found_by": "hub",
+        "licence": null,
+        "url": "https://huggingface.co/datasets/Voxel51/NYC_Smells"
+      },
+      "t": 65.232
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of Voxel51/NYC_Smells.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "Voxel51/NYC_Smells",
+        "source": "Voxel51/NYC_Smells",
+        "kind": "hub"
+      },
+      "t": 65.232
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "Voxel51/NYC_Smells does not fit: Voxel51/NYC_Smells has no input column for molecule: wanted a column named like smiles/smile/mol/molecule with fitting values (columns: image)",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "Voxel51/NYC_Smells",
+        "source": "Voxel51/NYC_Smells",
+        "kind": "hub",
+        "reason": "Voxel51/NYC_Smells has no input column for molecule: wanted a column named like smiles/smile/mol/molecule with fitting values (columns: image)"
+      },
+      "t": 67.004
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of Voxel51/NYC_Smells.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "Voxel51/NYC_Smells",
+        "source": "Voxel51/NYC_Smells",
+        "kind": "folder"
+      },
+      "t": 67.004
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "Voxel51/NYC_Smells does not fit: Voxel51/NYC_Smells holds no .mol/.sdf/.smi files",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "Voxel51/NYC_Smells",
+        "source": "Voxel51/NYC_Smells",
+        "kind": "folder",
+        "reason": "Voxel51/NYC_Smells holds no .mol/.sdf/.smi files"
+      },
+      "t": 77.281
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "Could not use Voxel51/NYC_Smells: inspect: Voxel51/NYC_Smells has no input column for molecule: wanted a column named like smiles/smile/mol/molecule with fitting values (columns: image); folder: Voxel51/NYC_Smells holds no .mol/.sdf/.smi files",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "Voxel51/NYC_Smells",
+        "source": "Voxel51/NYC_Smells",
+        "kind": "folder",
+        "reason": "inspect: Voxel51/NYC_Smells has no input column for molecule: wanted a column named like smiles/smile/mol/molecule with fitting values (columns: image); folder: Voxel51/NYC_Smells holds no .mol/.sdf/.smi files"
+      },
+      "t": 77.281
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Trying scento/perfume-database.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "scento/perfume-database",
+        "source": "scento/perfume-database",
+        "kind": "hub",
+        "downloads": 904,
+        "found_by": "hub",
+        "licence": "cc-by-4.0",
+        "url": "https://huggingface.co/datasets/scento/perfume-database"
+      },
+      "t": 77.281
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of scento/perfume-database.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "scento/perfume-database",
+        "source": "scento/perfume-database",
+        "kind": "hub"
+      },
+      "t": 77.281
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "scento/perfume-database does not fit: scento/perfume-database has no input column for molecule: wanted a column named like smiles/smile/mol/molecule with fitting values (columns: id, name, country, founded, type, portrait, perfume_count, url)",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "scento/perfume-database",
+        "source": "scento/perfume-database",
+        "kind": "hub",
+        "reason": "scento/perfume-database has no input column for molecule: wanted a column named like smiles/smile/mol/molecule with fitting values (columns: id, name, country, founded, type, portrait, perfume_count, url)"
+      },
+      "t": 79.189
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of scento/perfume-database.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "scento/perfume-database",
+        "source": "scento/perfume-database",
+        "kind": "folder"
+      },
+      "t": 79.189
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "scento/perfume-database does not fit: scento/perfume-database holds no .mol/.sdf/.smi files",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "scento/perfume-database",
+        "source": "scento/perfume-database",
+        "kind": "folder",
+        "reason": "scento/perfume-database holds no .mol/.sdf/.smi files"
+      },
+      "t": 79.362
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "Could not use scento/perfume-database: inspect: scento/perfume-database has no input column for molecule: wanted a column named like smiles/smile/mol/molecule with fitting values (columns: id, name, country, founded, type, portrait, perfume_count, url); folder: scento/perfume-database holds no .mol/.sdf/.smi files",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "scento/perfume-database",
+        "source": "scento/perfume-database",
+        "kind": "folder",
+        "reason": "inspect: scento/perfume-database has no input column for molecule: wanted a column named like smiles/smile/mol/molecule with fitting values (columns: id, name, country, founded, type, portrait, perfume_count, url); folder: scento/perfume-database holds no .mol/.sdf/.smi files"
+      },
+      "t": 79.362
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Trying kordelfrance/olfaction-vision-language-dataset.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "kordelfrance/olfaction-vision-language-dataset",
+        "source": "kordelfrance/olfaction-vision-language-dataset",
+        "kind": "hub",
+        "downloads": 451,
+        "found_by": "hub",
+        "licence": "mit",
+        "url": "https://huggingface.co/datasets/kordelfrance/olfaction-vision-language-dataset"
+      },
+      "t": 79.362
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of kordelfrance/olfaction-vision-language-dataset.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "kordelfrance/olfaction-vision-language-dataset",
+        "source": "kordelfrance/olfaction-vision-language-dataset",
+        "kind": "hub"
+      },
+      "t": 79.362
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "kordelfrance/olfaction-vision-language-dataset does not fit: the viewer's rows of kordelfrance/olfaction-vision-language-dataset failed: HTTP 500 from datasets-server.huggingface.co",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "kordelfrance/olfaction-vision-language-dataset",
+        "source": "kordelfrance/olfaction-vision-language-dataset",
+        "kind": "hub",
+        "reason": "the viewer's rows of kordelfrance/olfaction-vision-language-dataset failed: HTTP 500 from datasets-server.huggingface.co"
+      },
+      "t": 79.903
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of kordelfrance/olfaction-vision-language-dataset.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "kordelfrance/olfaction-vision-language-dataset",
+        "source": "kordelfrance/olfaction-vision-language-dataset",
+        "kind": "folder"
+      },
+      "t": 79.904
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "kordelfrance/olfaction-vision-language-dataset does not fit: kordelfrance/olfaction-vision-language-dataset holds no .mol/.sdf/.smi files",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "kordelfrance/olfaction-vision-language-dataset",
+        "source": "kordelfrance/olfaction-vision-language-dataset",
+        "kind": "folder",
+        "reason": "kordelfrance/olfaction-vision-language-dataset holds no .mol/.sdf/.smi files"
+      },
+      "t": 80.301
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "Could not use kordelfrance/olfaction-vision-language-dataset: inspect: the viewer's rows of kordelfrance/olfaction-vision-language-dataset failed: HTTP 500 from datasets-server.huggingface.co; folder: kordelfrance/olfaction-vision-language-dataset holds no .mol/.sdf/.smi files",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "kordelfrance/olfaction-vision-language-dataset",
+        "source": "kordelfrance/olfaction-vision-language-dataset",
+        "kind": "folder",
+        "reason": "inspect: the viewer's rows of kordelfrance/olfaction-vision-language-dataset failed: HTTP 500 from datasets-server.huggingface.co; folder: kordelfrance/olfaction-vision-language-dataset holds no .mol/.sdf/.smi files"
+      },
+      "t": 80.301
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Trying Hobin0329/SmellNet.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "Hobin0329/SmellNet",
+        "source": "Hobin0329/SmellNet",
+        "kind": "hub",
+        "downloads": 127,
+        "found_by": "hub",
+        "licence": "mit",
+        "url": "https://huggingface.co/datasets/Hobin0329/SmellNet"
+      },
+      "t": 80.301
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of Hobin0329/SmellNet.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "Hobin0329/SmellNet",
+        "source": "Hobin0329/SmellNet",
+        "kind": "hub"
+      },
+      "t": 80.301
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "Hobin0329/SmellNet does not fit: Hobin0329/SmellNet has no input column for molecule: wanted a column named like smiles/smile/mol/molecule with fitting values (columns: NO2, C2H5OH, VOC, CO, Alcohol, LPG)",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "Hobin0329/SmellNet",
+        "source": "Hobin0329/SmellNet",
+        "kind": "hub",
+        "reason": "Hobin0329/SmellNet has no input column for molecule: wanted a column named like smiles/smile/mol/molecule with fitting values (columns: NO2, C2H5OH, VOC, CO, Alcohol, LPG)"
+      },
+      "t": 81.911
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of Hobin0329/SmellNet.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "Hobin0329/SmellNet",
+        "source": "Hobin0329/SmellNet",
+        "kind": "folder"
+      },
+      "t": 81.911
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "Hobin0329/SmellNet does not fit: Hobin0329/SmellNet holds no .mol/.sdf/.smi files",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "Hobin0329/SmellNet",
+        "source": "Hobin0329/SmellNet",
+        "kind": "folder",
+        "reason": "Hobin0329/SmellNet holds no .mol/.sdf/.smi files"
+      },
+      "t": 82.717
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "Could not use Hobin0329/SmellNet: inspect: Hobin0329/SmellNet has no input column for molecule: wanted a column named like smiles/smile/mol/molecule with fitting values (columns: NO2, C2H5OH, VOC, CO, Alcohol, LPG); folder: Hobin0329/SmellNet holds no .mol/.sdf/.smi files",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "Hobin0329/SmellNet",
+        "source": "Hobin0329/SmellNet",
+        "kind": "folder",
+        "reason": "inspect: Hobin0329/SmellNet has no input column for molecule: wanted a column named like smiles/smile/mol/molecule with fitting values (columns: NO2, C2H5OH, VOC, CO, Alcohol, LPG); folder: Hobin0329/SmellNet holds no .mol/.sdf/.smi files"
+      },
+      "t": 82.717
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Trying Strangefiction/olfaction-vision-language-dataset.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "Strangefiction/olfaction-vision-language-dataset",
+        "source": "Strangefiction/olfaction-vision-language-dataset",
+        "kind": "hub",
+        "downloads": 83,
+        "found_by": "hub",
+        "licence": "mit",
+        "url": "https://huggingface.co/datasets/Strangefiction/olfaction-vision-language-dataset"
+      },
+      "t": 82.717
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of Strangefiction/olfaction-vision-language-dataset.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "Strangefiction/olfaction-vision-language-dataset",
+        "source": "Strangefiction/olfaction-vision-language-dataset",
+        "kind": "hub"
+      },
+      "t": 82.717
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "Strangefiction/olfaction-vision-language-dataset does not fit: the viewer lists no splits for Strangefiction/olfaction-vision-language-dataset",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "Strangefiction/olfaction-vision-language-dataset",
+        "source": "Strangefiction/olfaction-vision-language-dataset",
+        "kind": "hub",
+        "reason": "the viewer lists no splits for Strangefiction/olfaction-vision-language-dataset"
+      },
+      "t": 82.878
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of Strangefiction/olfaction-vision-language-dataset.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "Strangefiction/olfaction-vision-language-dataset",
+        "source": "Strangefiction/olfaction-vision-language-dataset",
+        "kind": "folder"
+      },
+      "t": 82.878
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "Strangefiction/olfaction-vision-language-dataset does not fit: Strangefiction/olfaction-vision-language-dataset holds no .mol/.sdf/.smi files",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "Strangefiction/olfaction-vision-language-dataset",
+        "source": "Strangefiction/olfaction-vision-language-dataset",
+        "kind": "folder",
+        "reason": "Strangefiction/olfaction-vision-language-dataset holds no .mol/.sdf/.smi files"
+      },
+      "t": 83.085
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "Could not use Strangefiction/olfaction-vision-language-dataset: inspect: the viewer lists no splits for Strangefiction/olfaction-vision-language-dataset; folder: Strangefiction/olfaction-vision-language-dataset holds no .mol/.sdf/.smi files",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "Strangefiction/olfaction-vision-language-dataset",
+        "source": "Strangefiction/olfaction-vision-language-dataset",
+        "kind": "folder",
+        "reason": "inspect: the viewer lists no splits for Strangefiction/olfaction-vision-language-dataset; folder: Strangefiction/olfaction-vision-language-dataset holds no .mol/.sdf/.smi files"
+      },
+      "t": 83.085
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Trying SalutefaceAAC/code-smell-detection.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "SalutefaceAAC/code-smell-detection",
+        "source": "SalutefaceAAC/code-smell-detection",
+        "kind": "hub",
+        "downloads": 82,
+        "found_by": "hub",
+        "licence": "apache-2.0",
+        "url": "https://huggingface.co/datasets/SalutefaceAAC/code-smell-detection"
+      },
+      "t": 83.085
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of SalutefaceAAC/code-smell-detection.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "SalutefaceAAC/code-smell-detection",
+        "source": "SalutefaceAAC/code-smell-detection",
+        "kind": "hub"
+      },
+      "t": 83.085
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "SalutefaceAAC/code-smell-detection does not fit: SalutefaceAAC/code-smell-detection has no input column for molecule: wanted a column named like smiles/smile/mol/molecule with fitting values (columns: id, language, smell_type, severity, code_snippet, smell_explanation, refactoring_suggestion, difficulty)",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "SalutefaceAAC/code-smell-detection",
+        "source": "SalutefaceAAC/code-smell-detection",
+        "kind": "hub",
+        "reason": "SalutefaceAAC/code-smell-detection has no input column for molecule: wanted a column named like smiles/smile/mol/molecule with fitting values (columns: id, language, smell_type, severity, code_snippet, smell_explanation, refactoring_suggestion, difficulty)"
+      },
+      "t": 85.314
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of SalutefaceAAC/code-smell-detection.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "SalutefaceAAC/code-smell-detection",
+        "source": "SalutefaceAAC/code-smell-detection",
+        "kind": "folder"
+      },
+      "t": 85.314
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "SalutefaceAAC/code-smell-detection does not fit: SalutefaceAAC/code-smell-detection holds no .mol/.sdf/.smi files",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "SalutefaceAAC/code-smell-detection",
+        "source": "SalutefaceAAC/code-smell-detection",
+        "kind": "folder",
+        "reason": "SalutefaceAAC/code-smell-detection holds no .mol/.sdf/.smi files"
+      },
+      "t": 85.512
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "Could not use SalutefaceAAC/code-smell-detection: inspect: SalutefaceAAC/code-smell-detection has no input column for molecule: wanted a column named like smiles/smile/mol/molecule with fitting values (columns: id, language, smell_type, severity, code_snippet, smell_explanation, refactoring_suggestion, difficulty); folder: SalutefaceAAC/code-sme...",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "SalutefaceAAC/code-smell-detection",
+        "source": "SalutefaceAAC/code-smell-detection",
+        "kind": "folder",
+        "reason": "inspect: SalutefaceAAC/code-smell-detection has no input column for molecule: wanted a column named like smiles/smile/mol/molecule with fitting values (columns: id, language, smell_type, severity, code_snippet, smell_explanation, refactoring_suggestion, difficulty); folder: SalutefaceAAC/code-smell-detection holds no .mol/.sdf/.smi files"
+      },
+      "t": 85.512
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Trying jonaskoenig/ML-Python-Code-Smells.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "jonaskoenig/ML-Python-Code-Smells",
+        "source": "jonaskoenig/ML-Python-Code-Smells",
+        "kind": "hub",
+        "downloads": 45,
+        "found_by": "hub",
+        "licence": "mit",
+        "url": "https://huggingface.co/datasets/jonaskoenig/ML-Python-Code-Smells"
+      },
+      "t": 85.512
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of jonaskoenig/ML-Python-Code-Smells.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "jonaskoenig/ML-Python-Code-Smells",
+        "source": "jonaskoenig/ML-Python-Code-Smells",
+        "kind": "hub"
+      },
+      "t": 85.512
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "jonaskoenig/ML-Python-Code-Smells does not fit: jonaskoenig/ML-Python-Code-Smells has no input column for molecule: wanted a column named like smiles/smile/mol/molecule with fitting values (columns: smell_type, smell_code)",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "jonaskoenig/ML-Python-Code-Smells",
+        "source": "jonaskoenig/ML-Python-Code-Smells",
+        "kind": "hub",
+        "reason": "jonaskoenig/ML-Python-Code-Smells has no input column for molecule: wanted a column named like smiles/smile/mol/molecule with fitting values (columns: smell_type, smell_code)"
+      },
+      "t": 87.304
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of jonaskoenig/ML-Python-Code-Smells.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "jonaskoenig/ML-Python-Code-Smells",
+        "source": "jonaskoenig/ML-Python-Code-Smells",
+        "kind": "folder"
+      },
+      "t": 87.304
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "jonaskoenig/ML-Python-Code-Smells does not fit: jonaskoenig/ML-Python-Code-Smells holds no .mol/.sdf/.smi files",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "jonaskoenig/ML-Python-Code-Smells",
+        "source": "jonaskoenig/ML-Python-Code-Smells",
+        "kind": "folder",
+        "reason": "jonaskoenig/ML-Python-Code-Smells holds no .mol/.sdf/.smi files"
+      },
+      "t": 87.488
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "Could not use jonaskoenig/ML-Python-Code-Smells: inspect: jonaskoenig/ML-Python-Code-Smells has no input column for molecule: wanted a column named like smiles/smile/mol/molecule with fitting values (columns: smell_type, smell_code); folder: jonaskoenig/ML-Python-Code-Smells holds no .mol/.sdf/.smi files",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "jonaskoenig/ML-Python-Code-Smells",
+        "source": "jonaskoenig/ML-Python-Code-Smells",
+        "kind": "folder",
+        "reason": "inspect: jonaskoenig/ML-Python-Code-Smells has no input column for molecule: wanted a column named like smiles/smile/mol/molecule with fitting values (columns: smell_type, smell_code); folder: jonaskoenig/ML-Python-Code-Smells holds no .mol/.sdf/.smi files"
+      },
+      "t": 87.488
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Trying smellak/gifford-screens-s1.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "smellak/gifford-screens-s1",
+        "source": "smellak/gifford-screens-s1",
+        "kind": "hub",
+        "downloads": 31,
+        "found_by": "hub",
+        "licence": "other (card-only-no-dataset-redistribution)",
+        "url": "https://huggingface.co/datasets/smellak/gifford-screens-s1"
+      },
+      "t": 87.488
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of smellak/gifford-screens-s1.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "smellak/gifford-screens-s1",
+        "source": "smellak/gifford-screens-s1",
+        "kind": "hub"
+      },
+      "t": 87.488
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "smellak/gifford-screens-s1 does not fit: the viewer's splits of smellak/gifford-screens-s1 failed: HTTP 500 from datasets-server.huggingface.co: The dataset is empty.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "smellak/gifford-screens-s1",
+        "source": "smellak/gifford-screens-s1",
+        "kind": "hub",
+        "reason": "the viewer's splits of smellak/gifford-screens-s1 failed: HTTP 500 from datasets-server.huggingface.co: The dataset is empty."
+      },
+      "t": 87.647
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of smellak/gifford-screens-s1.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "smellak/gifford-screens-s1",
+        "source": "smellak/gifford-screens-s1",
+        "kind": "folder"
+      },
+      "t": 87.647
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "smellak/gifford-screens-s1 does not fit: smellak/gifford-screens-s1 holds no .mol/.sdf/.smi files",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "smellak/gifford-screens-s1",
+        "source": "smellak/gifford-screens-s1",
+        "kind": "folder",
+        "reason": "smellak/gifford-screens-s1 holds no .mol/.sdf/.smi files"
+      },
+      "t": 88.86
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "Could not use smellak/gifford-screens-s1: inspect: the viewer's splits of smellak/gifford-screens-s1 failed: HTTP 500 from datasets-server.huggingface.co: The dataset is empty.; folder: smellak/gifford-screens-s1 holds no .mol/.sdf/.smi files",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "smellak/gifford-screens-s1",
+        "source": "smellak/gifford-screens-s1",
+        "kind": "folder",
+        "reason": "inspect: the viewer's splits of smellak/gifford-screens-s1 failed: HTTP 500 from datasets-server.huggingface.co: The dataset is empty.; folder: smellak/gifford-screens-s1 holds no .mol/.sdf/.smi files"
+      },
+      "t": 88.86
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Trying Dennishuang85/scent-engine-annotations.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "Dennishuang85/scent-engine-annotations",
+        "source": "Dennishuang85/scent-engine-annotations",
+        "kind": "hub",
+        "downloads": 6,
+        "found_by": "hub",
+        "licence": "apache-2.0",
+        "url": "https://huggingface.co/datasets/Dennishuang85/scent-engine-annotations"
+      },
+      "t": 88.861
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of Dennishuang85/scent-engine-annotations.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "Dennishuang85/scent-engine-annotations",
+        "source": "Dennishuang85/scent-engine-annotations",
+        "kind": "hub"
+      },
+      "t": 88.861
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "Dennishuang85/scent-engine-annotations does not fit: Dennishuang85/scent-engine-annotations has no input column for molecule: wanted a column named like smiles/smile/mol/molecule with fitting values (columns: image_path, source, game_id, tags, extra, target_pwm, confidence, needs_review, reviewer)",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "Dennishuang85/scent-engine-annotations",
+        "source": "Dennishuang85/scent-engine-annotations",
+        "kind": "hub",
+        "reason": "Dennishuang85/scent-engine-annotations has no input column for molecule: wanted a column named like smiles/smile/mol/molecule with fitting values (columns: image_path, source, game_id, tags, extra, target_pwm, confidence, needs_review, reviewer)"
+      },
+      "t": 90.766
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of Dennishuang85/scent-engine-annotations.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "Dennishuang85/scent-engine-annotations",
+        "source": "Dennishuang85/scent-engine-annotations",
+        "kind": "folder"
+      },
+      "t": 90.766
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "Dennishuang85/scent-engine-annotations does not fit: Dennishuang85/scent-engine-annotations holds no .mol/.sdf/.smi files",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "Dennishuang85/scent-engine-annotations",
+        "source": "Dennishuang85/scent-engine-annotations",
+        "kind": "folder",
+        "reason": "Dennishuang85/scent-engine-annotations holds no .mol/.sdf/.smi files"
+      },
+      "t": 90.937
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "Could not use Dennishuang85/scent-engine-annotations: inspect: Dennishuang85/scent-engine-annotations has no input column for molecule: wanted a column named like smiles/smile/mol/molecule with fitting values (columns: image_path, source, game_id, tags, extra, target_pwm, confidence, needs_review, reviewer); folder: Dennishuang85/scent-engine-annota...",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "Dennishuang85/scent-engine-annotations",
+        "source": "Dennishuang85/scent-engine-annotations",
+        "kind": "folder",
+        "reason": "inspect: Dennishuang85/scent-engine-annotations has no input column for molecule: wanted a column named like smiles/smile/mol/molecule with fitting values (columns: image_path, source, game_id, tags, extra, target_pwm, confidence, needs_review, reviewer); folder: Dennishuang85/scent-engine-annotations holds no .mol/.sdf/.smi files"
+      },
+      "t": 90.937
+    },
+    {
+      "step": "data",
+      "status": "info",
+      "message": "Unseen categories not measured: no candidate dataset gave usable probes: kordelfrance/scentience-olfaction-skills (inspect: the viewer's splits of kordelfrance/scentience-olfaction-skills failed: HTTP 500 from datasets-server.huggingface.co: No (supported) data files found in kordelfrance/scentience-olfaction-skills; folder: ko....",
+      "data": {
+        "purpose": "unseen",
+        "reason": "no candidate dataset gave usable probes: kordelfrance/scentience-olfaction-skills (inspect: the viewer's splits of kordelfrance/scentience-olfaction-skills failed: HTTP 500 from datasets-server.huggingface.co: No (supported) data files found in kordelfrance/scentience-olfaction-skills; folder: kordelfrance/scentience-olfaction-skills holds no .mol/.sdf/.smi files); SamuelCagnani/olfacto-odor-138-ptbr (inspect: SamuelCagnani/olfacto-odor-138-ptbr has no input column for molecule: wanted a column named like smiles/smile/mol/molecule with fitting values (columns: image); folder: SamuelCagnani/olfacto-odor-138-ptbr holds no .mol/.sdf/.smi files); DeweiFeng/SmellNet (inspect: DeweiFeng/SmellNet has no input column for molecule: wanted a column named like smiles/smile/mol/molecule with fitting values (columns: NO2, C2H5OH, VOC, CO, Alcohol, LPG); folder: DeweiFeng/SmellNet holds no .mol/.sdf/.smi files); Voxel51/NYC_Smells (inspect: Voxel51/NYC_Smells has no input column for molecule: wanted a column named like smiles/smile/mol/molecule with fitting values (columns: image); folder: Voxel51/NYC_Smells holds no .mol/.sdf/.smi files); scento/perfume-database (inspect: scento/perfume-database has no input column for molecule: wanted a column named like smiles/smile/mol/molecule with fitting values (columns: id, name, country, founded, type, portrait, perfume_count, url); folder: scento/perfume-database holds no .mol/.sdf/.smi files); kordelfrance/olfaction-vision-language-dataset (inspect: the viewer's rows of kordelfrance/olfaction-vision-language-dataset failed: HTTP 500 from datasets-server.huggingface.co; folder: kordelfrance/olfaction-vision-language-dataset holds no .mol/.sdf/.smi files); Hobin0329/SmellNet (inspect: Hobin0329/SmellNet has no input column for molecule: wanted a column named like smiles/smile/mol/molecule with fitting values (columns: NO2, C2H5OH, VOC, CO, Alcohol, LPG); folder: Hobin0329/SmellNet holds no .mol/.sdf/.smi files); Strangefiction/olfaction-vision-language-dataset (inspect: the viewer lists no splits for Strangefiction/olfaction-vision-language-dataset; folder: Strangefiction/olfaction-vision-language-dataset holds no .mol/.sdf/.smi files); SalutefaceAAC/code-smell-detection (inspect: SalutefaceAAC/code-smell-detection has no input column for molecule: wanted a column named like smiles/smile/mol/molecule with fitting values (columns: id, language, smell_type, severity, code_snippet, smell_explanation, refactoring_suggestion, difficulty); folder: SalutefaceAAC/code-smell-detection holds no .mol/.sdf/.smi files); jonaskoenig/ML-Python-Code-Smells (inspect: jonaskoenig/ML-Python-Code-Smells has no input column for molecule: wanted a column named like smiles/smile/mol/molecule with fitting values (columns: smell_type, smell_code); folder: jonaskoenig/ML-Python-Code-Smells holds no .mol/.sdf/.smi files); smellak/gifford-screens-s1 (inspect: the viewer's splits of smellak/gifford-screens-s1 failed: HTTP 500 from datasets-server.huggingface.co: The dataset is empty.; folder: smellak/gifford-screens-s1 holds no .mol/.sdf/.smi files); Dennishuang85/scent-engine-annotations (inspect: Dennishuang85/scent-engine-annotations has no input column for molecule: wanted a column named like smiles/smile/mol/molecule with fitting values (columns: image_path, source, game_id, tags, extra, target_pwm, confidence, needs_review, reviewer); folder: Dennishuang85/scent-engine-annotations holds no .mol/.sdf/.smi files); the web search named no usable source"
+      },
+      "t": 90.937
+    },
+    {
+      "step": "verify",
+      "status": "start",
+      "message": "Scoring adapter:molecule-smiles on dataset probe files against swapped-input and no-input controls, the model reading each file as it is.",
+      "data": {
+        "bridge": "adapter:molecule-smiles",
+        "n_test": 150,
+        "native": true,
+        "unseen": null
+      },
+      "t": 90.962
+    },
+    {
+      "step": "verify",
+      "status": "ok",
+      "message": "adapter:molecule-smiles scored 58.0% on 50 held-out probe files (chance 20.0%); controls: swapped input 10.0%, no input 16.0%, the raw file 46.0%.",
+      "data": {
+        "card": {
+          "model": "claude-sonnet",
+          "modality": "molecule",
+          "dataset": "molecule-dataset-4b5b167f3e",
+          "scope": "closed",
+          "bridge": "adapter:molecule-smiles",
+          "kind": "text",
+          "n": 50,
+          "chance": 0.2,
+          "accuracy": 0.58,
+          "controls": {
+            "swapped": 0.1,
+            "no_input": 0.16,
+            "native": 0.46
+          },
+          "verdict": "candidate",
+          "reason": "",
+          "created": "2026-11-15T08:14:38+00:00",
+          "interval": [
+            0.4423,
+            0.7063
+          ],
+          "control_chance": {}
+        },
+        "controls": {
+          "swapped": 0.1,
+          "no_input": 0.16,
+          "native": 0.46
+        },
+        "control_chance": {},
+        "seconds": 134.2
+      },
+      "t": 225.157
+    },
+    {
+      "step": "decide",
+      "status": "start",
+      "message": "Checking adapter:molecule-smiles against the bars for a text bridge: chance plus 15 points, 10 points above swapped input, 10 points above the model reading the raw file, at least 10 probe files, and a 95% interval clear of chance.",
+      "data": {
+        "bridge": "adapter:molecule-smiles"
+      },
+      "t": 225.157
+    },
+    {
+      "step": "decide",
+      "status": "ok",
+      "message": "adapter:molecule-smiles passed: it scored 58.0% against 20.0% chance, meets the 35.0% bar for a text bridge, 12.0 points above the 46.0% the model scored on the raw file.",
+      "data": {
+        "install": "adapter:molecule-smiles",
+        "accepted": true,
+        "card": {
+          "model": "claude-sonnet",
+          "modality": "molecule",
+          "dataset": "molecule-dataset-4b5b167f3e",
+          "scope": "closed",
+          "bridge": "adapter:molecule-smiles",
+          "kind": "text",
+          "n": 50,
+          "chance": 0.2,
+          "accuracy": 0.58,
+          "controls": {
+            "swapped": 0.1,
+            "no_input": 0.16,
+            "native": 0.46
+          },
+          "verdict": "installed",
+          "reason": "adapter:molecule-smiles passed: it scored 58.0% against 20.0% chance, meets the 35.0% bar for a text bridge, 12.0 points above the 46.0% the model scored on the raw file. Unseen categories not measured: no candidate dataset gave usable probes: kordelfrance/scentience-olfaction-skills (inspect: the viewer's splits of kordelfrance/scentience-olfaction-skills failed: HTTP 500 from datasets-server.huggingface.co: No (supported) data files found in kordelfrance/scentience-olfaction-skills; folder: ko....",
+          "created": "2026-11-15T08:14:38+00:00",
+          "interval": [
+            0.4423,
+            0.7063
+          ],
+          "control_chance": {}
+        }
+      },
+      "t": 225.157
+    },
+    {
+      "step": "install",
+      "status": "start",
+      "message": "Installing adapter:molecule-smiles for Claude Sonnet 5.5.",
+      "data": {
+        "bridge": "adapter:molecule-smiles",
+        "replaced": null
+      },
+      "t": 225.164
+    },
+    {
+      "step": "install",
+      "status": "ok",
+      "message": "Installed adapter:molecule-smiles; Claude Sonnet 5.5 can now take molecule files in chat.",
+      "data": {
+        "bridge": "adapter:molecule-smiles",
+        "replaced": null,
+        "directory": "<tmp>/repeat_home/claude-sonnet/molecule"
+      },
+      "t": 225.166
+    },
+    {
+      "step": "done",
+      "status": "ok",
+      "message": "Claude Sonnet 5.5 can now take molecule files through adapter:molecule-smiles: it scored 58.0% on 50 probe files, against 20.0% chance.",
+      "data": {
+        "installed": "adapter:molecule-smiles",
+        "needs_user": false,
+        "bridge": "adapter:molecule-smiles"
+      },
+      "t": 225.166
+    }
+  ],
+  "cards": [
+    {
+      "model": "claude-sonnet",
+      "modality": "molecule",
+      "dataset": "molecule-dataset-4b5b167f3e",
+      "scope": "closed",
+      "bridge": "adapter:molecule-smiles",
+      "kind": "text",
+      "n": 50,
+      "chance": 0.2,
+      "accuracy": 0.58,
+      "controls": {
+        "swapped": 0.1,
+        "no_input": 0.16,
+        "native": 0.46
+      },
+      "verdict": "installed",
+      "reason": "adapter:molecule-smiles passed: it scored 58.0% against 20.0% chance, meets the 35.0% bar for a text bridge, 12.0 points above the 46.0% the model scored on the raw file. Unseen categories not measured: no candidate dataset gave usable probes: kordelfrance/scentience-olfaction-skills (inspect: the viewer's splits of kordelfrance/scentience-olfaction-skills failed: HTTP 500 from datasets-server.huggingface.co: No (supported) data files found in kordelfrance/scentience-olfaction-skills; folder: ko....",
+      "created": "2026-11-15T08:14:38+00:00",
+      "interval": [
+        0.4423,
+        0.7063
+      ],
+      "control_chance": {}
+    }
+  ],
+  "installed": "adapter:molecule-smiles",
+  "error": null,
+  "seconds": 225.166,
+  "format": 1
+}
