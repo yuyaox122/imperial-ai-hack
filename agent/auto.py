@@ -5,13 +5,14 @@ Public surface: run_auto(model, file, goal, emit, planner=None, *, examples=None
                          on_request=None) -> (cards, installed).
 
 Three flows, chosen after [detect] and the model check by the detected modality:
-  native      the model takes the file as it is in chat (sense.models.takes_as_is): text for any model that
-              reads text, an image only for a model that takes images in chat (an API model; a local open-weight
-              model cannot be shown images yet, so its image goes to the adapter flow, where the adapter can
-              describe the image as text). Ends at once: [detect], then [done].
+  native      the model takes the file as it is in chat (sense.models.takes_as_is, with the detected format):
+              text for any model that reads text, a PNG or JPEG image only for a model that takes images in chat
+              (an API model; a local open-weight model cannot be shown images yet, so its image goes to the adapter
+              flow, where the adapter can describe the image as text; so does a still GIF for any model). Ends at
+              once: [detect], then [done].
   specialist  audio: today's CLAP flow, unchanged ([research] ... [done] below).
   adapter     everything else (video, 3d, molecule, geo, other such as csv, fasta and unknown binaries, an image
-              for a local model): agent.synth.run_synth(model, file, goal, emit, examples=examples,
+              for a local model, a GIF): agent.synth.run_synth(model, file, goal, emit, examples=examples,
               detection=<this detection>, web=True, on_request=on_request, t0=<this run's start>), whose trace
               follows [detect] on the same clock (its docstring is the full contract): [design], [install_request]
               and agent.jobs' [approval] when the design asks for packages, [build], [data] (the user's examples
@@ -63,7 +64,7 @@ from typing import Any, Callable
 
 from agent import data, discover, loop, research, synth
 from agent.claims import Claim, citable, settle_dataset_claim, settle_specialist_claims
-from agent.detect import detect
+from agent.detect import detect, words
 from sense import config, datasets
 from sense import models
 from sense.contracts import FitRequest, Planner, ReportCard, TraceEvent
@@ -108,15 +109,21 @@ def run_auto(model: str, file: Path, goal: str, emit: Callable[[TraceEvent], Non
             # Refused before research, downloads and embedding, which would all be wasted on a model that cannot load.
             raise ValueError(f'{info.label} cannot be loaded. {info.note}'.strip())
         modality = detected.modality
-        flow = 'native' if models.takes_as_is(info, modality) else 'specialist' if modality == 'audio' else 'adapter'
+        # the format counts: an API model is shown PNG and JPEG images as they are, but a still GIF needs a sense
+        native = models.takes_as_is(info, modality, detected.format)
+        flow = 'native' if native else 'specialist' if modality == 'audio' else 'adapter'
         detail = detected.detail
         if flow == 'adapter':
-            if modality in info.native:  # listed, but chat cannot give it as it is (a local model and an image)
-                why = f'{info.label} cannot be shown {modality} files in chat'
+            what = words(modality)
+            if modality == 'image' and models.takes_as_is(info, modality):  # an API model, a GIF
+                why = (f'{info.label} can be shown only PNG and JPEG images in chat, and this is a '
+                       f'{detected.format.upper()} image')
+            elif modality in info.native:  # listed, but chat cannot give it as it is (a local model and an image)
+                why = f'{info.label} cannot be shown {what} files in chat'
             elif modality in ('text', 'image'):
-                why = f'{info.label} does not read {modality} files'
+                why = f'{info.label} does not read {what} files'
             else:
-                why = f'{info.label} does not read {modality} files and no specialist is wired for them'
+                why = f'{info.label} does not read {what} files and no specialist is wired for them'
             detail = (f'{detail} Since {why}, the agent will write an adapter: code that turns the file into '
                       f'something {info.label} reads.')
         say('ok', detail, file=file.name, goal=goal, **detected.to_dict(), flow=flow)

@@ -5,11 +5,14 @@ Public surface (do not rename):
   load_model(name) -> BaseModel             cached: one instance per name; loading a second local model
                                             releases the first (the laptop has 24 GB)
   register_model(info, loader)              lets other modules (for example an API adapter) add a model
-  takes_as_is(info, modality) -> bool       whether chat can give the model a file of that modality as it is:
+  takes_as_is(info, modality, fmt=None) -> bool
+                                            whether chat can give the model a file of that modality as it is:
                                             text when ModelInfo.native lists "text"; an image only when native
                                             lists "image" and the model is not open-weight (the local models take
-                                            text and vector inputs only, although their native lists "image");
-                                            nothing else. agent.auto and server/app.py both decide by it
+                                            text and vector inputs only, although their native lists "image"),
+                                            and, when fmt (agent.detect's format) is given, only a PNG or JPEG (a
+                                            GIF is not shown as it is); nothing else. agent.auto and server/app.py
+                                            both decide by it
   chat_history(history) -> list[dict]       the earlier turns of a chat, checked: [{"role", "content"}], oldest
                                             first; ValueError for anything that is not such a turn
   stripped_pieces(pieces) -> Iterator[str]  the pieces of a streamed reply with the whitespace at the start and
@@ -104,14 +107,15 @@ def register_model(info: ModelInfo, loader: Callable[[], BaseModel]) -> None:
         _loaded.pop(info.name, None)
 
 
-def takes_as_is(info: ModelInfo, modality: str) -> bool:
-    """Whether chat can give the model a file of `modality` as it is, with no sense (module docstring)."""
+def takes_as_is(info: ModelInfo, modality: str, fmt: str | None = None) -> bool:
+    """Whether chat can give the model a file of `modality` (and agent.detect format `fmt`, when known) as it is,
+    with no sense (module docstring)."""
     if modality not in info.native:
         return False
     if modality == "text":
         return True
     if modality == "image":  # only the API adapters (sense.models_api, sense.models_anthropic) take image inputs
-        return not info.open_weights
+        return not info.open_weights and (fmt is None or fmt in ("png", "jpeg"))  # what SenseInput.image holds
     return False
 
 
