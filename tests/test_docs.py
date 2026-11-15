@@ -18,7 +18,8 @@ import pytest
 REPO = Path(__file__).resolve().parents[1]
 ARTIFACTS = REPO / "socket_pilot" / "artifacts"
 README = REPO / "README.md"
-DOCS = [README, REPO / "docs" / "devpost.md", REPO / "docs" / "pitch.md", REPO / "demo" / "script.md",
+REFERENCE = REPO / "docs" / "reference.md"  # the README's detail: settings, results, limits, layout
+DOCS = [README, REFERENCE, REPO / "docs" / "devpost.md", REPO / "docs" / "pitch.md", REPO / "demo" / "script.md",
         REPO / "socket_pilot" / "README.md"]
 CODE_DIRS = ["sense", "agent", "server", "integrations", "scripts", "eval"]
 # Every environment variable the code reads is written as one of these quoted names.
@@ -46,9 +47,9 @@ def records() -> list[Path]:
 def test_the_settings_table_names_every_environment_variable_the_code_reads():
     names = {match for path in code_files() for match in ENV_NAME.findall(read(path))}
     assert {"SENSE_FAKE", "LINKUP_API_KEY", "OPENAI_API_KEY"} <= names  # the scan itself works
-    readme = read(README)
-    missing = sorted(name for name in names if f"`{name}`" not in readme)
-    assert not missing, f"README.md does not document {missing}; add them to the settings table"
+    reference = read(REFERENCE)
+    missing = sorted(name for name in names if f"`{name}`" not in reference)
+    assert not missing, f"docs/reference.md does not document {missing}; add them to the settings table"
 
 
 def test_every_record_the_docs_name_exists():
@@ -71,13 +72,13 @@ def test_every_record_is_described_in_the_socket_pilot_readme(record):
 def test_the_readme_quotes_the_card_each_recorded_run_installed(record):
     run = json.loads(read(record))
     if not run["cards"]:  # a run that stopped before any card (no usable probe files) is named instead
-        assert record.name in read(README), f"README.md does not name {record.name}, a run with no card"
+        assert record.name in read(REFERENCE), f"docs/reference.md does not name {record.name}, a run with no card"
         return
     # A refused run (installed None) is quoted by its best card: the score that was not enough.
     card = next((card for card in run["cards"] if card["bridge"] == run["installed"]), None) or max(
         run["cards"], key=lambda card: card["accuracy"])
-    assert f"{card['accuracy'] * 100:.1f}%" in read(README), (
-        f"README.md does not quote the {card['bridge']} card that {record.name} installed"
+    assert f"{card['accuracy'] * 100:.1f}%" in read(REFERENCE), (
+        f"docs/reference.md does not quote the {card['bridge']} card that {record.name} installed"
     )
 
 
@@ -130,10 +131,9 @@ def test_the_docs_name_only_routes_that_exist():
     assert not unknown, f"the docs name routes the server does not have: {unknown}"
 
 
-def test_every_path_in_the_readme_layout_table_exists():
-    readme = read(README)
-    table = readme.split("## Layout", 1)[1].split("\n\n", 2)[1]
+def test_every_path_in_the_reference_layout_table_exists():
+    table = read(REFERENCE).split("## Layout", 1)[1].split("\n\n", 2)[1]
     paths = [path for row in table.splitlines()[2:] for path in re.findall(r"`([^`]+)`", row.split("|")[1])]
     assert len(paths) > 10  # the scan itself works
     missing = [path for path in paths if not (REPO / path.rstrip("/")).exists()]
-    assert not missing, f"README.md's Layout table names paths that do not exist: {missing}"
+    assert not missing, f"docs/reference.md's Layout table names paths that do not exist: {missing}"
