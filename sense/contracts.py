@@ -202,7 +202,10 @@ class FitRequest:
 class TraceEvent:
     """One line of the agent's visible trace."""
 
-    step: str  # "inspect" | "plan" | "fit" | "verify" | "decide" | "install" | "done" | "error"
+    # A fit run (agent/loop.py): "inspect" | "plan" | "fit" | "verify" | "decide" | "install" | "done" | "error".
+    # A run from one file and a goal (agent/auto.py) adds "detect", "research" and "data" before "inspect", and
+    # "claims" between "verify" and "decide". Each module's docstring says what its steps carry.
+    step: str
     status: Literal["start", "ok", "fail", "info"]
     message: str
     data: dict[str, Any] = field(default_factory=dict)
