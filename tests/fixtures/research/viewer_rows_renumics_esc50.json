@@ -1,0 +1,148 @@
+{
+ "features": [
+  {
+   "feature_idx": 0,
+   "name": "src_file",
+   "type": {
+    "dtype": "string",
+    "_type": "Value"
+   }
+  },
+  {
+   "feature_idx": 1,
+   "name": "fold",
+   "type": {
+    "dtype": "int64",
+    "_type": "Value"
+   }
+  },
+  {
+   "feature_idx": 2,
+   "name": "label",
+   "type": {
+    "names": [
+     "dog",
+     "rooster",
+     "pig",
+     "cow",
+     "frog",
+     "cat",
+     "hen",
+     "insects",
+     "sheep",
+     "crow",
+     "rain",
+     "sea_waves",
+     "crackling_fire",
+     "crickets",
+     "chirping_birds",
+     "water_drops",
+     "wind",
+     "pouring_water",
+     "toilet_flush",
+     "thunderstorm",
+     "crying_baby",
+     "sneezing",
+     "clapping",
+     "breathing",
+     "coughing",
+     "footsteps",
+     "laughing",
+     "brushing_teeth",
+     "snoring",
+     "drinking_sipping",
+     "door_wood_knock",
+     "mouse_click",
+     "keyboard_typing",
+     "door_wood_creaks",
+     "can_opening",
+     "washing_machine",
+     "vacuum_cleaner",
+     "clock_alarm",
+     "clock_tick",
+     "glass_breaking"
+    ],
+    "_type": "ClassLabel"
+   }
+  },
+  {
+   "feature_idx": 3,
+   "name": "esc10",
+   "type": {
+    "dtype": "bool",
+    "_type": "Value"
+   }
+  },
+  {
+   "feature_idx": 4,
+   "name": "take",
+   "type": {
+    "dtype": "string",
+    "_type": "Value"
+   }
+  },
+  {
+   "feature_idx": 5,
+   "name": "audio",
+   "type": {
+    "_type": "Audio"
+   }
+  }
+ ],
+ "rows": [
+  {
+   "row_idx": 0,
+   "row": {
+    "src_file": "1-100032-A-0.wav",
+    "fold": 1,
+    "label": 0,
+    "esc10": true,
+    "take": "A",
+    "audio": [
+     {
+      "src": "https://datasets-server.huggingface.co/cached-assets/renumics/esc50/--/825dcaabaddcaa0836ad79ed115d256db6e7ed76/--/default/train/0/audio/audio.wav",
+      "type": "audio/wav"
+     }
+    ]
+   },
+   "truncated_cells": []
+  },
+  {
+   "row_idx": 1,
+   "row": {
+    "src_file": "1-100038-A-14.wav",
+    "fold": 1,
+    "label": 14,
+    "esc10": false,
+    "take": "A",
+    "audio": [
+     {
+      "src": "https://datasets-server.huggingface.co/cached-assets/renumics/esc50/--/825dcaabaddcaa0836ad79ed115d256db6e7ed76/--/default/train/1/audio/audio.wav",
+      "type": "audio/wav"
+     }
+    ]
+   },
+   "truncated_cells": []
+  },
+  {
+   "row_idx": 2,
+   "row": {
+    "src_file": "1-100210-A-36.wav",
+    "fold": 1,
+    "label": 36,
+    "esc10": false,
+    "take": "A",
+    "audio": [
+     {
+      "src": "https://datasets-server.huggingface.co/cached-assets/renumics/esc50/--/825dcaabaddcaa0836ad79ed115d256db6e7ed76/--/default/train/2/audio/audio.wav",
+      "type": "audio/wav"
+     }
+    ]
+   },
+   "truncated_cells": []
+  }
+ ],
+ "num_rows_total": 2000,
+ "num_rows_per_page": 100,
+ "partial": false
+}

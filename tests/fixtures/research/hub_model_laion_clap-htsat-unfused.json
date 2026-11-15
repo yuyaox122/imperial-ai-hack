@@ -1,0 +1,69 @@
+{
+ "_id": "63ee964c049599a8df94e360",
+ "id": "laion/clap-htsat-unfused",
+ "private": false,
+ "pipeline_tag": "feature-extraction",
+ "library_name": "transformers",
+ "tags": [
+  "transformers",
+  "pytorch",
+  "clap",
+  "feature-extraction",
+  "arxiv:2211.06687",
+  "license:apache-2.0",
+  "endpoints_compatible",
+  "deploy:azure",
+  "region:us"
+ ],
+ "downloads": 931344,
+ "likes": 96,
+ "modelId": "laion/clap-htsat-unfused",
+ "author": "laion",
+ "sha": "8fa0f1c6d0433df6e97c127f64b2a1d6c0dcda8a",
+ "lastModified": "2023-04-24T14:39:57.000Z",
+ "gated": false,
+ "disabled": false,
+ "mask_token": "<mask>",
+ "model-index": null,
+ "config": {
+  "architectures": [
+   "ClapModel"
+  ],
+  "model_type": "clap",
+  "tokenizer_config": {
+   "bos_token": "<s>",
+   "cls_token": "<s>",
+   "eos_token": "</s>",
+   "mask_token": "<mask>",
+   "pad_token": "<pad>",
+   "sep_token": "</s>",
+   "unk_token": "<unk>"
+  }
+ },
+ "cardData": {
+  "license": "apache-2.0"
+ },
+ "transformersInfo": {
+  "auto_model": "AutoModel",
+  "pipeline_tag": "feature-extraction",
+  "processor": "AutoProcessor"
+ },
+ "siblings": [
+  {
+   "rfilename": ".gitattributes"
+  },
+  {
+   "rfilename": "README.md"
+  },
+  {
+   "rfilename": "config.json"
+  }
+ ],
+ "spaces": [
+  "M2UGen/M2UGen-Demo",
+  "kxic/EscherNet",
+  "Fabrice-TIERCELIN/Text-to-Audio"
+ ],
+ "createdAt": "2023-02-16T20:47:08.000Z",
+ "usedStorage": 1228957273
+}

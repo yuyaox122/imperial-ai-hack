@@ -1,0 +1,11 @@
+{
+ "splits": [
+  {
+   "dataset": "renumics/esc50",
+   "config": "default",
+   "split": "train"
+  }
+ ],
+ "pending": [],
+ "failed": []
+}

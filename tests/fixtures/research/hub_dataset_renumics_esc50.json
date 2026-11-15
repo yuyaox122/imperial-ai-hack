@@ -1,0 +1,80 @@
+{
+ "_id": "65490a3906bdec082287a10f",
+ "id": "renumics/esc50",
+ "author": "renumics",
+ "sha": "825dcaabaddcaa0836ad79ed115d256db6e7ed76",
+ "lastModified": "2023-11-09T09:17:07.000Z",
+ "private": false,
+ "gated": false,
+ "disabled": false,
+ "tags": [
+  "task_categories:audio-classification",
+  "license:cc-by-nc-2.0",
+  "size_categories:1K<n<10K",
+  "format:parquet",
+  "modality:audio",
+  "modality:text",
+  "library:datasets",
+  "library:dask",
+  "library:mlcroissant",
+  "library:polars",
+  "region:us"
+ ],
+ "description": "\n\t\n\t\t\n\t\n\t\n\t\tDataset Card for \"esc50\"\n\t\n\nThis is a mirror for the ESC-50 dataset. Original sources:\nhttps://github.com/karolpiczak/ESC-50\nK. J. Piczak. ESC: Dataset for Environmental Sound Classification. Proceedings of the 23rd Annual ACM Conference on Multimedia, Brisbane, Australia, 2015.\n[DOI: http://dx.doi.org/10.1145/2733373.2806390]\nThe dataset is available under the terms of the Creative Commons Attribution Non-Commercial license.\n\n\t\n\t\t\n\t\n\t\n\t\tExploring the dataset\n\t\n\nYou can visualize… See the full description on the dataset page: https://huggingface.co/datasets/renumics/esc50.",
+ "downloads": 96,
+ "likes": 2,
+ "cardData": {
+  "dataset_info": {
+   "features": [
+    {
+     "name": "src_file",
+     "dtype": "string"
+    },
+    {
+     "name": "fold",
+     "dtype": "int64"
+    }
+   ],
+   "splits": [
+    {
+     "name": "train",
+     "num_bytes": 882179256,
+     "num_examples": 2000
+    }
+   ],
+   "download_size": 773038488,
+   "dataset_size": 882179256
+  },
+  "configs": [
+   {
+    "config_name": "default",
+    "data_files": [
+     {
+      "split": "train",
+      "path": "data/train-*"
+     }
+    ]
+   }
+  ],
+  "license": "cc-by-nc-2.0",
+  "task_categories": [
+   "audio-classification"
+  ],
+  "size_categories": [
+   "1K<n<10K"
+  ]
+ },
+ "siblings": [
+  {
+   "rfilename": ".gitattributes"
+  },
+  {
+   "rfilename": "README.md"
+  },
+  {
+   "rfilename": "data/train-00000-of-00002-7e0045578435fe1f.parquet"
+  }
+ ],
+ "createdAt": "2023-11-06T15:46:01.000Z",
+ "usedStorage": 4005335448
+}

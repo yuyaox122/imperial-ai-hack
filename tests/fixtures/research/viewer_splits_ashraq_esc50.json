@@ -1,0 +1,11 @@
+{
+ "splits": [
+  {
+   "dataset": "ashraq/esc50",
+   "config": "default",
+   "split": "train"
+  }
+ ],
+ "pending": [],
+ "failed": []
+}

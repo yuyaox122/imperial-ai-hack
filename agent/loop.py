@@ -13,8 +13,10 @@ Steps, each emitting a "start" event and then "ok" or "fail" (TraceEvent.step in
   [inspect] load the model and dataset; report what the model accepts natively and whether it is open-weight
   [plan]    planner.plan -> bridge kinds to try. The "ok" event data has "unavailable": the bridges
             bridges.availability(model_info, modality) reports as not available, each {"kind", "why"}
-            ([] when sense.bridges has no availability function or it raises)
-  [fit]     build each candidate (bridges.fit_vector_bridge on dataset.fit_idx, bridges.make_text_bridge).
+            ([] when sense.bridges has no availability function or it raises). Always verify text, vector
+            for open-weight models, and tool for closed-weight models when availability reports it available.
+  [fit]     build each candidate with bridges.build(kind, model, dataset, scope), when present; otherwise
+            use bridges.fit_vector_bridge on dataset.fit_idx and bridges.make_text_bridge, skipping other kinds.
             Each "ok" event data has "specialist": specialists.describe(modality), read just after that bridge
             is built, or None when sense.specialists has no describe function or it raises
   [verify]  verify.verify for each candidate, the text bridge serving as a control for the vector bridge;
@@ -106,24 +108,30 @@ def run_fit(
         planner = planner or get_planner()
         say("start", f"Asking the {planner.name} planner which bridges to try for {request.scope}-scope {request.modality}.")
         kinds = list(planner.plan(request, info, dataset))
+        available = _availability(info, request.modality)
         # Every bridge this model can take is verified, whatever the planner proposes: the text bridge is the
         # fallback and a control, and a refused vector bridge must be refused with numbers, not skipped.
         required = (["vector"] if info.open_weights else []) + ["text"]
+        if not info.open_weights and any(row["kind"] == "tool" and row["available"] for row in available):
+            required.append("tool")
         added = [kind for kind in required if kind not in kinds]
         kinds += added
         note = f" The planner proposed {', '.join(kinds[: len(kinds) - len(added)]) or 'none'}; {', '.join(added)} added so every available bridge is verified." if added else ""
         say("ok", f"Bridges to try, in order: {', '.join(kinds) or 'none'}.{note}", planner=planner.name, kinds=kinds,
-            unavailable=_unavailable(info, request.modality))
+            unavailable=[{"kind": row["kind"], "why": row["why"]} for row in available if not row["available"]])
 
         # [fit]
         step = "fit"
         built: dict[BridgeKind, Bridge] = {}
+        build = getattr(bridges, "build", None)
         for kind in kinds:
             if kind in built:
                 continue
             say("start", _fit_message(kind, request, dataset), kind=kind)
             started = time.monotonic()
-            if kind == "vector":
+            if build is not None:
+                bridge = build(kind, model, dataset, request.scope)
+            elif kind == "vector":
                 bridge = bridges.fit_vector_bridge(model, dataset, dataset.fit_idx)
             elif kind == "text":
                 bridge = bridges.make_text_bridge(model, dataset if request.scope == "closed" else None)
@@ -187,10 +195,8 @@ def run_fit(
         if chosen is None:
             if not cards:
                 why = "no candidate bridge could be built"
-            elif len(cards) == 1:
-                why = "the only candidate failed verification"
             else:
-                why = f"none of the {len(cards)} candidates passed verification"
+                why = "the planner selected no bridge"
             if earlier is None:
                 summary = f"No {request.modality} sense was installed for {info.label}: {why}."
             else:
@@ -225,16 +231,16 @@ def run_fit(
         raise
 
 
-def _unavailable(info: ModelInfo, modality: str) -> list[dict[str, str]]:
-    """The bridges sense.bridges.availability reports as unavailable, as [{"kind", "why"}], or [] when that
-    function does not exist or fails: a trace fact must never fail a run."""
+def _availability(info: ModelInfo, modality: str) -> list[dict[str, Any]]:
+    """Read bridge availability once for both required candidates and trace facts; return [] if unavailable."""
     availability = getattr(bridges, "availability", None)
     if availability is None:
         return []
     try:
-        return [{"kind": row["kind"], "why": row["why"]} for row in availability(info, modality) if not row["available"]]
+        return [{"kind": row["kind"], "available": row["available"], "why": row["why"]}
+                for row in availability(info, modality)]
     except Exception:
-        _log.warning("bridges.availability failed for %s; reporting no unavailable bridges", modality, exc_info=True)
+        _log.warning("bridges.availability failed for %s; reporting no availability facts", modality, exc_info=True)
         return []
 
 
@@ -314,6 +320,8 @@ def _apply_verdicts(
             ok, why = assess(request, card)
             if not ok:
                 card.reason = why
+            elif decision.install is None:
+                card.reason = f"{why} It was not selected; no bridge selected. {decision.reason}"
             else:
                 card.reason = f"{why} It was not installed because {decision.install} was chosen instead."
         elif decision.install is None:
