@@ -1,15 +1,20 @@
-"""OpenAI text/image base model that can call tools. SENSE_API_MODEL defaults to gpt-5.4-mini.
+"""OpenAI text/image base model that can call tools. SENSE_API_MODEL defaults to gpt-6.1-terra.
 
 Public surface (do not rename):
   MODEL_INFO                        registered as "openai-chat": not open-weight and tools=True, so it takes the
                                     text and tool bridges, not the vector bridge
   OpenAIChatModel                   contracts.BaseModel over the OpenAI chat API
+  APIChatModel                      what an API base model shares (usage, chat, choose and the answer cache); a
+                                    subclass sets model and implements _content, _complete and chat_stream.
+                                    sense.models_anthropic.AnthropicChatModel is the other one
   OpenAIChatModel.usage() -> dict   {"calls", "cache_hits", "prompt_tokens", "completion_tokens"} since it was loaded
   OpenAIChatModel.chat_stream(message, inputs, max_new_tokens=96, history=None) -> Iterator[str]
                                     the reply in pieces, as it arrives (see "History and streaming" below)
 
 Choice answers are single letters at temperature zero, returned as option indices
-in input order. A malformed answer fails verification rather than inventing a score.
+in input order. A malformed answer fails verification rather than inventing a score. Every request sends
+temperature 0 together with reasoning_effort "none": gpt-6.1-terra takes temperature 0 only with reasoning_effort
+"none" (temperature 0 alone is a 400).
 
 Inputs. A text input becomes a line "Audio clip: <text>" after the message. A tool input (SenseInput kind
 "tool", from sense.bridges.make_tool_bridge) becomes a line "Audio clip N: you cannot hear it directly; call the
@@ -88,6 +93,7 @@ MODEL_INFO = ModelInfo(
     tools=True,
 )
 
+DEFAULT_MODEL = "gpt-6.1-terra"
 TOOL = "listen"  # the one function offered; sense.bridges.ToolBridge names its handles this way
 TOOL_ROUNDS = 2  # rounds of tool calls before the model must answer
 TOOL_CALL_TOKENS = 256  # completion tokens for a request that offers tools: room for the calls of several clips
@@ -97,15 +103,16 @@ TOOL_INSTRUCTION = (
 CHAT_INSTRUCTION = "Answer the user's question using the supplied inputs. Audio clip text is a specialist's caption."
 
 
-class OpenAIChatModel:
-    info = MODEL_INFO
+class APIChatModel:
+    """What an API base model shares: usage(), chat(), choose() and the answer cache. A subclass sets self.model (the
+    model id, also the cache directory) and implements _content(message, inputs) (the user message content as sent,
+    part of the cache key), _complete(instruction, message, inputs, limit, *, allow_truncated=False, history=None)
+    (the model's final text, tool loop and all) and chat_stream."""
 
-    def __init__(self) -> None:
-        key = config.openai_key()
-        if not key:
-            raise RuntimeError("OPENAI_API_KEY is required for openai-chat")
-        self.model = os.environ.get("SENSE_API_MODEL") or "gpt-5.4-mini"
-        self._client = OpenAI(api_key=key, timeout=30.0, max_retries=0)
+    info: ModelInfo
+
+    def __init__(self, model: str) -> None:
+        self.model = model
         self._usage_lock = threading.Lock()
         self._usage = {"calls": 0, "cache_hits": 0, "prompt_tokens": 0, "completion_tokens": 0}
         self._cache_warned = False
@@ -120,80 +127,14 @@ class OpenAIChatModel:
             for name, amount in amounts.items():
                 self._usage[name] += amount
 
-    @staticmethod
-    def _content(message: str, inputs: list[SenseInput]) -> str | list[dict]:
-        lines, clip = [], 0
-        for item in inputs:
-            if item.kind == "text" and item.text is not None:
-                lines.append(f"Audio clip: {item.text}")
-            elif item.kind == "tool" and item.tool is not None:
-                clip += 1  # the file name is left out: some give the answer away (GTZAN's "rock.00012.wav")
-                lines.append(
-                    f"Audio clip {clip}: you cannot hear it directly; call the {TOOL} tool with clip={clip} to hear it."
-                )
-        prompt = "\n\n".join([message, *lines])
-        images = [item.image for item in inputs if item.kind == "image" and item.image]
-        if not images:
-            return prompt
-        content = [{"type": "text", "text": prompt}]
-        for image in images:
-            mime = "image/jpeg" if image.startswith(b"\xff\xd8\xff") else "image/png"
-            encoded = base64.b64encode(image).decode("ascii")
-            content.append({"type": "image_url", "image_url": {"url": f"data:{mime};base64,{encoded}"}})
-        return content
-
-    def _send(self, **request) -> object:
-        """One request to the API, counted in usage() whether or not it succeeds."""
-        self._count(calls=1)
-        response = self._client.chat.completions.create(**request)
-        usage = getattr(response, "usage", None)
-        self._count(prompt_tokens=_tokens(usage, "prompt_tokens"), completion_tokens=_tokens(usage, "completion_tokens"))
-        return response
-
-    def _messages(
-        self, instruction: str, message: str, inputs: list[SenseInput], history: list[dict] | None = None,
-    ) -> list[dict]:
-        """The system message, the earlier turns (oldest first, text only), then the user message with the inputs."""
-        return [
-            {"role": "system", "content": instruction},
-            *chat_history(history),
-            {"role": "user", "content": self._content(message, inputs)},
-        ]
+    def _content(self, message: str, inputs: list[SenseInput]) -> object:
+        raise NotImplementedError
 
     def _complete(
         self, instruction: str, message: str, inputs: list[SenseInput], limit: int,
         *, allow_truncated: bool = False, history: list[dict] | None = None,
     ) -> str:
-        handles = _tool_handles(inputs)
-        request = {"model": self.model, "temperature": 0, "reasoning_effort": "none"}
-        messages = self._messages(instruction, message, inputs, history)
-        if not handles:
-            return _answer(self._send(**request, max_completion_tokens=limit, messages=messages), allow_truncated)
-        tools = [_listen_function(handles)]
-        rounds = 0  # rounds of tool calls so far
-        while True:
-            last = rounds == TOOL_ROUNDS  # tool calls are used up (or the reply was too long): answer now
-            response = self._send(
-                **request,
-                max_completion_tokens=limit if last else max(limit, TOOL_CALL_TOKENS),
-                messages=list(messages),  # a copy, so each request keeps the messages it was sent with
-                tools=tools,
-                tool_choice="none" if last else "auto",
-            )
-            if last:
-                break
-            reply = response.choices[0].message
-            calls = list(getattr(reply, "tool_calls", None) or [])
-            if not calls:
-                if _tokens(getattr(response, "usage", None), "completion_tokens") <= limit:
-                    break
-                rounds = TOOL_ROUNDS  # the reply ran past the caller's limit: ask again within it
-                continue
-            messages.append(_assistant_turn(reply, calls))
-            for call in calls:
-                messages.append({"role": "tool", "tool_call_id": call.id, "content": _run_tool(call, handles)})
-            rounds += 1
-        return _answer(response, allow_truncated)
+        raise NotImplementedError
 
     def chat(
         self, message: str, inputs: list[SenseInput], max_new_tokens: int = 96, history: list[dict] | None = None,
@@ -202,51 +143,6 @@ class OpenAIChatModel:
         if _tool_handles(inputs):
             instruction += TOOL_INSTRUCTION
         return self._complete(instruction, message, inputs, max_new_tokens, allow_truncated=True, history=history)
-
-    def chat_stream(
-        self, message: str, inputs: list[SenseInput], max_new_tokens: int = 96, history: list[dict] | None = None,
-    ) -> Iterator[str]:
-        """chat(), streamed. Without tool inputs: one request with stream=True, its text yielded as it arrives.
-        With tool inputs: chat() runs (with its tool loop) and its reply is yielded once."""
-        if _tool_handles(inputs):
-            yield self.chat(message, inputs, max_new_tokens, history)
-            return
-        messages = self._messages(CHAT_INSTRUCTION, message, inputs, history)
-        self._count(calls=1)  # counted whether or not the request succeeds, as _send does
-        stream = self._client.chat.completions.create(
-            model=self.model, temperature=0, reasoning_effort="none", max_completion_tokens=max_new_tokens,
-            messages=messages, stream=True, stream_options={"include_usage": True},
-        )
-        seen = {"finish": None, "refused": False, "text": False}
-
-        def deltas() -> Iterator[str]:
-            for chunk in stream:
-                usage = getattr(chunk, "usage", None)
-                if usage is not None:  # the last chunk, when the API reports usage
-                    self._count(
-                        prompt_tokens=_tokens(usage, "prompt_tokens"),
-                        completion_tokens=_tokens(usage, "completion_tokens"),
-                    )
-                for choice in getattr(chunk, "choices", None) or []:
-                    delta = getattr(choice, "delta", None)
-                    if getattr(delta, "refusal", None):
-                        seen["refused"] = True
-                    text = getattr(delta, "content", None)
-                    if isinstance(text, str) and text:
-                        yield text
-                    if getattr(choice, "finish_reason", None):
-                        seen["finish"] = choice.finish_reason
-
-        try:
-            for piece in stripped_pieces(deltas()):
-                seen["text"] = True
-                yield piece
-        finally:
-            close = getattr(stream, "close", None)  # frees the HTTP response, also when the reader stops early
-            if callable(close):
-                close()
-        if seen["refused"] or not seen["text"] or seen["finish"] not in ("stop", "length"):
-            raise ValueError("The API model returned no complete answer")
 
     def _choose(self, item: ChoiceItem) -> int:
         options = "\n".join(f"{letter}. {text}" for letter, text in zip(string.ascii_uppercase, item.options))
@@ -323,6 +219,147 @@ class OpenAIChatModel:
             return list(pool.map(self._choose, items))
 
 
+class OpenAIChatModel(APIChatModel):
+    info = MODEL_INFO
+
+    def __init__(self) -> None:
+        key = config.openai_key()
+        if not key:
+            raise RuntimeError("OPENAI_API_KEY is required for openai-chat")
+        super().__init__(os.environ.get("SENSE_API_MODEL") or DEFAULT_MODEL)
+        self._client = OpenAI(api_key=key, timeout=30.0, max_retries=0)
+
+    @staticmethod
+    def _content(message: str, inputs: list[SenseInput]) -> str | list[dict]:
+        prompt = _prompt(message, inputs)
+        images = [item.image for item in inputs if item.kind == "image" and item.image]
+        if not images:
+            return prompt
+        content = [{"type": "text", "text": prompt}]
+        for image in images:
+            encoded = base64.b64encode(image).decode("ascii")
+            content.append({"type": "image_url", "image_url": {"url": f"data:{_image_type(image)};base64,{encoded}"}})
+        return content
+
+    def _send(self, **request) -> object:
+        """One request to the API, counted in usage() whether or not it succeeds."""
+        self._count(calls=1)
+        response = self._client.chat.completions.create(**request)
+        usage = getattr(response, "usage", None)
+        self._count(prompt_tokens=_tokens(usage, "prompt_tokens"), completion_tokens=_tokens(usage, "completion_tokens"))
+        return response
+
+    def _messages(
+        self, instruction: str, message: str, inputs: list[SenseInput], history: list[dict] | None = None,
+    ) -> list[dict]:
+        """The system message, the earlier turns (oldest first, text only), then the user message with the inputs."""
+        return [
+            {"role": "system", "content": instruction},
+            *chat_history(history),
+            {"role": "user", "content": self._content(message, inputs)},
+        ]
+
+    def _complete(
+        self, instruction: str, message: str, inputs: list[SenseInput], limit: int,
+        *, allow_truncated: bool = False, history: list[dict] | None = None,
+    ) -> str:
+        handles = _tool_handles(inputs)
+        # temperature 0 only together with reasoning_effort "none": gpt-6.1-terra rejects temperature 0 alone (400)
+        request = {"model": self.model, "temperature": 0, "reasoning_effort": "none"}
+        messages = self._messages(instruction, message, inputs, history)
+        if not handles:
+            return _answer(self._send(**request, max_completion_tokens=limit, messages=messages), allow_truncated)
+        tools = [_listen_function(handles)]
+        rounds = 0  # rounds of tool calls so far
+        while True:
+            last = rounds == TOOL_ROUNDS  # tool calls are used up (or the reply was too long): answer now
+            response = self._send(
+                **request,
+                max_completion_tokens=limit if last else max(limit, TOOL_CALL_TOKENS),
+                messages=list(messages),  # a copy, so each request keeps the messages it was sent with
+                tools=tools,
+                tool_choice="none" if last else "auto",
+            )
+            if last:
+                break
+            reply = response.choices[0].message
+            calls = list(getattr(reply, "tool_calls", None) or [])
+            if not calls:
+                if _tokens(getattr(response, "usage", None), "completion_tokens") <= limit:
+                    break
+                rounds = TOOL_ROUNDS  # the reply ran past the caller's limit: ask again within it
+                continue
+            messages.append(_assistant_turn(reply, calls))
+            for call in calls:
+                messages.append({"role": "tool", "tool_call_id": call.id, "content": _run_tool(call, handles)})
+            rounds += 1
+        return _answer(response, allow_truncated)
+
+    def chat_stream(
+        self, message: str, inputs: list[SenseInput], max_new_tokens: int = 96, history: list[dict] | None = None,
+    ) -> Iterator[str]:
+        """chat(), streamed. Without tool inputs: one request with stream=True, its text yielded as it arrives.
+        With tool inputs: chat() runs (with its tool loop) and its reply is yielded once."""
+        if _tool_handles(inputs):
+            yield self.chat(message, inputs, max_new_tokens, history)
+            return
+        messages = self._messages(CHAT_INSTRUCTION, message, inputs, history)
+        self._count(calls=1)  # counted whether or not the request succeeds, as _send does
+        stream = self._client.chat.completions.create(  # temperature 0 needs reasoning_effort "none", as above
+            model=self.model, temperature=0, reasoning_effort="none", max_completion_tokens=max_new_tokens,
+            messages=messages, stream=True, stream_options={"include_usage": True},
+        )
+        seen = {"finish": None, "refused": False, "text": False}
+
+        def deltas() -> Iterator[str]:
+            for chunk in stream:
+                usage = getattr(chunk, "usage", None)
+                if usage is not None:  # the last chunk, when the API reports usage
+                    self._count(
+                        prompt_tokens=_tokens(usage, "prompt_tokens"),
+                        completion_tokens=_tokens(usage, "completion_tokens"),
+                    )
+                for choice in getattr(chunk, "choices", None) or []:
+                    delta = getattr(choice, "delta", None)
+                    if getattr(delta, "refusal", None):
+                        seen["refused"] = True
+                    text = getattr(delta, "content", None)
+                    if isinstance(text, str) and text:
+                        yield text
+                    if getattr(choice, "finish_reason", None):
+                        seen["finish"] = choice.finish_reason
+
+        try:
+            for piece in stripped_pieces(deltas()):
+                seen["text"] = True
+                yield piece
+        finally:
+            close = getattr(stream, "close", None)  # frees the HTTP response, also when the reader stops early
+            if callable(close):
+                close()
+        if seen["refused"] or not seen["text"] or seen["finish"] not in ("stop", "length"):
+            raise ValueError("The API model returned no complete answer")
+
+
+def _prompt(message: str, inputs: list[SenseInput]) -> str:
+    """The message, then one line per text input ("Audio clip: <text>") and per tool input (numbered from 1)."""
+    lines, clip = [], 0
+    for item in inputs:
+        if item.kind == "text" and item.text is not None:
+            lines.append(f"Audio clip: {item.text}")
+        elif item.kind == "tool" and item.tool is not None:
+            clip += 1  # the file name is left out: some give the answer away (GTZAN's "rock.00012.wav")
+            lines.append(
+                f"Audio clip {clip}: you cannot hear it directly; call the {TOOL} tool with clip={clip} to hear it."
+            )
+    return "\n\n".join([message, *lines])
+
+
+def _image_type(image: bytes) -> str:
+    """The media type of an image input: JPEG by its magic bytes, PNG otherwise."""
+    return "image/jpeg" if image.startswith(b"\xff\xd8\xff") else "image/png"
+
+
 def _tokens(usage: object, name: str) -> int:
     """A token count from response.usage, or 0 when the API did not report it."""
     value = getattr(usage, name, None)
@@ -388,15 +425,24 @@ def _assistant_turn(reply: object, calls: list) -> dict:
 def _run_tool(call: object, handles: list[ToolHandle]) -> str:
     """Run one tool call through the clip's ToolHandle. Anything the model got wrong comes back as an error text."""
     function = getattr(call, "function", None)
-    name = getattr(function, "name", None)
-    if name != TOOL:
-        return f"Error: there is no tool called {name!r}; the only tool is {TOOL}."
     try:
         arguments = json.loads(getattr(function, "arguments", None) or "{}")
     except (TypeError, ValueError):
         arguments = None
+    return _listen(getattr(function, "name", None), arguments, handles)[0]
+
+
+def _listen(name: object, arguments: object, handles: list[ToolHandle]) -> tuple[str, bool]:
+    """Run one call of the listen tool with its parsed arguments: (the text the model sees, whether it is an error
+    text). A wrong tool name, arguments that are not an object or a bad clip number come back as an error text."""
+    if name != TOOL:
+        return f"Error: there is no tool called {name!r}; the only tool is {TOOL}.", True
     if not isinstance(arguments, dict):
-        return f'{TOOL} error: the arguments must be a JSON object, such as {{"clip": 1, "candidates": ["rock", "jazz"]}}.'
+        return (
+            f'{TOOL} error: the arguments must be a JSON object, such as {{"clip": 1, "candidates": ["rock", "jazz"]}}.',
+            True,
+        )
+    arguments = dict(arguments)  # the clip number is taken out; the caller's object is left as it was
     clip = arguments.pop("clip", None)
     if clip is None and len(handles) == 1:
         clip = 1  # one clip: nothing to choose between
@@ -406,8 +452,8 @@ def _run_tool(call: object, handles: list[ToolHandle]) -> str:
         return (
             f"{TOOL} error: clip must be the number of an audio clip, from 1 to {len(handles)}, "
             f"but it was {repr(clip)[:40]}."
-        )
-    return handles[clip - 1].call(arguments)
+        ), True
+    return handles[clip - 1].call(arguments), False
 
 
 def _safe_model_id(model: str) -> str:

@@ -15,6 +15,8 @@ Steps, each emitting a "start" event and then "ok" or "fail" (TraceEvent.step in
             bridges.availability(model_info, modality) reports as not available, each {"kind", "why"}
             ([] when sense.bridges has no availability function or it raises). Always verify text, vector
             for open-weight models, and tool for closed-weight models when availability reports it available.
+            It also has "answered_by": the planner's answered_by attribute after planning (the LLM planner's
+            "<provider>/<model>", None when rules decided or the planner has no such attribute).
   [fit]     build each candidate with bridges.build(kind, model, dataset, scope), when present; otherwise
             use bridges.fit_vector_bridge on dataset.fit_idx and bridges.make_text_bridge, skipping other kinds.
             Each "ok" event data has "specialist": specialists.describe(modality), read just after that bridge
@@ -22,7 +24,7 @@ Steps, each emitting a "start" event and then "ok" or "fail" (TraceEvent.step in
   [verify]  verify.verify for each candidate, the text bridge serving as a control for the vector bridge;
             the "ok" event data carries the ReportCard dict ("card") and the wall time of that verify.verify
             call in seconds, rounded to 2 places ("seconds")
-  [decide]  planner.decide -> which bridge, and why
+  [decide]  planner.decide -> which bridge, and why; the "ok" event data has "answered_by", as for [plan]
   [install] registry.install for the chosen bridge; other cards get verdict "rejected" with the reason.
             The message names the sense already installed for this model and modality, which the new one
             replaces or, when nothing is installed, chat keeps using (event data "replaced" or "kept")
@@ -118,6 +120,7 @@ def run_fit(
         kinds += added
         note = f" The planner proposed {', '.join(kinds[: len(kinds) - len(added)]) or 'none'}; {', '.join(added)} added so every available bridge is verified." if added else ""
         say("ok", f"Bridges to try, in order: {', '.join(kinds) or 'none'}.{note}", planner=planner.name, kinds=kinds,
+            answered_by=getattr(planner, "answered_by", None),
             unavailable=[{"kind": row["kind"], "why": row["why"]} for row in available if not row["available"]])
 
         # [fit]
@@ -172,7 +175,8 @@ def run_fit(
                 f"({', '.join(by_name) or 'none'})."
             )
         chosen = _apply_verdicts(planner, request, cards, decision)
-        say("ok", decision.reason, install=decision.install, cards=[c.to_dict() for c in cards])
+        say("ok", decision.reason, install=decision.install, answered_by=getattr(planner, "answered_by", None),
+            cards=[c.to_dict() for c in cards])
 
         # [install]
         step = "install"

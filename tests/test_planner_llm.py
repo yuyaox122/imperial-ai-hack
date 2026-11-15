@@ -29,6 +29,7 @@ def api(monkeypatch, tmp_path):
     monkeypatch.setattr(agent.planner, "register_planner", registration)
     monkeypatch.setattr(config, "openai_key", lambda: "test-key")
     monkeypatch.delenv("SENSE_LLM_MODEL", raising=False)
+    monkeypatch.delenv("SENSE_LLM_PROVIDER", raising=False)
     previous = sys.modules.pop("agent.planner_llm", None)
     previous_attribute = getattr(agent, "planner_llm", None)
     module = importlib.import_module("agent.planner_llm")
@@ -104,7 +105,7 @@ def test_plan_sends_model_and_short_dataset_summary(api, request_data, model, da
     assert sent["dataset"]["n_test"] == 2
     assert sent["dataset"]["labels"] == dataset.labels
     assert "emb" not in sent["dataset"]
-    assert kwargs["model"] == "gpt-5.4-mini"
+    assert kwargs["model"] == "gpt-6.1-terra"
     assert kwargs["temperature"] == 0
     assert kwargs["reasoning_effort"] == "none"
     api.rules.plan.assert_not_called()
