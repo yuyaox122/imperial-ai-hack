@@ -61,9 +61,11 @@ Public surface (do not rename):
       clearly less often in the other labels' files); [] when no label leaks. A heuristic: it matches the label's
       words in any case and inside longer words, also inside gzip streams and zip archives, and nothing else
   assess(request, card) -> (acceptable, sentence)
-      agent.planner.RulePlanner().assess, with an "image" card judged by the text bars (accuracy >= chance + 0.15
-      and >= swapped + 0.10); then at least MIN_VERIFY_ITEMS (10) scored probe files and the low end of the 95%
-      Wilson interval above chance, so that a lucky adapter on a handful of files is not installed
+      agent.planner.RulePlanner().assess, which judges a text or image card by the text bars (accuracy >= chance +
+      0.15 and >= swapped + 0.10), plus accuracy >= native + 0.10 when the card has a native control and
+      unseen_categories >= its control_chance + 0.15 when it has that one; then at least MIN_VERIFY_ITEMS (10)
+      scored probe files and the low end of the 95% Wilson interval above chance, so that a lucky adapter on a
+      handful of files is not installed
   registry_loads(bridge) -> str | None
       None when sense.registry can load the adapter bridge back once installed (sense.bridges.load_bridge loads
       adapter bridges; this still catches one it cannot load), else why not
@@ -114,7 +116,6 @@ from __future__ import annotations
 
 import ast
 import codecs
-import dataclasses
 import hashlib
 import io
 import json
@@ -960,17 +961,13 @@ GENERATED_CAVEAT = (
 
 # ----------------------------------------------------------------------------- deciding
 def assess(request: FitRequest, card: ReportCard) -> tuple[bool, str]:
-    """RulePlanner().assess, with an image card held to the text bars; then, for a card that passes them, two
-    checks of its evidence: at least MIN_VERIFY_ITEMS probe files were scored, and the low end of the 95% Wilson
-    interval of its accuracy lies above chance (on a handful of files, a lucky adapter clears the point bars)."""
+    """RulePlanner().assess, which holds a text or image card to the text bars and to its native and
+    unseen-categories controls when it has them; then, for a card that passes, two checks of its evidence: at
+    least MIN_VERIFY_ITEMS probe files were scored, and the low end of the 95% Wilson interval of its accuracy
+    lies above chance (on a handful of files, a lucky adapter clears the point bars)."""
     from sense.verify import _wilson
 
-    planner = RulePlanner()
-    if card.kind == "image":
-        ok, sentence = planner.assess(request, dataclasses.replace(card, kind="text"))
-        ok, sentence = ok, sentence.replace("for a text bridge", "for an image bridge")
-    else:
-        ok, sentence = planner.assess(request, card)
+    ok, sentence = RulePlanner().assess(request, card)
     if not ok:
         return ok, sentence
     if card.n < MIN_VERIFY_ITEMS:

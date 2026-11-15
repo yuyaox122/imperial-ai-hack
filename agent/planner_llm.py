@@ -291,7 +291,11 @@ class LLMPlanner:
                 "or percentages); for refusal cite a candidate's numbers. Only candidates marked "
                 "eligible in the deterministic assessments may be installed. Never install "
                 "accuracy below swapped + 0.10. For open scope, consider unseen_classes and avoid "
-                "claiming generalisation from closed categories. Weigh chance and all controls.",
+                "claiming generalisation from closed categories. For a text or image card with a native "
+                "control (the model given the raw file), never install accuracy below native + 0.10; with "
+                "unseen_categories (a probe set of categories the adapter was not built around), never "
+                "install it below control_chance's unseen_categories (else chance) + 0.15. Weigh chance "
+                "and all controls.",
                 {
                     "request": request.to_dict(),
                     "cards": [{key: value for key, value in card.to_dict().items()

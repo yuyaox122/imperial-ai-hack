@@ -229,6 +229,24 @@ def test_text_gate_is_inclusive_at_the_bar(api, request_data, cards):
     api.rules.decide.assert_not_called()
 
 
+def test_adapter_cards_are_held_to_native_and_unseen_categories(api, request_data, cards):
+    """The LLM may not install an adapter that adds nothing to the raw file or fails on new categories."""
+    native = ReportCard("open-model", "audio", "sounds", "closed", "adapter:a", "text", 100, .2, .9,
+                        {"swapped": .2, "native": .85})
+    narrow = ReportCard("open-model", "audio", "sounds", "closed", "adapter:b", "image", 100, .2, .95,
+                        {"swapped": .2, "unseen_categories": .4}, control_chance={"unseen_categories": .3333})
+    planner = api.module.LLMPlanner()
+    assert not planner.assess(request_data, native)[0] and not planner.assess(request_data, narrow)[0]
+    api.client.chat.completions.create.return_value = completion({
+        "install": "adapter:b", "reason": "Adapter b scored 95% accuracy against 20% swapped input.",
+    })
+    assert planner.decide(request_data, [native, narrow, cards[1]]).install == "text:captions"
+    instruction = api.client.chat.completions.create.call_args.kwargs["messages"][0]["content"]
+    assert "native + 0.10" in instruction and "unseen_categories" in instruction
+    sent = json.loads(api.client.chat.completions.create.call_args.kwargs["messages"][1]["content"])
+    assert sent["cards"][1]["control_chance"] == {"unseen_categories": .3333}
+
+
 def test_open_scope_vector_needs_unseen_classes(api, cards):
     """For open scope the model may not install a vector bridge that fails on classes it was not fitted on."""
     request = FitRequest("open-model", "sounds", scope="open")

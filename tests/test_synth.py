@@ -476,6 +476,21 @@ def test_assess_holds_an_image_card_to_the_text_bars():
     assert card.kind == "image"  # the caller's card is untouched
 
 
+@pytest.mark.parametrize("kind", ["text", "image"])
+def test_assess_applies_the_native_and_unseen_categories_rules(kind):
+    request = FitRequest(model="openai-chat", dataset="p", modality="molecule")
+    card = ReportCard("openai-chat", "molecule", "p", "closed", "adapter:m", kind, 40, 0.25, 0.9,
+                      {"swapped": 0.2, "no_input": 0.25, "native": 0.85})
+    ok, sentence = synth.assess(request, card)  # it must not bypass the planner's native rule
+    assert not ok and "the model already reads this file as it is: native 85.0%, adapter 90.0%" in sentence
+    card.controls.update(native=0.5, unseen_categories=0.3)
+    card.control_chance = {"unseen_categories": 0.5}
+    ok, sentence = synth.assess(request, card)
+    assert not ok and "works for the tested categories but not for new ones" in sentence
+    card.controls["unseen_categories"] = 0.8
+    assert synth.assess(request, card)[0]
+
+
 def test_assess_wants_enough_files_and_an_interval_clear_of_chance():
     from sense.verify import _wilson
 
