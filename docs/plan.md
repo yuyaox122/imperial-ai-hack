@@ -1,7 +1,12 @@
 # Plan: an agent that gives a model a new sense
 
-Status: proposal from Michael, written by Michael's Claude on Saturday 14 November. It needs the team
-lead's decision on the points under [Decisions needed](#decisions-needed) before anyone builds on it.
+Status: the original proposal from Michael, written by Michael's Claude on Saturday 14 November and kept
+as written. The team lead approved the build that day; the decisions (track, owners, sponsor prizes) and the
+workloads are in [workstreams.md](workstreams.md). What was built differs from this proposal in places: the
+LLM planner and the API base model are OpenAI's `gpt-5.4-mini` rather than Claude, `RulePlanner` in
+`agent/planner.py` is the only judge of an install, the agent can also start from one file and a goal and
+research its own specialist and data, and the HTTP endpoints live under `/api/` (the contract is the
+`server/app.py` docstring). The [README](../README.md) describes what exists now.
 
 ## The idea in one paragraph
 

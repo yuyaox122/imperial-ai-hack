@@ -165,12 +165,17 @@ did not measure that baseline here, and the donor's own 97.8% suggests it would 
 
 ## Run it
 
-Requires `uv`, a local Qwen3.5 snapshot, and ESC-50 unpacked in its own directory.
+Requires `uv`, a local Qwen3.5 snapshot, and ESC-50 unpacked in its own directory (GTZAN and the AudioCaps
+`train.csv` for the music and caption runs). Run these from `socket_pilot/`. The harness's
+`scripts/setup_machine.py rebuild` runs the three embedding commands for you.
 
 ```bash
 uv sync
 .venv/bin/python -I clap_embed.py --esc50 <ESC-50-master> --out artifacts/esc50_clap.npz
+.venv/bin/python -I clap_embed_gtzan.py --gtzan <GTZAN genres dir> --out artifacts/gtzan_clap.npz
 .venv/bin/python run_pilot.py --host <qwen3.5 snapshot> --out artifacts/results.json
+# music genres (needs all three embedding files); --keep-duplicates reproduces the first-version column
+.venv/bin/python run_music.py --host <qwen3.5 snapshot> --out artifacts/music.json
 # open-vocabulary test and the plain-text baseline
 .venv/bin/python -I clap_text.py --captions <audiocaps train.csv> --out artifacts/audiocaps_text_clap.npz
 .venv/bin/python run_textplug.py --host <qwen3.5 snapshot> --out artifacts/textplug.json
@@ -185,22 +190,39 @@ Timings on an M4 Pro with 24 GB: fitting the plug, penalty search included, take
 embedding the 2,000 clips takes under three minutes including the encoder download; a full pilot run
 takes about 5 minutes on the 0.8B model and 12 minutes on the 2B.
 
-## Harness runs (sense/, 14 November)
+The results above are these files in `artifacts/`:
 
-Runs of the harness in `sense/` and `agent/`, not of the pilot scripts, on the same M4 Pro, saved in
-`artifacts/` by `scripts/demo_cli.py --save` and `scripts/score_free_text.py`. The run records are in the format
-`sense.runs.import_record` reads, so they can be replayed (`POST /api/replay` after importing them).
+| File | Section |
+|---|---|
+| `results_qwen35_0p8b.json`, `results_qwen35_2b.json` | Paired plug (`run_pilot.py`) |
+| `textplug_qwen35_0p8b.json`, `textplug_qwen35_2b.json` | Text-only plug, nearest caption written into the socket, and the 80 unseen-class clips (`run_textplug.py`) |
+| `cascade_qwen35_0p8b.json` | Nearest caption pasted into the prompt as text (`run_cascade.py`) |
+| `music_qwen35_0p8b.json`, `music_qwen35_0p8b_dedup.json` | Music, first version and de-duplicated (`run_music.py`) |
+| `transplant_qwen35_2b_to_smollm2.json` | Vision transplant (`transplant.py`) |
+
+## Harness runs (sense/, 14 and 15 November)
+
+Runs of the harness in `sense/`, `agent/` and `eval/`, not of the pilot scripts, on the same M4 Pro, saved in
+`artifacts/` by `scripts/demo_cli.py --save`, `scripts/score_free_text.py` and `eval/triage.py --save`, except
+where a row names a one-off script. The `run_*.json` records are in the format `sense.runs.import_record` reads,
+so they can be replayed (`POST /api/replay` after importing them). An imported record replays its trace and
+cards only: it brings its sense back only when it is imported on the machine that made it while that very sense
+is still installed there.
 
 | File | What it holds |
 |---|---|
 | `run_qwen3.5-0.8b_gtzan_closed.json` | GTZAN, closed scope, after the duplicate fix (#41): `vector:gtzan` installed at 79.5% |
 | `run_qwen3.5-0.8b_esc50_open.json` | ESC-50, open scope: `vector:esc50` refused (51.2% on unseen sounds), `text:captions` installed at 80.5% |
 | `run_qwen3.5-0.8b_gtzan-folder_closed.json` | the GTZAN genre folders through `sense.datasets.from_folder` (50 clips per genre): 77.0% |
-| `run_openai-chat_esc50_open.json` | the API model `openai-chat` (gpt-5.4-mini), ESC-50 open scope, 50 items: `text:captions` at 90.0%, with API usage and five chats |
+| `run_openai-chat_esc50_open.json` | the API model `openai-chat` (gpt-5.4-mini), ESC-50 open scope, 50 items: `text:captions` at 90.0%, with API usage and five chats; recorded by a one-off script (its `note` says how) |
 | `free_text_qwen3.5-0.8b_gtzan_vector.json` | free-text answers through `vector:gtzan`: the reply names the true genre and no other in 37.0% of 100 clips |
 | `free_text_qwen3.5-0.8b_esc50_vector.json` | free-text answers through `vector:esc50`: 45.0% under strict matching ("Clock" for clock tick counts as no label) |
-| `run_openai-chat_esc50_closed.json` | scenario 3 through the agent: `openai-chat` on ESC-50, closed scope, 50 items. The loop tried text and tool (vector is unavailable to an API model); `tool:esc50` was installed at 96.0% (swapped 22.0%, no input 18.0%) over `text:esc50` at 92.0%. The tool card's answers were served from the answer cache filled by the run in `tool_openai-chat_closed.json` (same questions and clips). In chat afterwards the model called `listen` and named chainsaw and church bells, and called a rooster clip a hen, as CLAP ranked it |
-| `tool_openai-chat_closed.json` | the tool bridge with `openai-chat`, `verify` called directly (closed scope, 50 items): `tool:esc50` 96.0% and `tool:gtzan` 52.0%, the same as the specialist-alone control (96.0% and 50.0%), with the API usage and one chat each in which the model called `listen` |
+| `run_openai-chat_esc50_closed.json` | scenario 3 through the agent: `openai-chat` on ESC-50, closed scope, 50 items. The loop tried text and tool (vector is unavailable to an API model); `tool:esc50` was installed at 96.0% (swapped 22.0%, no input 18.0%) over `text:esc50` at 92.0%. The tool card's answers were served from the answer cache filled by the run in `tool_openai-chat_closed.json` (same questions and clips). In chat afterwards the model called `listen` and named chainsaw and church bells, and called a rooster clip a hen, as CLAP ranked it; those chats were observed, not stored in this record |
+| `tool_openai-chat_closed.json` | the tool bridge with `openai-chat`, `verify` called directly by a one-off script (closed scope, 50 items): `tool:esc50` 96.0% and `tool:gtzan` 52.0%, the same as the specialist-alone control (96.0% and 50.0%), with the API usage and one chat each in which the model called `listen` |
+| `triage_qwen3.5-0.8b_esc50.json` | forest triage (`eval/triage.py`), Qwen3.5-0.8B through `text:captions`, the first ("ranger") wording on ESC-50 fold 5, run before any dev-fold run: the sense flagged 369 of 400 and no input flagged 400 (all "chainsaw"); this failed control is what led to choosing the wording on fold 4 |
+| `triage_qwen3.5-0.8b_esc50_dev_ranger.json`, `triage_qwen3.5-0.8b_esc50_dev_neutral.json`, `triage_qwen3.5-0.8b_esc50_dev_yesno.json`, `triage_qwen3.5-0.8b_esc50_dev_chat.json` | the four wordings on fold 4 (dev): 372, 295, 212 and 21 flagged, against 400, 400, 400 and 0 with no input; chat was chosen |
+| `triage_qwen3.5-0.8b_esc50_test_chat.json` | the chosen chat wording on fold 5: 26 flagged, 13 of 24 targets caught (50.0% precision), none with no input; CLAP lookup 24 flagged, 23 caught |
+| `triage_openai-chat_esc50_dev_chat.json`, `triage_openai-chat_esc50_test_chat.json` | the same chat wording with `openai-chat` through `text:captions`: fold 4 22 flagged, 16 caught; fold 5 23 flagged, 14 of 24 caught (60.9% precision), none with no input |
 
 Fit time in the harness: the closed-form fit of one block (ridge with its penalty search, plus the host's label
 targets) took 0.50 to 0.66 s on GTZAN's 597 fitting clips and 1.13 to 1.25 s on ESC-50's 1,200

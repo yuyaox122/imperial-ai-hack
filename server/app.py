@@ -62,8 +62,7 @@ All JSON. Errors: {"detail": "<what went wrong and what to do>"} with a 4xx or 5
                                                     "cancelled": true); a sense it already reinstalled stays installed.
                                                     A live agent run stops at its next trace event (agent.jobs.cancel)
                                                     and is still recorded under <SENSE_HOME>/runs when it ends.
-                                                    400 for an unknown job; 409 for a running agent run while
-                                                    agent.jobs cannot cancel one yet
+                                                    400 for an unknown job
   GET  /api/runs
        -> [{"id", "request", "status", "installed", "recorded", "origin", "seconds", "has_sense"}]
                                                     recorded runs, newest first; origin "server" or "cli";
