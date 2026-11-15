@@ -102,6 +102,24 @@ def test_chat_returns_available_text_at_token_limit(api):
     assert api.module.OpenAIChatModel().chat("What sound?", []) == "A dog is barking"
 
 
+def test_a_non_audio_text_input_is_labelled_by_its_modality_and_audio_prompts_stay_the_same(api):
+    """Found in a real run: a raw coordinate given as 'Audio clip: 51.36, 7.47' made the model abstain."""
+    api.client.chat.completions.create.return_value = completion("A")
+    geo = ChoiceItem("Which country?", ["Germany", "Egypt"], [SenseInput("text", "geo", text="51.3608, 7.4717")])
+    api.module.OpenAIChatModel().choose([geo])
+    kwargs = api.client.chat.completions.create.call_args.kwargs
+    assert kwargs["messages"][1]["content"] == "Which country?\nA. Germany\nB. Egypt\n\nGeo input: 51.3608, 7.4717"
+    assert kwargs["messages"][0]["content"].endswith("Other inputs are text taken from the user's files.")
+    audio = ChoiceItem("Which sound?", ["cat", "dog"], [SenseInput("text", "audio", text="a dog barks")])
+    api.module.OpenAIChatModel().choose([audio])
+    kwargs = api.client.chat.completions.create.call_args.kwargs
+    assert "Other inputs" not in kwargs["messages"][0]["content"]
+    assert kwargs["messages"][1]["content"].endswith("Audio clip: a dog barks")
+    api.module.OpenAIChatModel().chat("What is it?", [SenseInput("text", "3d", text="a chair, 4 legs")])
+    kwargs = api.client.chat.completions.create.call_args.kwargs
+    assert kwargs["messages"][-1]["content"].endswith("3d input: a chair, 4 legs")
+
+
 def test_choose_sends_letter_options_and_returns_indices(api):
     model = api.module.OpenAIChatModel()
     item = ChoiceItem("Which sound?", ["cat", "dog"], [SenseInput("text", "audio", text="a dog barks")])

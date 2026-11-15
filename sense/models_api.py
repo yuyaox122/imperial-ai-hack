@@ -20,7 +20,9 @@ no-input control) often abstains, which is the honest outcome. Every request sen
 temperature 0 together with reasoning_effort "none": gpt-6.1-terra takes temperature 0 only with reasoning_effort
 "none" (temperature 0 alone is a 400).
 
-Inputs. A text input becomes a line "Audio clip: <text>" after the message. A tool input (SenseInput kind
+Inputs. A text input becomes a line "Audio clip: <text>" after the message, or "<Modality> input: <text>" when its
+modality is not audio (an agent-written adapter's measurements, or the raw file for the native control); then the
+instruction also says "Other inputs are text taken from the user's files.", so audio prompts are unchanged. A tool input (SenseInput kind
 "tool", from sense.bridges.make_tool_bridge) becomes a line "Audio clip N: you cannot hear it directly; call the
 listen tool with clip=N to hear it.", numbering the tool inputs from 1. The clip's file name is left out on
 purpose: some file names give the answer away (GTZAN's are "rock.00012.wav"). When any input is a tool input the
@@ -144,16 +146,17 @@ class APIChatModel:
     def chat(
         self, message: str, inputs: list[SenseInput], max_new_tokens: int = 96, history: list[dict] | None = None,
     ) -> str:
-        instruction = CHAT_INSTRUCTION
+        instruction = _instruction(CHAT_INSTRUCTION, inputs)
         if _tool_handles(inputs):
             instruction += TOOL_INSTRUCTION
         return self._complete(instruction, message, inputs, max_new_tokens, allow_truncated=True, history=history)
 
     def _choose(self, item: ChoiceItem) -> int:
         options = "\n".join(f"{letter}. {text}" for letter, text in zip(string.ascii_uppercase, item.options))
-        instruction = (
+        instruction = _instruction(
             "Answer the multiple-choice question using the supplied inputs. Return exactly one uppercase "
-            "option letter, with no explanation or punctuation. Audio clip text is a specialist's caption."
+            "option letter, with no explanation or punctuation. Audio clip text is a specialist's caption.",
+            item.inputs,
         )
         if _tool_handles(item.inputs):
             instruction += TOOL_INSTRUCTION
@@ -315,7 +318,7 @@ class OpenAIChatModel(APIChatModel):
         if _tool_handles(inputs):
             yield self.chat(message, inputs, max_new_tokens, history)
             return
-        messages = self._messages(CHAT_INSTRUCTION, message, inputs, history)
+        messages = self._messages(_instruction(CHAT_INSTRUCTION, inputs), message, inputs, history)
         self._count(calls=1)  # counted whether or not the request succeeds, as _send does
         stream = self._client.chat.completions.create(  # temperature 0 needs reasoning_effort "none", as above
             model=self.model, temperature=0, reasoning_effort="none", max_completion_tokens=max_new_tokens,
@@ -353,12 +356,33 @@ class OpenAIChatModel(APIChatModel):
             raise ValueError("The API model returned no complete answer")
 
 
+OTHER_INPUTS = " Other inputs are text taken from the user's files."  # added only when such an input is present
+
+
+def _is_audio(item: SenseInput) -> bool:
+    return (item.modality or "audio") == "audio"
+
+
+def _input_label(item: SenseInput) -> str:
+    """"Audio clip" for audio (unchanged, so cached audio answers stay valid); "<Modality> input" otherwise, as the
+    local models say it (sense.models), so a coordinate or a SMILES string is not presented as an audio caption."""
+    return "Audio clip" if _is_audio(item) else f"{item.modality.replace('_', ' ').capitalize()} input"
+
+
+def _instruction(base: str, inputs: list[SenseInput]) -> str:
+    """The instruction, with OTHER_INPUTS when a text input is not audio (audio prompts stay byte for byte)."""
+    if any(item.kind == "text" and item.text is not None and not _is_audio(item) for item in inputs):
+        return base + OTHER_INPUTS
+    return base
+
+
 def _prompt(message: str, inputs: list[SenseInput]) -> str:
-    """The message, then one line per text input ("Audio clip: <text>") and per tool input (numbered from 1)."""
+    """The message, then one line per text input ("Audio clip: <text>", or "<Modality> input: <text>" for other
+    modalities) and per tool input (numbered from 1)."""
     lines, clip = [], 0
     for item in inputs:
         if item.kind == "text" and item.text is not None:
-            lines.append(f"Audio clip: {item.text}")
+            lines.append(f"{_input_label(item)}: {item.text}")
         elif item.kind == "tool" and item.tool is not None:
             clip += 1  # the file name is left out: some give the answer away (GTZAN's "rock.00012.wav")
             lines.append(
