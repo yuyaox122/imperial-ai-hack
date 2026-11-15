@@ -379,11 +379,13 @@ def test_find_datasets_drops_bad_ids_and_refutes_missing_ones(monkeypatch):
     assert candidates[0].to_dict()["hub_id"] == "o/good"
 
 
-def test_find_datasets_unavailable_is_empty(monkeypatch):
+def test_find_datasets_unavailable_raises_with_the_cause(monkeypatch):
+    # The caller (agent.auto) reports the cause as a failed search, not as "found 0 candidates".
     def search(*a, **k):
-        raise ResearchUnavailable("no key")
+        raise ResearchUnavailable("LINKUP_API_KEY is not set")
     monkeypatch.setattr(research, "search_structured", search)
-    assert find_datasets(DataNeed("labelled", "closed", [], "r"), "audio", "g") == ([], [], "unavailable")
+    with pytest.raises(ResearchUnavailable, match="LINKUP_API_KEY is not set"):
+        find_datasets(DataNeed("labelled", "closed", [], "r"), "audio", "g")
 
 
 def test_find_datasets_cleans_odd_fields(monkeypatch):
@@ -666,3 +668,173 @@ def test_supported_separator_normalization_preserves_coverage(tmp_path, hub):
     hub(cycling(['hip_hop', 'jazz']))
     result = fetch_sample(CAND, tmp_path / 's', 'closed', requested_labels=['hip hop'])
     assert result.labels['hip_hop'] == data.PER_LABEL
+
+
+# ----------------------------------------------------------------------------- release: real-mode need labels
+# The label lists of the real built-in sets, as the recorded runs in socket_pilot/artifacts/ show them.
+REAL_GTZAN = ["blues", "classical", "country", "disco", "hip hop", "jazz", "metal", "pop", "reggae", "rock"]
+REAL_ESC50 = json.loads((Path(__file__).parents[1] / "socket_pilot" / "artifacts" / "run_openai-chat_esc50_closed.json")
+                        .read_text())["events"][1]["data"]["dataset"]["labels"]
+REAL_SETS = [
+    {"name": "gtzan", "title": "Music genres (GTZAN)", "modality": "audio", "labels": REAL_GTZAN, "n": 999,
+     "origin": "builtin", "meta": {}},
+    {"name": "esc50", "title": "Environmental sounds (ESC-50)", "modality": "audio", "labels": REAL_ESC50, "n": 2000,
+     "origin": "builtin", "meta": {}},
+]
+
+
+@pytest.mark.parametrize("goal,labels,want", [
+    ("Make it recognise music genres", ["music genres"], "gtzan"),              # the category, not its classes
+    ("Make it recognise environmental sounds", ["environmental sounds"], "esc50"),
+    ("Make it recognise sounds", ["sounds"], "esc50"),
+    ("Recognise sounds like dogs and chainsaws", ["dogs", "chainsaws"], "esc50"),  # plurals of ESC-50 classes
+    ("Recognise crying babies and church bells", ["crying babies", "church bell"], "esc50"),
+    ("Recognise rock and jazz", ["rock", "jazz"], "gtzan"),
+    ("Tell hiphop from jazz", ["hiphop", "Jazz"], "gtzan"),                     # another spelling of "hip hop"
+    ("Make it recognise music genres", [], "gtzan"),                              # the fake-mode need shape
+    ("Recognise bird species", ["bird species"], None),                           # neither a class nor the kind
+    ("Recognise rock and dogs", ["rock", "dogs"], None),                          # no one set has both
+])
+def test_real_mode_need_labels_reach_the_right_prewired_set(monkeypatch, goal, labels, want):
+    monkeypatch.setattr(datasets, "available_sets", lambda: copy.deepcopy(REAL_SETS))
+    monkeypatch.setattr(llm, "ask_json", lambda *a, **k: {"kind": "labelled", "labels": labels, "reason": "named"})
+    need = decide_need(goal, AUDIO)
+    assert need.labels == labels
+    assert choose_prewired(goal, "audio", requested_labels=need.labels) == want
+
+
+def test_required_classes_names_the_sets_own_classes_and_drops_the_kind():
+    family = "Environmental sounds (ESC-50) esc50"
+    assert data.required_classes(["dogs", "Sea-Waves", "sounds", "dog"], family, REAL_ESC50) == ["dog", "sea waves"]
+    assert data.required_classes(["environmental sounds"], family, REAL_ESC50) == []
+    assert data.required_classes(["GTZAN"], "Music genres (GTZAN) gtzan", REAL_GTZAN) == []
+    with pytest.raises(DataUnavailable, match="bird species"):
+        data.required_classes(["dogs", "bird species"], family, REAL_ESC50)
+
+
+@pytest.mark.parametrize("requested,actual", [
+    (["dog"], ["dog", "dogs", "rain"]),      # two classes of the set share the key: neither covers
+    (["glas"], ["glass", "rain"]),           # "glass" is not a plural
+    (["bu"], ["bus", "rain"]),               # nor is a word of 3 letters
+    (["hi"], ["rain", "wind"]),              # no word of 3 letters to name a kind with
+])
+def test_coverage_does_not_merge_distinct_names(requested, actual):
+    with pytest.raises(DataUnavailable):
+        data.require_coverage(requested, actual)
+    with pytest.raises(DataUnavailable):
+        data.required_classes(requested, "hi there", actual)
+
+
+def test_fetch_fills_a_plural_request_with_the_source_class_and_drops_the_kind(tmp_path, hub):
+    hub(cycling(["dog", "rooster", "rain", "sea_waves"]))
+    candidate = DatasetCandidate("o/esc", "Environmental sounds", "https://huggingface.co/datasets/o/esc")
+    report = fetch_sample(candidate, tmp_path / "s", "closed", requested_labels=["dogs", "environmental sounds"])
+    assert report.labels["dog"] == data.PER_LABEL and "dogs" not in report.labels
+    assert set(report.labels) == {"dog", "rooster", "rain", "sea_waves"}
+    assert sorted(p.name for p in (tmp_path / "s").iterdir()) == ["dog", "rain", "rooster", "sea_waves"]
+
+
+def test_fetch_from_a_text_label_column_drops_an_empty_slot_for_the_kind(tmp_path, hub):
+    names = ["Dog", "Rain", "Sea waves"]
+    hub(FakeViewer(90, lambda i: names[i % 3], [AUDIO_FEATURE, string_column("category")], label_col="category"))
+    candidate = DatasetCandidate("o/esc", "Environmental sounds", "https://huggingface.co/datasets/o/esc")
+    report = fetch_sample(candidate, tmp_path / "s", "open", requested_labels=["dogs", "sounds"])
+    assert report.labels == {"dog": 30, "rain": 30, "sea_waves": 30}
+
+
+def test_fetch_still_refuses_a_kind_the_candidate_is_not(tmp_path, hub):
+    written = hub(cycling(["dog", "rain"]))
+    with pytest.raises(DataUnavailable, match="requested labels absent"):
+        fetch_sample(CAND, tmp_path / "s", "closed", requested_labels=["music genres"])
+    assert not written and not (tmp_path / "s").exists()
+
+
+def test_two_source_classes_for_one_request_collide(tmp_path, hub):
+    names = ["dog", "dogs", "rain"]
+    written = hub(FakeViewer(90, lambda i: names[i % 3], [AUDIO_FEATURE, string_column("label")]))
+    with pytest.raises(DataUnavailable, match="both the requested"):
+        fetch_sample(CAND, tmp_path / "s", "closed", requested_labels=["dog"])
+    assert not written and not (tmp_path / "s").exists()
+
+
+def test_need_instruction_asks_for_classes_not_the_kind(monkeypatch):
+    seen = []
+    monkeypatch.setattr(llm, "ask_json", lambda instruction, *a, **k: seen.append(instruction))
+    decide_need("Make it recognise music genres", AUDIO)
+    assert "'music genres'" in seen[0] and "Never list the kind of category" in seen[0]
+
+
+# ----------------------------------------------------------------------------- release: soft deadline
+def straddling_downloads(monkeypatch, cost):
+    """Real mode with a fake clock: each viewer page costs 0.5 s and each download `cost` s; a download whose
+    timeout is shorter fails as research._http does at its deadline (no bytes, transfer incomplete)."""
+    monkeypatch.setenv("SENSE_FAKE", "0")
+    clock = [0.0]
+    monkeypatch.setattr(data, "_now", lambda: clock[0])
+    viewer = cycling(["a", "b", "c", "d"])
+    def paced_viewer(endpoint, **params):
+        clock[0] += 0.5
+        return viewer(endpoint, **params)
+    monkeypatch.setattr(research, "viewer", paced_viewer)
+    downloads = []
+    def http(method, url, *, timeout, **kwargs):
+        downloads.append(timeout)
+        if timeout < cost:
+            clock[0] += timeout
+            error = ResearchUnavailable("response deadline reached")
+            error.bytes_received, error.transfer_incomplete = 0, True
+            raise error
+        clock[0] += cost
+        return b"0123456789"
+    monkeypatch.setattr(research, "_http", http)
+    return clock, downloads
+
+
+@pytest.mark.parametrize("cost", [1.7, 3.0])
+def test_a_download_cut_by_the_deadline_keeps_the_full_labels(monkeypatch, tmp_path, cost):
+    clock, downloads = straddling_downloads(monkeypatch, cost)
+    report = fetch_sample(CAND, tmp_path / "s", "closed")
+    assert set(report.labels) == {"a", "b", "c", "d"}
+    assert all(n >= data.MIN_PER_LABEL for n in report.labels.values())
+    assert report.n_files == sum(1 for p in (tmp_path / "s").rglob("*") if p.is_file())
+    assert clock[0] <= data.DEADLINE_S
+    assert all(t >= data.MIN_DOWNLOAD_S for t in downloads) and max(downloads) <= data.PER_FILE_S
+
+
+def test_a_partial_transfer_before_the_deadline_still_aborts(monkeypatch, tmp_path):
+    clock, downloads = straddling_downloads(monkeypatch, 1.0)
+    def http(method, url, *, timeout, **kwargs):
+        downloads.append(timeout)
+        error = ResearchUnavailable("stream reset")
+        error.bytes_received, error.transfer_incomplete = 4, True
+        raise error
+    monkeypatch.setattr(research, "_http", http)
+    with pytest.raises(DataUnavailable, match="discarded bytes.*stream reset"):
+        fetch_sample(CAND, tmp_path / "s", "closed")
+    assert len(downloads) == 1 and not (tmp_path / "s").exists()
+
+
+# ----------------------------------------------------------------------------- release: fit problems
+def test_choose_prewired_with_a_scope_skips_a_set_the_run_could_not_verify_on(monkeypatch):
+    sets = REAL_SETS + [{"name": "my-music", "title": "Recognise music genres (my collection)", "modality": "audio",
+                         "labels": ["rock", "jazz"], "n": 40, "origin": "folder", "meta": {}}]
+    monkeypatch.setattr(datasets, "available_sets", lambda: copy.deepcopy(sets))
+    problems = {"my-music": "The set my-music was embedded by another specialist."}
+    asked = []
+    def set_problem(name, scope):
+        asked.append((name, scope))
+        return problems.get(name)
+    monkeypatch.setattr(data, "set_problem", set_problem)
+    goal = "Recognise music genres"
+    assert choose_prewired(goal, "audio") == "my-music" and not asked           # no scope: no check
+    assert choose_prewired(goal, "audio", scope="closed") == "gtzan"
+    assert asked == [("my-music", "closed"), ("gtzan", "closed")]
+    problems["gtzan"] = "too few"
+    assert choose_prewired(goal, "audio", scope="open") is None
+
+
+def test_set_problem_reports_a_set_that_cannot_load(monkeypatch, tmp_path):
+    monkeypatch.setenv("SENSE_FAKE", "1")
+    monkeypatch.setenv("SENSE_HOME", str(tmp_path))
+    assert data.set_problem("gtzan", "open") is None
+    assert "cannot be loaded" in data.set_problem("no-such-set", "closed")

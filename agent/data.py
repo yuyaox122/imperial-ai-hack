@@ -8,29 +8,52 @@ Public surface (do not rename):
   NEED_SCHEMA, DATASET_SCHEMA             structured-output schemas (DATASET_SCHEMA's top-level property is "datasets")
   decide_need(goal, detection) -> DataNeed
   find_datasets(need, modality, goal) -> (candidates, claims, origin)
+                                          raises ResearchUnavailable (with the cause) when the search itself is
+                                          unavailable, so the caller can say why no candidate was found
   fetch_sample(candidate, dest, scope, *, requested_labels=None) -> FetchReport
-  choose_prewired(goal, modality, *, requested_labels=None) -> str | None
+  choose_prewired(goal, modality, *, requested_labels=None, scope=None) -> str | None
+  required_classes(requested, family, labels) -> list[str]
+  require_coverage(requested, actual) -> None
+  set_problem(name, scope) -> str | None
   safe_label(text, index) -> str
   build_set(folder, name, *, title, question, modality, source, licence) -> str
 
 decide_need asks agent.llm.ask_json and accepts only a kind of "labelled" or "probe" with at most 20 string labels;
 otherwise a word rule decides (any of "any ", "anything", "describe", "whatever", "open-ended" means probe).
 
+Named categories. need.labels are what the goal names; a real language model may name the kind of category ("music
+genres"), use plurals ("dogs") or spell a class another way ("hiphop"). A requested label is compared with a set's
+classes under a coverage key in which case, the separators "_", space and "-" (or none) and a regular English plural
+ending do not matter ("Sea-Waves", "sea wave" and "seawaves" are one class; two classes of a set that share a key
+cover neither). A requested label that is no class of the set but whose every word (of 3 or more letters, a
+trailing "s" dropped) is in the set's title or id names the set's own kind ("music genres" for "Music genres
+(GTZAN)", "sounds" for "Environmental sounds (ESC-50)") and asks for the set as a whole, so it is not required as a
+class. Any other requested label is missing, and the set does not fit the goal. required_classes applies this to a
+set (DataUnavailable when something is missing); require_coverage is the same with no family words.
+choose_prewired keeps only sets that cover the requested labels and, when scope is given, whose loaded set
+set_problem (sense.datasets.fit_problem) accepts, then picks the highest goal-word overlap, the first on a tie.
+
 fetch_sample owns `dest`: it replaces whatever is there, and every file it writes is
 dest/<safe_label>/<row_idx>.<audio extension>, so no label text or URL can place a file outside dest. It lists up to
 MAX_PAGES pages of the dataset viewer spread evenly over the whole split (so a split sorted by label still shows
 several labels), reserves slots for requested labels before keeping optional labels up to MAX_LABELS, and downloads at most PER_LABEL
 files per label, label by label in turn, each label's rows picked evenly across the split. Colliding normalized
-labels are rejected. Every requested category must have enough rows and retained downloads, otherwise the
-sample fails. Named coverage only accepts ASCII letters/numbers and space, underscore or hyphen separators;
-unrepresentable requested or original source names fail before downloads. Fallback selection and the caller
-also validate named categories against the built catalogue. A failure before body bytes arrive skips that row; a partially transferred failure aborts
-and cleans up the sample so discarded bytes cannot fuel retries beyond the budget. Downloading stops when every
-label is full, at MAX_BYTES (plus at most one overflow probe byte) or at DEADLINE_S. Labels with fewer than
+labels are rejected. A source label with the coverage key of a requested label fills that request's slot and
+keeps its source name ("dog" for a request "dogs"). A requested label that names the candidate's own kind (its
+title and hub id, as above) and is no class of the dataset is dropped from the request: at once for a ClassLabel
+column, whose classes are listed, and after the pages are read for a text label column. Every other requested
+category must have enough rows and retained downloads, otherwise the sample fails. Named coverage only accepts
+ASCII letters/numbers and space, underscore or hyphen separators; unrepresentable requested or original source
+names fail before downloads. Fallback selection and the caller also validate named categories against the built
+catalogue. A failure before body bytes arrive skips that row; a partially transferred failure aborts and cleans up
+the sample so discarded bytes cannot fuel retries beyond the budget, except when it comes as the deadline is
+reached: then nothing follows it, so downloading stops and the labels already full enough are kept. Downloading
+stops when every label is full, at MAX_BYTES (plus at most one overflow probe byte) or at DEADLINE_S; no download
+starts with less than MIN_DOWNLOAD_S left, and each gets PER_FILE_S or what is left, whichever is less. Labels with fewer than
 MIN_PER_LABEL files are deleted; fewer than 2 labels left (3 for scope "open") deletes dest and raises
 DataUnavailable. A ResearchUnavailable from the viewer (including fake mode, which has no network) becomes
 DataUnavailable after dest is deleted. The viewer's audio URLs are signed and expire: they are used at once and
-never stored. All network access goes through agent.research.
+never stored (agent.research does not cache viewer answers). All network access goes through agent.research.
 """
 
 from __future__ import annotations
@@ -55,6 +78,8 @@ MIN_PER_LABEL = 10
 MAX_PAGES = 12
 MAX_BYTES = 200_000_000
 DEADLINE_S = 180
+PER_FILE_S = 20.0  # the most time one download gets
+MIN_DOWNLOAD_S = 2.0  # no download starts with less time than this left before DEADLINE_S
 PAGE_ROWS = 100  # the most rows the dataset viewer returns in one page
 FILE_MAX_BYTES = 20_000_000  # one audio file larger than this is skipped
 MAX_NEED_LABELS = 20
@@ -101,8 +126,10 @@ DATASET_SCHEMA = {
 _NEED_INSTRUCTION = (
     "Decide what data is needed to verify a new sense for this goal. Answer kind 'labelled' when the goal is to "
     "recognise or sort inputs into categories, or 'probe' when it asks to describe any input in an open-ended way. "
-    "List only the category names the goal itself names (an empty list when it names none), and give a one-sentence "
-    "reason. Return JSON with kind, labels and reason."
+    "In labels, list only the specific classes the goal itself enumerates, each as a short singular name (for "
+    "'tell rock from jazz': rock, jazz). Never list the kind of category or the domain ('music genres', 'sounds', "
+    "'animals'); give an empty list when the goal names no specific class. Give a one-sentence reason. Return JSON "
+    "with kind, labels and reason."
 )
 
 
@@ -181,10 +208,8 @@ def find_datasets(need: DataNeed, modality: str, goal: str) -> tuple[list[Datase
         f"Which labelled {modality} datasets on Hugging Face fit this goal: {goal}? Give the dataset id, licence, "
         "number of examples and label names, with the page each fact comes from."
     )
-    try:
-        found = research.search_structured(query, DATASET_SCHEMA, include_domains=["huggingface.co"])
-    except research.ResearchUnavailable:
-        return [], [], "unavailable"
+    # ResearchUnavailable propagates: the caller reports the cause instead of an empty search.
+    found = research.search_structured(query, DATASET_SCHEMA, include_domains=["huggingface.co"])
     items = found.data.get("datasets") if isinstance(found.data, dict) else None
     names = {s.get("url"): s.get("name") for s in found.sources if isinstance(s, dict)}
     candidates, claims = [], []
@@ -250,7 +275,11 @@ def fetch_sample(candidate: DatasetCandidate, dest: Path, scope: str, *,
     shutil.rmtree(dest, ignore_errors=True)  # dest belongs to this fetch: an older sample is replaced
     try:
         dest.mkdir(parents=True, exist_ok=True)
-        requested = _label_keys(requested_labels or [])
+        requested, classes = [], set()
+        for key in _label_keys(requested_labels or []):
+            if _coverage_key(key) not in classes:  # one slot per class: "dog" and "dogs" ask for the same one
+                classes.add(_coverage_key(key))
+                requested.append(key)
         if len(requested) > MAX_LABELS:
             raise DataUnavailable(f"{len(requested)} requested labels exceed the {MAX_LABELS}-label sample cap")
         return _fetch(candidate, dest, scope, requested)
@@ -273,20 +302,40 @@ def _fetch(candidate: DatasetCandidate, dest: Path, scope: str, requested: list[
     audio_col, label_col, names = _columns(first.get("features"), hub_id)
     total = first.get("num_rows_total")
     total = total if isinstance(total, int) and total >= 0 else len(_row_entries(first))
+    family = f"{candidate.title} {hub_id}"
+    if names is not None:
+        # A ClassLabel column lists every class: a request that is none of them but names the dataset's own kind
+        # ("music genres") asks for the dataset as a whole, so it reserves no slot.
+        listed = _class_index(names)
+        requested = [label for label in requested if _coverage_key(label) in listed or not _names_family(label, family)]
     # Reserve capacity and download priority for named categories, even if they appear last.
     rows: dict[str, list[tuple[int, str]]] = {label: [] for label in requested}
+    slots = {_coverage_key(label): label for label in requested}  # coverage key -> requested slot
+    sources: dict[str, str] = {}  # requested slot -> the source label that fills it
     seen: set[int] = set()
     texts: dict[str, object] = {}  # safe folder -> original label identity
-    _collect(first, audio_col, label_col, names, rows, seen, texts, named=bool(requested))
+
+    def collect(page: dict) -> None:
+        _collect(page, audio_col, label_col, names, rows, seen, texts, named=bool(requested), slots=slots,
+                 sources=sources)
+
+    collect(first)
     for offset in _offsets(total)[1:]:
-        if _now() - start > DEADLINE_S:
+        left = DEADLINE_S - (_now() - start)
+        if left < MIN_DOWNLOAD_S:
             break
-        page = research.viewer("rows", **params, offset=offset, length=PAGE_ROWS, timeout=min(25.0, _remaining(start)))
-        _collect(page, audio_col, label_col, names, rows, seen, texts, named=bool(requested))
+        collect(research.viewer("rows", **params, offset=offset, length=PAGE_ROWS, timeout=min(25.0, left)))
+    if names is None:
+        # A text label column shows its classes only in the rows read: an empty slot named for the dataset's own
+        # kind was a request for the dataset as a whole.
+        for label in [label for label in requested if not rows[label] and _names_family(label, family)]:
+            requested.remove(label)
+            del rows[label]
     short = [label for label in requested if len(rows[label]) < MIN_PER_LABEL]
     if short:
         raise DataUnavailable(f"requested labels absent or too small in bounded viewer sample: {short}")
-    queues = {label: _spread(sorted(found), PER_LABEL) for label, found in rows.items()}
+    # Each filled slot takes the name of its source label ("dog", not the request "dogs").
+    queues = {sources.get(label, label): _spread(sorted(found), PER_LABEL) for label, found in rows.items()}
     counts, sizes = _download_all(queues, dest, start)
     report = _finish(candidate, dest, scope, counts, sizes, total)
     require_coverage(requested, list(report.labels))
@@ -336,7 +385,12 @@ def _offsets(total: int) -> list[int]:
 
 
 def _collect(page: dict, audio_col: str, label_col: str, names: list[str] | None,
-             rows: dict[str, list[tuple[int, str]]], seen: set[int], texts: dict[str, object], *, named: bool = False) -> None:
+             rows: dict[str, list[tuple[int, str]]], seen: set[int], texts: dict[str, object], *, named: bool = False,
+             slots: dict[str, str] | None = None, sources: dict[str, str] | None = None) -> None:
+    """Add the page's usable rows to `rows`. A label with the coverage key of a requested slot (`slots`) goes to that
+    slot, and `sources` records which source label fills it; two source labels for one slot collide."""
+    slots = {} if slots is None else slots
+    sources = {} if sources is None else sources
     for entry in _row_entries(page):
         if not isinstance(entry, dict):
             continue
@@ -347,6 +401,11 @@ def _collect(page: dict, audio_col: str, label_col: str, names: list[str] | None
         label, src = _label(row.get(label_col), names, texts, named=named), _src(row.get(audio_col))
         if label is None or src is None:
             continue
+        slot = slots.get(_coverage_key(label))
+        if slot is not None:
+            if sources.setdefault(slot, label) != label:
+                raise DataUnavailable(f"dataset labels {sources[slot]!r} and {label!r} are both the requested {slot!r}")
+            label = slot
         if label not in rows:
             if len(rows) >= MAX_LABELS:
                 continue
@@ -402,7 +461,10 @@ def _spread(items: list, k: int) -> list:
 
 
 def _download_all(queues: dict[str, list[tuple[int, str]]], dest: Path, start: float) -> tuple[dict, dict]:
-    """One file per label in turn until each label is full or out of rows, or the byte or time budget is spent."""
+    """One file per label in turn until each label is full or out of rows, or the byte or time budget is spent.
+
+    The deadline is a soft stop: no download starts with less than MIN_DOWNLOAD_S left, and a transfer the deadline
+    cuts short ends the downloading with what is already saved, since no retry can follow it."""
     pending = {label: deque(queue) for label, queue in queues.items()}
     counts, sizes = dict.fromkeys(pending, 0), dict.fromkeys(pending, 0)
     spent = 0
@@ -411,11 +473,17 @@ def _download_all(queues: dict[str, list[tuple[int, str]]], dest: Path, start: f
         for label, queue in pending.items():
             if counts[label] >= PER_LABEL or not queue:
                 continue
-            if spent >= MAX_BYTES or _now() - start > DEADLINE_S:
+            left = DEADLINE_S - (_now() - start)
+            if spent >= MAX_BYTES or left < MIN_DOWNLOAD_S:
                 return counts, sizes
             idx, src = queue.popleft()
             progressed = True
-            n = _download_one(src, dest, label, idx, MAX_BYTES - spent, min(20.0, _remaining(start)))
+            try:
+                n = _download_one(src, dest, label, idx, MAX_BYTES - spent, min(PER_FILE_S, left))
+            except DataUnavailable:
+                if DEADLINE_S - (_now() - start) < MIN_DOWNLOAD_S:
+                    return counts, sizes  # the deadline stopped this transfer and nothing follows it
+                raise
             if n is not None:
                 counts[label], sizes[label], spent = counts[label] + 1, sizes[label] + n, spent + n
         if not progressed:
@@ -498,29 +566,103 @@ def _label_keys(labels: list[str]) -> list[str]:
     return keys
 
 
-def require_coverage(requested: list[str], actual: list[str]) -> None:
-    if not requested:
-        return
-    missing = set(_label_keys(requested)) - set(_label_keys(actual))
+def _coverage_key(label: str) -> str | None:
+    """The key under which a requested and an available class name are one class, or None for a name that cannot be
+    compared without information loss (see _label_keys). Case, the separators "_", space and "-" (or none: "hiphop"
+    is "hip hop") and a regular English plural ending are interchangeable."""
+    if not isinstance(label, str) or not re.fullmatch(r"[a-zA-Z0-9_\s-]+", label) or not re.search(r"[a-zA-Z0-9]", label):
+        return None
+    return "".join(_singular(word) for word in re.split(r"[_\s-]+", label.lower()) if word)
+
+
+def _singular(word: str) -> str:
+    if len(word) > 4 and word.endswith("ies"):
+        return word[:-3] + "y"  # "puppies" is "puppy"
+    if len(word) > 4 and word.endswith(("sses", "shes", "ches", "xes", "zes")):
+        return word[:-2]  # "glasses", "brushes", "churches", "boxes"
+    if len(word) > 3 and word.endswith("s") and not word.endswith(("ss", "us", "is")):
+        return word[:-1]  # "dogs", but not "glass", "chorus" or "bus"
+    return word
+
+
+def _class_index(labels: list[str]) -> dict[str, list[str]]:
+    """Coverage key -> the available names with that key; a name that cannot be compared is left out."""
+    index: dict[str, list[str]] = {}
+    for label in labels:
+        key = _coverage_key(label) if isinstance(label, str) else None
+        if key is not None and label not in index.setdefault(key, []):
+            index[key].append(label)
+    return index
+
+
+def _covered(label: str, index: dict[str, list[str]]) -> str | None:
+    """The one available name of the requested class `label`, or None (absent, or two names share its key)."""
+    found = index.get(_coverage_key(label) or "", [])
+    return found[0] if len(found) == 1 else None
+
+
+def _names_family(label: str, family: str) -> bool:
+    """True when every word of `label` is a word of `family` (a set's title and id): it names the set's own kind."""
+    words = _words(label)
+    return bool(words) and words <= _words(family)
+
+
+def required_classes(requested: list[str] | None, family: str, labels: list[str]) -> list[str]:
+    """The set's own names of the requested classes, in request order. A requested label that is no class of the set
+    but names its kind (every word in `family`, the set's title and id) is dropped; any other one raises
+    DataUnavailable, since the set does not cover the goal."""
+    index = _class_index(list(labels or []))
+    classes, missing = [], []
+    for label in requested or []:
+        found = _covered(label, index)
+        if found is not None:
+            if found not in classes:
+                classes.append(found)
+        elif not _names_family(label, family):
+            missing.append(label)
     if missing:
-        raise DataUnavailable(f"requested labels missing from usable set: {', '.join(sorted(missing))}")
+        raise DataUnavailable(f"requested labels missing from usable set: {', '.join(map(str, missing))}")
+    return classes
 
 
-def choose_prewired(goal: str, modality: str, *, requested_labels: list[str] | None = None) -> str | None:
+def require_coverage(requested: list[str], actual: list[str]) -> None:
+    """DataUnavailable unless every requested label is a class of `actual` (required_classes with no family)."""
+    required_classes(requested, "", actual)
+
+
+def set_problem(name: str, scope: str) -> str | None:
+    """Why an agent run on the set `name` with this scope would stop before verifying anything, or None: the set
+    cannot be loaded, or sense.datasets.fit_problem refuses it (embedded in the other mode, too few examples, or
+    too few labels for scope "open")."""
+    try:
+        ds = datasets.load_labelled_set(name)
+    except Exception as exc:  # a damaged or missing set is a reason, not a crash of the data step
+        return f"The set {name} cannot be loaded: {exc}"
+    return datasets.fit_problem(ds, scope)
+
+
+def choose_prewired(goal: str, modality: str, *, requested_labels: list[str] | None = None,
+                    scope: str | None = None) -> str | None:
     wanted = _words(goal)
-    best, best_score = None, 0
+    ranked: list[tuple[int, str]] = []
     for entry in datasets.available_sets():
         if entry.get("modality") != modality:
             continue
+        family = f"{entry.get('title') or ''} {entry.get('name') or ''}"
         try:
-            require_coverage(requested_labels or [], entry.get("labels") or [])
+            required_classes(requested_labels, family, entry.get("labels") or [])
         except DataUnavailable:
             continue
         text = " ".join([str(entry.get("title") or "")] + [str(label) for label in entry.get("labels") or []])
         score = len(wanted & _words(text))
-        if score > best_score:
-            best, best_score = entry.get("name"), score
-    return best
+        if score > 0:
+            ranked.append((score, entry.get("name")))
+    ranked.sort(key=lambda item: -item[0])  # stable: on a tie the first listed wins
+    for _, name in ranked:
+        # A set this run could not verify on (another mode's embeddings, too few labels for the scope) is skipped.
+        if scope is None or set_problem(name, scope) is None:
+            return name
+    return None
 
 
 def _words(text: str) -> set[str]:

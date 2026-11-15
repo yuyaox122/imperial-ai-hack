@@ -272,6 +272,22 @@ def test_viewer_refuses_an_endpoint_that_is_not_a_plain_name(monkeypatch, live_m
         research.viewer("../admin", dataset="x/y")
 
 
+def test_viewer_answers_with_signed_urls_are_never_cached_or_served_stale(monkeypatch, live_mode):
+    page = {"features": [], "num_rows_total": 1,
+            "rows": [{"row_idx": 0, "row": {"audio": [{"src": "https://cdn.example/a.wav?Expires=1&Signature=s"}]}}]}
+    monkeypatch.setattr(research, "_http", returning(json.dumps(page).encode()))
+    params = dict(dataset="o/d", config="default", split="train", offset=0, length=1)
+    assert research.viewer("rows", **params) == page
+    cache = live_mode / "research"
+    assert not cache.exists() or not any("Signature" in p.read_text() for p in cache.iterdir())
+    # An answer an older version did cache is not served either: its signed URLs have expired.
+    url = "https://datasets-server.huggingface.co/rows?" + research.urllib.parse.urlencode(params)
+    research._write_cache("GET", url, None, page)
+    monkeypatch.setattr(research, "_http", raising(urllib.error.URLError("offline")))
+    with pytest.raises(research.ResearchUnavailable, match="could not be reached: offline"):
+        research.viewer("rows", **params)
+
+
 # ----------------------------------------------------------------------------- download
 def test_download_writes_the_bytes_and_leaves_no_temporary_file(monkeypatch, live_mode, tmp_path):
     monkeypatch.setattr(research, "_http", returning(b"RIFF0123WAVE"))
@@ -540,6 +556,7 @@ def test_sample_passes_remaining_deadline_to_stream(monkeypatch, live_mode, tmp_
     monkeypatch.setattr(data, "_now", lambda: clock[0])
     monkeypatch.setattr(research.time, "monotonic", lambda: clock[0])
     monkeypatch.setattr(data, "DEADLINE_S", 1.0)
+    monkeypatch.setattr(data, "MIN_DOWNLOAD_S", 0.1)  # scaled with the one-second deadline
     response = ControlledResponse(b"x" * 1000, clock, delay=0.3)
     opened = install_sample_transport(monkeypatch, [response], clock)
     with pytest.raises(data.DataUnavailable):

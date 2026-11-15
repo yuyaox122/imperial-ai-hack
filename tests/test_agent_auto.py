@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 from types import SimpleNamespace
 import threading
@@ -19,7 +20,7 @@ def world(monkeypatch, tmp_path):
     monkeypatch.setenv('SENSE_HOME', str(tmp_path / 'home'))
     w = SimpleNamespace(events=[], candidates=[], prewired='gtzan', research_error=None,
                         fetch_error=None, build_error=None, fetch_calls=[], build_calls=[], fit_calls=[],
-                        claim_status={}, origin='fake', built_entries=[])
+                        claim_status={}, origin='fake', built_entries=[], set_problems={})
     original_sets = datasets.available_sets
     monkeypatch.setattr(datasets, 'available_sets', lambda: original_sets() + w.built_entries)
     def search(*args, **kwargs):
@@ -57,6 +58,8 @@ def world(monkeypatch, tmp_path):
     monkeypatch.setattr(data, 'fetch_sample', fetch)
     monkeypatch.setattr(data, 'build_set', build)
     monkeypatch.setattr(data, 'choose_prewired', lambda *args, **kwargs: w.prewired)
+    # The built entries above are catalogue rows only; the fit_problem check is covered without this fixture.
+    monkeypatch.setattr(data, 'set_problem', lambda name, scope: w.set_problems.get(name))
     monkeypatch.setattr(llm, 'ask_json', lambda *args, **kwargs: None)
     monkeypatch.setattr(models, 'available_models', lambda: [ModelInfo('fake', 'Fake model', ['text', 'image'], True)])
     monkeypatch.setattr(loop, 'run_fit', fit)
@@ -478,3 +481,157 @@ def test_matching_embedding_provenance_can_confirm_the_measured_model(world, mon
     claims = last(world, "claims").data["claims"]
     assert claims[0]["status"] == "not_testable"
     assert claims[1]["subject"] == "other/model" and claims[1]["status"] == "confirmed"
+
+
+def test_set_without_provenance_does_not_claim_the_specialist_was_never_loaded(world, monkeypatch):
+    from sense import config
+    world.origin = "live"
+    monkeypatch.setattr(config, "fake", lambda: False)
+    monkeypatch.setattr(datasets, "available_sets", lambda: [{
+        "name": "gtzan", "title": "Music genres (GTZAN)", "labels": ["rock", "jazz"], "n": 60, "meta": {}}])
+    run(world)
+    claims = last(world, "claims").data["claims"]
+    assert all(c["status"] == "not_testable" for c in claims)
+    assert all("not loaded" not in c["evidence"] and "do not record" in c["evidence"] for c in claims)
+
+
+# ----------------------------------------------------------------------------- release regressions
+REAL_DATASETS_FIND = data.find_datasets  # captured before the world fixture replaces it
+
+
+@pytest.fixture
+def fake_run(monkeypatch, tmp_path):
+    """Fake mode end to end: the real data step, choose_prewired, folder sets and run_fit; no network."""
+    from agent import planner as planner_mod
+    from sense.specialists import FakeSpecialist, FAKE_CONCEPTS
+    monkeypatch.setenv('SENSE_FAKE', '1')
+    monkeypatch.setenv('SENSE_HOME', str(tmp_path / 'home'))
+    monkeypatch.setattr(planner_mod, '_preferred', None)
+    clip = tmp_path / 'clip.wav'
+    FakeSpecialist.write_sample(FAKE_CONCEPTS.index('rock'), clip, seed=1)
+
+    def folder(name, concepts, n=12):
+        root = tmp_path / 'src' / name
+        for concept in concepts:
+            sub = root / concept.replace(' ', '_')
+            sub.mkdir(parents=True)
+            for i in range(n):
+                FakeSpecialist.write_sample(FAKE_CONCEPTS.index(concept), sub / f'{i}.wav', seed=100 + i)
+        return root
+
+    def run_goal(goal, labels=None, **kwargs):
+        answer = None if labels is None else {'kind': 'labelled', 'labels': labels, 'reason': 'named'}
+        monkeypatch.setattr(llm, 'ask_json', lambda *a, **k: answer)
+        events = []
+        cards, installed = run_auto('fake', clip, goal, events.append, **kwargs)
+        return events, installed
+
+    return SimpleNamespace(clip=clip, folder=folder, run=run_goal)
+
+
+def data_ok(events):
+    return next(e for e in reversed(events) if e.step == 'data' and e.status == 'ok' and 'dataset' in e.data)
+
+
+@pytest.mark.parametrize('goal,labels,installed', [
+    ('Make it recognise music genres', ['music genres'], 'vector:gtzan'),
+    ('Make it recognise environmental sounds', ['environmental sounds'], 'vector:esc50'),
+    ('Recognise sounds like dogs and sirens', ['dogs', 'sirens'], 'vector:esc50'),
+])
+def test_real_mode_need_labels_install_through_the_prewired_fallback(fake_run, goal, labels, installed):
+    # The need shape a live language model gives (a category name or plurals), through the real choose_prewired.
+    events, got = fake_run.run(goal, labels)
+    assert got == installed
+    result = data_ok(events).data
+    assert result['origin'] == 'prewired' and result['need']['labels'] == labels
+
+
+def test_real_mode_need_label_no_set_has_is_refused(fake_run):
+    events, got = fake_run.run('Recognise bird species', ['bird species'])
+    assert got is None
+    done = next(e for e in reversed(events) if e.step == 'done')
+    assert done.data['needs_user'] and not any(e.step in ('fit', 'error') for e in events)
+
+
+def test_prewired_set_embedded_in_the_other_mode_is_never_verified(fake_run):
+    from sense import config
+    datasets.from_folder(fake_run.folder('farm-sounds', ['dog', 'rooster', 'sea waves']), 'farm-sounds',
+                         title='Farm sounds', min_per_label=4)
+    record_path = config.sets_dir() / 'farm-sounds' / 'set.json'
+    record = json.loads(record_path.read_text())
+    record['meta']['specialist'] = 'laion/clap-htsat-unfused'  # as if it was built in real mode
+    record_path.write_text(json.dumps(record))
+    goal = 'Recognise farm sounds such as dog and rooster'
+    assert data.choose_prewired(goal, 'audio') == 'farm-sounds'          # it matches the goal best
+    events, got = fake_run.run(goal)
+    assert data_ok(events).data['dataset'] == 'esc50' and got == 'vector:esc50'
+    assert not any(e.step == 'error' for e in events)
+
+
+def test_prewired_set_with_too_few_labels_for_open_scope_is_skipped(fake_run):
+    datasets.from_folder(fake_run.folder('farm-pair', ['dog', 'rooster']), 'farm-pair', title='Farm sounds',
+                         min_per_label=4)
+    goal = 'Describe anything a farm dog or rooster sounds like'
+    assert data.choose_prewired(goal, 'audio') == 'farm-pair'
+    events, _ = fake_run.run(goal)
+    result = data_ok(events).data
+    assert result['dataset'] == 'esc50' and result['need']['scope'] == 'open'
+    assert not any(e.step == 'error' for e in events)
+
+
+@pytest.mark.parametrize('name', ['gtzan', 'esc50', 'captions'])
+def test_user_folder_with_a_reserved_name_gets_its_own_set(fake_run, name):
+    examples = fake_run.folder(name, ['rock', 'jazz'])
+    events, got = fake_run.run('recognise rock and jazz', examples=examples)
+    result = data_ok(events).data
+    assert result['origin'] == 'user' and result['dataset'] == f'{name}-folder'
+    assert datasets.load_labelled_set(f'{name}-folder').title == name
+    assert got == f'vector:{name}-folder'
+
+
+def test_fetched_set_the_run_cannot_verify_on_falls_back(world):
+    world.candidates = [CAND]
+    world.set_problems = {'o_d': "Scope 'open' needs a set with at least 3 labels"}
+    run(world)
+    assert any(e.step == 'data' and e.status == 'fail' and 'at least 3 labels' in e.message for e in world.events)
+    assert last(world, 'data', 'ok').data['origin'] == 'prewired' and world.fit_calls[0].dataset == 'gtzan'
+
+
+def test_user_set_the_run_cannot_verify_on_fails_visibly(world, tmp_path):
+    world.set_problems = {'mine': 'embedded by another specialist'}
+    with pytest.raises(data.DataUnavailable, match='another specialist'):
+        run(world, examples=tmp_path / 'mine')
+    assert not world.fit_calls and len([e for e in world.events if e.step == 'error']) == 1
+
+
+def test_prewired_set_the_run_cannot_verify_on_is_refused(world):
+    world.set_problems = {'gtzan': 'embedded by another specialist'}
+    assert run(world) == ([], None)
+    assert any(e.status == 'fail' and 'another specialist' in e.message for e in world.events)
+    assert last(world, 'done').data['needs_user'] and not world.fit_calls
+
+
+def test_unavailable_model_is_refused_before_any_research(world, monkeypatch):
+    monkeypatch.setattr(models, 'available_models', lambda: [
+        ModelInfo('fake', 'Fake model', ['text'], False, available=False, note='Set OPENAI_API_KEY to use it.')])
+    searched = []
+    monkeypatch.setattr(research, 'search_structured', lambda *a, **k: searched.append(a))
+    with pytest.raises(ValueError, match='Fake model cannot be loaded. Set OPENAI_API_KEY'):
+        run(world)
+    assert steps(world) == ['detect', 'error'] and not searched
+    assert not world.fetch_calls and not world.build_calls and not world.fit_calls
+
+
+def test_dataset_search_outage_is_a_failed_search_with_its_cause(world, monkeypatch):
+    specialists = research.search_structured
+    def search(query, schema, **kwargs):
+        if 'datasets' in schema['properties']:
+            raise research.ResearchUnavailable('api.linkup.so answered HTTP 429 (rate limit or credit used up)')
+        return specialists(query, schema, **kwargs)
+    monkeypatch.setattr(research, 'search_structured', search)
+    monkeypatch.setattr(data, 'find_datasets', REAL_DATASETS_FIND)
+    assert run(world)[1] == 'vector:x'
+    search_events = [e for e in world.events if e.step == 'data' and e.data.get('action') == 'search']
+    assert [e.status for e in search_events] == ['start', 'fail']
+    assert 'HTTP 429' in search_events[-1].message and 'HTTP 429' in search_events[-1].data['reason']
+    assert last(world, 'data', 'ok').data['origin'] == 'prewired'
