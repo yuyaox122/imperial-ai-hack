@@ -53,7 +53,8 @@ Public surface (do not rename):
       test_idx, source, licence, provenance ("user" | "dataset" | "generated"), meta; .y, .files and to_dict()
   probe_folder(path, *, name=None, question, modality, provenance="user", source="", licence="",
                min_per_label=4, max_per_label=40, seed=0, suffixes=None) -> ProbeSet
-  verify_files(model, bridge, probes, request, *, max_items=None, seed=0, idx=None) -> contracts.ReportCard
+  verify_files(model, bridge, probes, request, *, max_items=None, seed=0, idx=None, native=False, unseen=None,
+               unseen_max_items=None) -> contracts.ReportCard
 
 The adapter contract. The code must define adapt(path), called once per file with the absolute path of a private
 copy of the file as a str (<run folder>/input/input<extension>: the original's name and folder are never shown),
@@ -137,6 +138,19 @@ none, that question counts as answered correctly) and "no_input". Chance is 1/mi
 failed file never serves as a swapped input. Failures are listed in card.reason. When the adapter fails on more
 than half of the scored files, verify_files raises AdapterError (cause "verify") instead of returning a card.
 Adapter bridges are prepared in up to PREPARE_WORKERS processes at once.
+Two more controls, on request:
+  native=True   each scored question is asked again with the raw file as a text SenseInput (its UTF-8 text, at
+                most MAX_TEXT_CHARS characters, a note saying when it was cut): controls["native"], at the card's
+                chance. Does the adapter add anything to what the model reads in the file as it is? When any scored
+                file is not text, native is not measured and card.reason says so.
+  unseen=<ProbeSet>  a second, independent probe set whose categories the adapter was never built around. Its
+                labels that equal a label of `probes` (case-insensitively, separators ignored) are dropped with their
+                files; with fewer than 2 labels or 4 files left, card.reason says "Unseen categories not measured:
+                <why>". Otherwise every remaining file (at most unseen_max_items, default as max_items, drawn with
+                its own seeded stream) is a question with that set's question and up to five of its remaining
+                labels: controls["unseen_categories"] is the accuracy and control_chance["unseen_categories"] is
+                1/min(5, its labels); card.reason gives n, the labels and the set's source. A file the adapter fails
+                on counts as wrong, as in the main set (the adapter was written before either set existed).
 
 Fake mode needs nothing special: FakeModel picks the option a text input names, so a tiny adapter that reads, for
 example, a test file's first line verifies end to end, offline.
@@ -1527,10 +1541,14 @@ def verify_files(
     max_items: int | None = None,
     seed: int = 0,
     idx: np.ndarray | list[int] | None = None,
+    native: bool = False,
+    unseen: ProbeSet | None = None,
+    unseen_max_items: int | None = None,
 ) -> ReportCard:
-    """Score a file-based bridge on held-out probe files against swapped-input and no-input controls. `idx` names
-    the probe items to score (None: probes.test_idx); an adapter written before any probe existed was fitted on
-    none of them, so the caller may pass every item."""
+    """Score a file-based bridge on held-out probe files against swapped-input and no-input controls, and with
+    `native` and `unseen` the native and unseen-categories controls (module docstring). `idx` names the probe
+    items to score (None: probes.test_idx); an adapter written before any probe existed was fitted on none of
+    them, so the caller may pass every item."""
     from sense.bridges import five_options
     from sense.verify import _subsample, _wilson
 
@@ -1578,39 +1596,47 @@ def verify_files(
         swap.append(int(partners[rng.integers(len(partners))]) if len(partners) else None)
 
     def ask(per_item: list[SenseInput | AdapterError | None | bool]) -> float:
-        """Accuracy over the questions: an AdapterError counts as wrong and True as right, without asking; None
-        asks with no input."""
-        asked = [k for k, inp in enumerate(per_item) if not isinstance(inp, (AdapterError, bool))]
-        items = [
-            ChoiceItem(
-                question=probes.question,
-                options=[probes.labels[c] for c in options[k]],
-                inputs=[] if per_item[k] is None else [per_item[k]],
-            )
-            for k in asked
-        ]
-        picks = np.full(len(per_item), -1, dtype=np.int64)
-        if items:
-            picks[asked] = model.choose(items)
-        right = picks == answers
-        right[[k for k, inp in enumerate(per_item) if inp is True]] = True
-        return round(float(right.mean()), 4)
+        return _ask(model, probes.question, probes.labels, options, answers, per_item)
 
     accuracy = ask([inputs[int(i)] for i in test])
     controls = {
         "swapped": ask([True if j is None else inputs[j] for j in swap]),
         "no_input": ask([None for _ in test]),
     }
-    reason = ""
+    control_chance: dict[str, float] = {}
+    reasons: list[str] = []
     if failed:
         shown = "; ".join(
             f"{Path(probes.items[i][0]).name}: {_clip(' '.join(inputs[i].reason.split()), 200)}" for i in failed[:5]
         )
         more = f"; and {len(failed) - 5} more" if len(failed) > 5 else ""
-        reason = (
+        reasons.append(
             f"The adapter failed on {len(failed)} of {len(test)} held-out files; those questions count as wrong, and "
             f"no failed file serves as a swapped input. {shown}{more}."
         )
+    if native:
+        files = [Path(probes.items[int(i)][0]) for i in test]
+        texts = [_native_text(p) for p in files]
+        not_text = [p for p, text in zip(files, texts) if text is None]
+        if not_text:
+            reasons.append(
+                f"Native not measured: {len(not_text)} of the {len(files)} scored files are not UTF-8 text (first: "
+                f"{not_text[0].name}), so the model cannot be given them as they are."
+            )
+        else:
+            controls["native"] = ask([
+                SenseInput(kind="text", modality=bridge.modality, source=p.name, text=text,
+                           detail="the file as it is, given as text")
+                for p, text in zip(files, texts)
+            ])
+    if unseen is not None:
+        score, chance_unseen, note = _unseen_categories(
+            model, bridge, unseen, probes.labels, max_items if unseen_max_items is None else unseen_max_items, seed,
+        )
+        if score is not None:
+            controls["unseen_categories"] = score
+            control_chance["unseen_categories"] = chance_unseen
+        reasons.append(note)
     return ReportCard(
         model=model.info.name,
         modality=bridge.modality,
@@ -1623,9 +1649,108 @@ def verify_files(
         accuracy=accuracy,
         controls=controls,
         verdict="candidate",
-        reason=reason,
+        reason=" ".join(reasons),
         created=datetime.now(timezone.utc).isoformat(timespec="seconds"),
         interval=_wilson(accuracy, len(test)),
+        control_chance=control_chance,
+    )
+
+
+def _ask(
+    model: BaseModel,
+    question: str,
+    labels: list[str],
+    options: list[list[int]],
+    answers: np.ndarray,
+    per_item: list[SenseInput | AdapterError | None | bool],
+) -> float:
+    """Accuracy over the questions: an AdapterError counts as wrong and True as right, without asking; None asks
+    with no input."""
+    asked = [k for k, inp in enumerate(per_item) if not isinstance(inp, (AdapterError, bool))]
+    items = [
+        ChoiceItem(
+            question=question,
+            options=[labels[c] for c in options[k]],
+            inputs=[] if per_item[k] is None else [per_item[k]],
+        )
+        for k in asked
+    ]
+    picks = np.full(len(per_item), -1, dtype=np.int64)
+    if items:
+        picks[asked] = model.choose(items)
+    right = picks == answers
+    right[[k for k, inp in enumerate(per_item) if inp is True]] = True
+    return round(float(right.mean()), 4)
+
+
+def _native_text(path: Path) -> str | None:
+    """The file as it is, for the native control: its UTF-8 text (a byte-order mark dropped), at most
+    MAX_TEXT_CHARS characters with a note when cut; None when it is not text (it does not decode, holds NUL or is
+    more than 2% control characters, or is blank)."""
+    import codecs
+
+    with open(path, "rb") as f:
+        raw = f.read(MAX_TEXT_CHARS * 4 + 4)
+        more = bool(f.read(1))
+    try:
+        text = codecs.getincrementaldecoder("utf-8")().decode(raw.removeprefix(codecs.BOM_UTF8), final=not more)
+    except UnicodeDecodeError:
+        return None
+    control = sum(1 for ch in text if ord(ch) < 32 and ch not in "\n\r\t\f")
+    if not text.strip() or "\x00" in text or control > 0.02 * len(text):
+        return None
+    if more or len(text) > MAX_TEXT_CHARS:
+        note = "\n[cut: the file goes on]"
+        text = text[: MAX_TEXT_CHARS - len(note)] + note
+    return text
+
+
+def _label_key(label: str) -> str:
+    """A label compared case-insensitively with its separators ignored: "Sci-Fi", "sci fi" and "sci_fi" match."""
+    return re.sub(r"[\W_]+", "", label.casefold())
+
+
+def _unseen_categories(
+    model: BaseModel, bridge: Bridge, unseen: ProbeSet, main_labels: list[str], max_items: int, seed: int,
+) -> tuple[float | None, float, str]:
+    """The unseen-categories control: (accuracy or None, its chance, a sentence for card.reason). Labels that
+    match a main label are dropped with their files; every other file is scored (at most max_items, seeded) with
+    the unseen set's question and up to five of its remaining labels as options. A file the adapter fails on
+    counts as wrong."""
+    from sense.bridges import five_options
+    from sense.verify import _subsample
+
+    taken = {_label_key(label) for label in main_labels}
+    keep = [c for c, label in enumerate(unseen.labels) if _label_key(label) not in taken]
+    shared = [label for c, label in enumerate(unseen.labels) if c not in keep]
+    items = [(Path(p), keep.index(c)) for p, c in unseen.items if c in keep]
+    dropped = f" (dropped as already probed: {', '.join(shared)})" if shared else ""
+    if len(keep) < 2:
+        return None, 0.0, (
+            f"Unseen categories not measured: {unseen.name} has {len(keep)} label{'' if len(keep) == 1 else 's'} "
+            f"the probe set does not already have{dropped}; at least 2 are needed."
+        )
+    if len(items) < 4:
+        return None, 0.0, (
+            f"Unseen categories not measured: {unseen.name} has {len(items)} files in labels the probe set does not "
+            f"already have{dropped}; at least 4 are needed."
+        )
+    labels = [unseen.labels[c] for c in keep]
+    rng = np.random.default_rng([seed, 1])  # its own stream: the main questions stay as they were
+    chosen = _subsample(np.arange(len(items)), max_items, rng)
+    y = np.array([items[k][1] for k in chosen], dtype=np.int64)
+    options, answers = five_options(y, len(labels), rng)
+    prepared = _prepare_all(bridge, sorted({items[k][0] for k in chosen}))
+    per_item = [prepared[items[k][0]] for k in chosen]
+    score = _ask(model, unseen.question, labels, options, answers, per_item)
+    chance = round(1 / min(5, len(labels)), 4)
+    failed = sum(isinstance(inp, AdapterError) for inp in per_item)
+    failures = f"; the adapter failed on {failed} of them, counted as wrong" if failed else ""
+    source = unseen.source or unseen.name
+    return score, chance, (
+        f"Unseen categories: {score * 100:.1f}% on {len(chosen)} files of {len(labels)} categories the adapter "
+        f"was not built around ({', '.join(labels)}; source: {source}){dropped}, against "
+        f"{chance * 100:.1f}% chance{failures}."
     )
 
 

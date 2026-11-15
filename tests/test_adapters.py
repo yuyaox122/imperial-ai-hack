@@ -991,3 +991,96 @@ def test_verify_files_respects_max_items_and_the_model(tmp_path):
     assert card.n == 7
     with pytest.raises(ValueError, match="built for fake"):
         verify_files(_fake_model("fake-api"), bridge, probes, FitRequest(model="fake-api", dataset=probes.name))
+
+
+# ----------------------------------------------------------------------------- native and unseen categories
+KNOWS_FOUR = '''
+KNOWN = ["red", "green", "blue", "yellow"]
+
+def adapt(path):
+    line = open(path, encoding="utf-8").readline()
+    for colour in KNOWN:  # an adapter built around the tested colours only
+        if colour in line:
+            return {"text": f"The file is about the colour {colour}."}
+    return {"text": "The file is about some colour."}
+'''
+
+
+def _four_and_unseen(tmp_path, unseen_labels=("Red", "purple", "orange", "pink"), per_label=5):
+    main = probe_folder(_probe_tree(tmp_path / "main", ["red", "green", "blue", "yellow"], 6),
+                        question="Which colour?", modality="colour file")
+    unseen = probe_folder(_probe_tree(tmp_path / "later", list(unseen_labels), per_label), name="later-colours",
+                          question="Which colour is it?", modality="colour file", source="a second folder of examples")
+    return main, unseen
+
+
+def test_verify_files_native_control_is_the_model_reading_the_file_as_it_is(tmp_path):
+    probes = _colour_probes(tmp_path)
+    bridge = AdapterBridge(kind="text", modality="colour file", model_name="fake", code=FIRST_LINE)
+    request = FitRequest(model="fake", dataset=probes.name)
+    card = verify_files(_fake_model(), bridge, probes, request, native=True)
+    assert list(card.controls) == ["swapped", "no_input", "native"]
+    assert card.controls["native"] >= 0.9  # the raw file names its colour: the model reads it without the adapter
+    assert card.control_chance == {} and card.reason == ""
+    plain = verify_files(_fake_model(), bridge, probes, request)
+    assert plain.accuracy == card.accuracy and plain.controls == {k: card.controls[k] for k in ("swapped", "no_input")}
+
+    long_file = tmp_path / "long.txt"
+    long_file.write_text("colour: red\n" + "x" * 9000)
+    text = adapters._native_text(long_file)
+    assert len(text) <= adapters.MAX_TEXT_CHARS and text.startswith("colour: red") and text.endswith("goes on]")
+
+
+def test_verify_files_skips_native_for_files_that_are_not_text(tmp_path):
+    root = tmp_path / "binary"
+    for label in ["red", "blue"]:
+        (root / label).mkdir(parents=True)
+        for k in range(6):
+            (root / label / f"{k}.bin").write_bytes(f"colour: {label}\n".encode() + bytes([0, 255, k]) * 20)
+    probes = probe_folder(root, question="Which colour?", modality="colour file")
+    bridge = AdapterBridge(kind="text", modality="colour file", model_name="fake", code=FIRST_LINE)
+    card = verify_files(_fake_model(), bridge, probes, FitRequest(model="fake", dataset=probes.name), native=True)
+    assert "native" not in card.controls
+    assert f"Native not measured: {card.n} of the {card.n} scored files are not UTF-8 text" in card.reason
+
+
+def test_verify_files_unseen_categories_control(tmp_path):
+    main, unseen = _four_and_unseen(tmp_path)
+    request = FitRequest(model="fake", dataset=main.name)
+    every = np.arange(len(main.items))
+
+    reads = AdapterBridge(kind="text", modality="colour file", model_name="fake", code=FIRST_LINE)
+    card = verify_files(_fake_model(), reads, main, request, idx=every, unseen=unseen)
+    assert card.controls["unseen_categories"] >= 0.9 and card.control_chance == {"unseen_categories": 0.3333}
+    assert card.chance == 0.25  # the card's own chance is the main set's
+    assert ("Unseen categories: 100.0% on 15 files of 3 categories the adapter was not built around (orange, "
+            "pink, purple; source: a second folder of examples) (dropped as already probed: Red), against 33.3% "
+            "chance.") in card.reason
+
+    narrow = AdapterBridge(kind="text", modality="colour file", model_name="fake", code=KNOWS_FOUR)
+    card = verify_files(_fake_model(), narrow, main, request, idx=every, unseen=unseen, unseen_max_items=9)
+    assert card.accuracy >= 0.9 and card.controls["unseen_categories"] <= 0.67
+    assert "on 9 files of 3 categories" in card.reason
+
+    fails = AdapterBridge(kind="text", modality="colour file", model_name="fake", code=_fails_on(["purple"]))
+    card = verify_files(_fake_model(), fails, main, request, idx=every, unseen=unseen)
+    assert card.controls["unseen_categories"] <= 0.67  # the purple files count as wrong
+    assert "the adapter failed on 5 of them, counted as wrong" in card.reason
+
+
+def test_verify_files_says_why_unseen_categories_were_not_measured(tmp_path):
+    main, overlapping = _four_and_unseen(tmp_path, unseen_labels=("RED", "Green", "purple"))
+    bridge = AdapterBridge(kind="text", modality="colour file", model_name="fake", code=FIRST_LINE)
+    request = FitRequest(model="fake", dataset=main.name)
+    card = verify_files(_fake_model(), bridge, main, request, unseen=overlapping)
+    assert "unseen_categories" not in card.controls and card.control_chance == {}
+    assert ("Unseen categories not measured: later-colours has 1 label the probe set does not already have "
+            "(dropped as already probed: Green, RED); at least 2 are needed.") in card.reason
+
+    tiny = ProbeSet(name="tiny", title="t", modality="colour file", question="Which colour?",
+                    labels=["purple", "pink"], items=[(overlapping.files[0], 0),
+                    (overlapping.files[1], 1), (overlapping.files[2], 1)],
+                    fit_idx=np.array([], dtype=np.int64), dev_idx=np.array([], dtype=np.int64),
+                    test_idx=np.arange(3))
+    card = verify_files(_fake_model(), bridge, main, request, unseen=tiny)
+    assert "unseen_categories" not in card.controls and "has 3 files" in card.reason and "at least 4" in card.reason
