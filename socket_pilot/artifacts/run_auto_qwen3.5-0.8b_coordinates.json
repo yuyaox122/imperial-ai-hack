@@ -1,0 +1,1131 @@
+{
+  "id": "83af1f78b174",
+  "origin": "server",
+  "recorded": "2026-11-15T05:30:46+00:00",
+  "request": {
+    "model": "qwen3.5-0.8b",
+    "dataset": "geo-dataset-34cde8583e",
+    "modality": "geo",
+    "scope": "closed"
+  },
+  "status": "done",
+  "events": [
+    {
+      "step": "detect",
+      "status": "start",
+      "message": "Detecting the contents of mystery.txt.",
+      "data": {},
+      "t": 0.0
+    },
+    {
+      "step": "detect",
+      "status": "ok",
+      "message": "mystery.txt holds 1 latitude and longitude pair (51.3608, 7.4717), so it is a list of places. Since Qwen3.5 0.8B (local) does not read coordinates files and no specialist is wired for them, the agent will write an adapter: code that turns the file into something Qwen3.5 0.8B (local) reads.",
+      "data": {
+        "file": "mystery.txt",
+        "goal": "Which country is this place in?",
+        "modality": "geo",
+        "format": "latlon",
+        "how": "content",
+        "detail": "mystery.txt holds 1 latitude and longitude pair (51.3608, 7.4717), so it is a list of places.",
+        "flow": "adapter"
+      },
+      "t": 0.001
+    },
+    {
+      "step": "design",
+      "status": "start",
+      "message": "Designing an adapter that lets Qwen3.5 0.8B (local) sense mystery.txt: Which country is this place in?",
+      "data": {
+        "file": "mystery.txt",
+        "goal": "Which country is this place in?"
+      },
+      "t": 0.001
+    },
+    {
+      "step": "design",
+      "status": "ok",
+      "message": "A text adapter for coordinates (latlon) files: Parse the latitude and longitude and use the coordinate helper to report available geographic context and nearby places. Include the coordinates and any country information returned by the helper.",
+      "data": {
+        "modality": "geo",
+        "format": "latlon",
+        "route": "text",
+        "description": "Parse the latitude and longitude and use the coordinate helper to report available geographic context and nearby places. Include the coordinates and any country information returned by the helper.",
+        "libraries": [
+          "adapter_kit (this harness's helper module, on the adapter's path: import adapter_kit. video_frames(path, n=6) -> PIL frames and video_summary(path) -> dict, for video; contact_sheet(images) -> one PIL image; load_mesh(path), mesh_views(path, views=4) -> PIL renders and mesh_summary(path) -> dict with a plain description, for 3D meshes; read_molecule(path), molecule_summary(path) -> dict with a plain description and molecule_image(path), for molecules; read_coordinates(path) -> [(lat, lon)], coordinate_summary(lat, lon) -> dict and nearest_places(lat, lon), for coordinates; ValueError when a file cannot be read)"
+        ],
+        "question": "Which country contains this coordinate?",
+        "label_hint": "Country names",
+        "labels": [],
+        "probe_plan": "dataset",
+        "probe_reason": "A public dataset of coordinates with country labels can provide independent geographic ground truth.",
+        "install": [],
+        "designed_modality": "location",
+        "detection": {
+          "modality": "geo",
+          "format": "latlon",
+          "how": "content",
+          "detail": "mystery.txt holds 1 latitude and longitude pair (51.3608, 7.4717), so it is a list of places."
+        },
+        "toolbox": [
+          "numpy",
+          "scipy",
+          "PIL",
+          "json",
+          "csv",
+          "math",
+          "struct",
+          "zipfile",
+          "gzip",
+          "io",
+          "re",
+          "xml.etree",
+          "statistics",
+          "trimesh",
+          "rdkit",
+          "soundfile",
+          "matplotlib",
+          "ffmpeg (via subprocess)",
+          "ffprobe (via subprocess)",
+          "adapter_kit (this harness's helper module, on the adapter's path: import adapter_kit. video_frames(path, n=6) -> PIL frames and video_summary(path) -> dict, for video; contact_sheet(images) -> one PIL image; load_mesh(path), mesh_views(path, views=4) -> PIL renders and mesh_summary(path) -> dict with a plain description, for 3D meshes; read_molecule(path), molecule_summary(path) -> dict with a plain description and molecule_image(path), for molecules; read_coordinates(path) -> [(lat, lon)], coordinate_summary(lat, lon) -> dict and nearest_places(lat, lon), for coordinates; ValueError when a file cannot be read)"
+        ],
+        "head_preview": "51.3608, 7.4717"
+      },
+      "t": 2.168
+    },
+    {
+      "step": "build",
+      "status": "start",
+      "message": "Writing adapt(path) with adapter_kit (this harness's helper module, on the adapter's path: import adapter_kit. video_frames(path, n=6) -> PIL frames and video_summary(path) -> dict, for video; contact_sheet(images) -> one PIL image; load_mesh(path), mesh_views(path, views=4) -> PIL renders and mesh_summary(path) -> dict with a plain description, for 3D meshes; read_molecule(path), molecule_summary(path) -> dict with a plain description and molecule_image(path), for molecules; read_coordinates(path) -> [(lat, lon)], coordinate_summary(lat, lon) -> dict and nearest_places(lat, lon), for coordinates; ValueError when a file cannot be read) and running it on mystery.txt in the sandbox.",
+      "data": {
+        "libraries": [
+          "adapter_kit (this harness's helper module, on the adapter's path: import adapter_kit. video_frames(path, n=6) -> PIL frames and video_summary(path) -> dict, for video; contact_sheet(images) -> one PIL image; load_mesh(path), mesh_views(path, views=4) -> PIL renders and mesh_summary(path) -> dict with a plain description, for 3D meshes; read_molecule(path), molecule_summary(path) -> dict with a plain description and molecule_image(path), for molecules; read_coordinates(path) -> [(lat, lon)], coordinate_summary(lat, lon) -> dict and nearest_places(lat, lon), for coordinates; ValueError when a file cannot be read)"
+        ],
+        "sandboxed": true,
+        "max_attempts": 3
+      },
+      "t": 2.168
+    },
+    {
+      "step": "build",
+      "status": "ok",
+      "message": "The adapter ran on mystery.txt after 1 attempt (0.1 s).",
+      "data": {
+        "attempts": 1,
+        "libraries": [
+          "adapter_kit (this harness's helper module, on the adapter's path: import adapter_kit. video_frames(path, n=6) -> PIL frames and video_summary(path) -> dict, for video; contact_sheet(images) -> one PIL image; load_mesh(path), mesh_views(path, views=4) -> PIL renders and mesh_summary(path) -> dict with a plain description, for 3D meshes; read_molecule(path), molecule_summary(path) -> dict with a plain description and molecule_image(path), for molecules; read_coordinates(path) -> [(lat, lon)], coordinate_summary(lat, lon) -> dict and nearest_places(lat, lon), for coordinates; ValueError when a file cannot be read)",
+          "json",
+          "math"
+        ],
+        "code_sha256": "cb5aafe41c5c40b1270678bb073b00f0f894c04fe19ae94ca7ed5e3734fa6c4b",
+        "code": "import json\nimport math\nimport adapter_kit\n\n\ndef adapt(path):\n    try:\n        coords = adapter_kit.read_coordinates(path)\n    except Exception as exc:\n        return {\"text\": \"Could not read coordinates: \" + str(exc)}\n\n    lines = [\"Coordinate count: %d\" % len(coords)]\n    for i, pair in enumerate(coords[:10], 1):\n        try:\n            lat, lon = pair\n            lat, lon = float(lat), float(lon)\n            lines.append(\"Coordinate %d: latitude %.8f, longitude %.8f\" % (i, lat, lon))\n            if not (math.isfinite(lat) and math.isfinite(lon)):\n                continue\n            try:\n                summary = adapter_kit.coordinate_summary(lat, lon)\n                lines.append(\"Geographic context: \" + json.dumps(summary, ensure_ascii=False, default=str))\n            except Exception:\n                pass\n            try:\n                places = adapter_kit.nearest_places(lat, lon)\n                lines.append(\"Nearby places: \" + json.dumps(places, ensure_ascii=False, default=str))\n            except Exception:\n                pass\n        except Exception:\n            lines.append(\"Coordinate %d: %s\" % (i, str(pair)))\n    return {\"text\": \"\\n\".join(lines)[:4000]}\n",
+        "preview": "Coordinate count: 1\nCoordinate 1: latitude 51.36080000, longitude 7.47170000\nGeographic context: {\"lat\": 51.3608, \"lon\": 7.4717, \"dms\": \"51\u00b021'38.9\\\"N 7\u00b028'18.1\\\"E\", \"hemisphere\": \"northern, eastern\", \"climate_band\": \"temperate\", \"nearest_places\": null, \"gazetteer_note\": \"gazetteer file not found...",
+        "output_kind": "text",
+        "notes": [],
+        "seconds": 0.147
+      },
+      "t": 6.611
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Searching the Hugging Face Hub and the web for labelled probe files.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "search",
+        "goal": "Which country is this place in?",
+        "modality": "geo"
+      },
+      "t": 6.611
+    },
+    {
+      "step": "data",
+      "status": "ok",
+      "message": "Found 20 candidate datasets for labelled probe files.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "search",
+        "queries": [
+          "geolocation",
+          "country classification",
+          "geoguessr",
+          "geocoding",
+          "places",
+          "country place",
+          "cities",
+          "country",
+          "city",
+          "geonames",
+          "countries"
+        ],
+        "origin": "llm+rule",
+        "found": 20,
+        "top": [
+          "geomelon/cities",
+          "gdurkin/naip-16d-city-cubes",
+          "bamwor/world-cities",
+          "happyendpoint/hotels-in-60-major-cities",
+          "EDK-Earth/wildlife-near-roads-cities",
+          "86Cao/china-city-osm-pbf",
+          "yuiseki/geonames",
+          "Bayanat-Labs/arab-world-places-atlas",
+          "do-me/Geonames",
+          "kunifujiwara/voxcity-example-cities",
+          "Flightmussy/detourmap-places",
+          "Lilambd/world-cities"
+        ],
+        "web": {
+          "used": true,
+          "reason": null,
+          "origin": "memo",
+          "hub_ids": [
+            "Flightmussy/detourmap-places"
+          ],
+          "tables": [],
+          "refused": [
+            {
+              "url": "https://github.com/joelacus/world-cities",
+              "reason": "a GitHub page, not a file (only blob and raw file URLs are read)"
+            }
+          ]
+        },
+        "excluded": []
+      },
+      "t": 9.759
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Trying geomelon/cities.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "geomelon/cities",
+        "source": "geomelon/cities",
+        "kind": "hub",
+        "downloads": 839,
+        "found_by": "hub",
+        "licence": "cc0-1.0",
+        "url": "https://huggingface.co/datasets/geomelon/cities"
+      },
+      "t": 9.759
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of geomelon/cities.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "geomelon/cities",
+        "source": "geomelon/cities",
+        "kind": "hub"
+      },
+      "t": 9.759
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "geomelon/cities does not fit: the viewer's rows of geomelon/cities failed: HTTP 500 from datasets-server.huggingface.co: The previous steps are still being processed",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "geomelon/cities",
+        "source": "geomelon/cities",
+        "kind": "hub",
+        "reason": "the viewer's rows of geomelon/cities failed: HTTP 500 from datasets-server.huggingface.co: The previous steps are still being processed"
+      },
+      "t": 10.273
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of geomelon/cities.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "geomelon/cities",
+        "source": "geomelon/cities",
+        "kind": "folder"
+      },
+      "t": 10.273
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "geomelon/cities does not fit: geomelon/cities holds no .geojson/.gpx/.kml files",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "geomelon/cities",
+        "source": "geomelon/cities",
+        "kind": "folder",
+        "reason": "geomelon/cities holds no .geojson/.gpx/.kml files"
+      },
+      "t": 10.47
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "Could not use geomelon/cities: inspect: the viewer's rows of geomelon/cities failed: HTTP 500 from datasets-server.huggingface.co: The previous steps are still being processed; folder: geomelon/cities holds no .geojson/.gpx/.kml files",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "geomelon/cities",
+        "source": "geomelon/cities",
+        "kind": "folder",
+        "reason": "inspect: the viewer's rows of geomelon/cities failed: HTTP 500 from datasets-server.huggingface.co: The previous steps are still being processed; folder: geomelon/cities holds no .geojson/.gpx/.kml files"
+      },
+      "t": 10.47
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Trying gdurkin/naip-16d-city-cubes.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "gdurkin/naip-16d-city-cubes",
+        "source": "gdurkin/naip-16d-city-cubes",
+        "kind": "hub",
+        "downloads": 1110,
+        "found_by": "hub",
+        "licence": "cc-by-4.0",
+        "url": "https://huggingface.co/datasets/gdurkin/naip-16d-city-cubes"
+      },
+      "t": 10.47
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of gdurkin/naip-16d-city-cubes.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "gdurkin/naip-16d-city-cubes",
+        "source": "gdurkin/naip-16d-city-cubes",
+        "kind": "hub"
+      },
+      "t": 10.47
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "gdurkin/naip-16d-city-cubes does not fit: gdurkin/naip-16d-city-cubes has no input column for geo: wanted a column named like latitude/lat and longitude/lng/lon/long with fitting values (columns: tile_id, city, west, south, east, north, chip_px, split, meta_json, naip_rgb, naip_ndvi, s2_rgb, dem_rgb, labels, landfire_family, cdl, s2_B08,...",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "gdurkin/naip-16d-city-cubes",
+        "source": "gdurkin/naip-16d-city-cubes",
+        "kind": "hub",
+        "reason": "gdurkin/naip-16d-city-cubes has no input column for geo: wanted a column named like latitude/lat and longitude/lng/lon/long with fitting values (columns: tile_id, city, west, south, east, north, chip_px, split, meta_json, naip_rgb, naip_ndvi, s2_rgb, dem_rgb, labels, landfire_family, cdl, s2_B08, s2_SCL, s2_NDVI, s2_NDWI, s2_MSAVI)"
+      },
+      "t": 12.711
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of gdurkin/naip-16d-city-cubes.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "gdurkin/naip-16d-city-cubes",
+        "source": "gdurkin/naip-16d-city-cubes",
+        "kind": "folder"
+      },
+      "t": 12.711
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "gdurkin/naip-16d-city-cubes does not fit: gdurkin/naip-16d-city-cubes holds no .geojson/.gpx/.kml files",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "gdurkin/naip-16d-city-cubes",
+        "source": "gdurkin/naip-16d-city-cubes",
+        "kind": "folder",
+        "reason": "gdurkin/naip-16d-city-cubes holds no .geojson/.gpx/.kml files"
+      },
+      "t": 12.94
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "Could not use gdurkin/naip-16d-city-cubes: inspect: gdurkin/naip-16d-city-cubes has no input column for geo: wanted a column named like latitude/lat and longitude/lng/lon/long with fitting values (columns: tile_id, city, west, south, east, north, chip_px, split, meta_json, naip_rgb, naip_ndvi, s2_rgb, dem_rgb, labels, landfire_family, cdl...",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "gdurkin/naip-16d-city-cubes",
+        "source": "gdurkin/naip-16d-city-cubes",
+        "kind": "folder",
+        "reason": "inspect: gdurkin/naip-16d-city-cubes has no input column for geo: wanted a column named like latitude/lat and longitude/lng/lon/long with fitting values (columns: tile_id, city, west, south, east, north, chip_px, split, meta_json, naip_rgb, naip_ndvi, s2_rgb, dem_rgb, labels, landfire_family, cdl, s2_B08, s2_SCL, s2_NDVI, s2_NDWI, s2_MSAVI); folder: gdurkin/naip-16d-city-cubes holds no .geojson/.gpx/.kml files"
+      },
+      "t": 12.94
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Trying bamwor/world-cities.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "bamwor/world-cities",
+        "source": "bamwor/world-cities",
+        "kind": "hub",
+        "downloads": 293,
+        "found_by": "hub",
+        "licence": "cc-by-4.0",
+        "url": "https://huggingface.co/datasets/bamwor/world-cities"
+      },
+      "t": 12.941
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of bamwor/world-cities.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "bamwor/world-cities",
+        "source": "bamwor/world-cities",
+        "kind": "hub"
+      },
+      "t": 12.941
+    },
+    {
+      "step": "data",
+      "status": "ok",
+      "message": "bamwor/world-cities fits: input latitude, longitude, label country_code.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "bamwor/world-cities",
+        "source": "bamwor/world-cities",
+        "kind": "hub",
+        "mapping": {
+          "config": "default",
+          "split": "train",
+          "input_columns": [
+            "latitude",
+            "longitude"
+          ],
+          "input_kind": "text",
+          "template": "{latitude}, {longitude}",
+          "extension": ".txt",
+          "label_column": "country_code",
+          "label_kind": "string",
+          "label_names": null,
+          "label_separator": null,
+          "media_type": null,
+          "origin": "llm",
+          "reason": "The coordinates identify the place, and country_code provides its country label.",
+          "folder_depth": null
+        }
+      },
+      "t": 14.618
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Fetching labelled files from bamwor/world-cities.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "fetch",
+        "hub_id": "bamwor/world-cities",
+        "source": "bamwor/world-cities",
+        "kind": "hub",
+        "folder": "<repo>/.sense/fetched/probes/geo/bamwor__world-cities"
+      },
+      "t": 14.618
+    },
+    {
+      "step": "data",
+      "status": "ok",
+      "message": "Fetched 160 files in 8 labels from bamwor/world-cities.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "fetch",
+        "hub_id": "bamwor/world-cities",
+        "source": "bamwor/world-cities",
+        "kind": "hub",
+        "counts": {
+          "cn": 20,
+          "in": 20,
+          "us": 20,
+          "br": 20,
+          "jp": 20,
+          "ru": 20,
+          "ph": 20,
+          "id": 20
+        },
+        "rows_seen": 1200,
+        "skipped": {},
+        "bytes": 3082
+      },
+      "t": 18.183
+    },
+    {
+      "step": "data",
+      "status": "ok",
+      "message": "Using bamwor/world-cities: 8 labels (cn, in, us, br, jp, ru, ph, id).",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "bamwor/world-cities",
+        "source": "bamwor/world-cities",
+        "kind": "hub",
+        "labels": [
+          "cn",
+          "in",
+          "us",
+          "br",
+          "jp",
+          "ru",
+          "ph",
+          "id"
+        ],
+        "licence": "cc-by-4.0"
+      },
+      "t": 18.183
+    },
+    {
+      "step": "data",
+      "status": "ok",
+      "message": "Using 160 dataset probe files in 8 labels (br, cn, id, in, jp, ph, ru, us); all are held out, since the adapter was written before they existed.",
+      "data": {
+        "name": "geo-dataset-34cde8583e",
+        "provenance": "dataset",
+        "source": "https://huggingface.co/datasets/bamwor/world-cities",
+        "licence": "cc-by-4.0",
+        "labels": [
+          "br",
+          "cn",
+          "id",
+          "in",
+          "jp",
+          "ph",
+          "ru",
+          "us"
+        ],
+        "counts": {
+          "br": 20,
+          "cn": 20,
+          "id": 20,
+          "in": 20,
+          "jp": 20,
+          "ph": 20,
+          "ru": 20,
+          "us": 20
+        },
+        "n": 160,
+        "split": {
+          "fit": 96,
+          "dev": 32,
+          "test": 32
+        },
+        "meta": {
+          "folder": "<repo>/.sense/fetched/probes/geo/bamwor__world-cities",
+          "copied_to": "<repo>/.sense/probes/geo-dataset-34cde8583e",
+          "per_label": {
+            "br": 20,
+            "cn": 20,
+            "id": 20,
+            "in": 20,
+            "jp": 20,
+            "ph": 20,
+            "ru": 20,
+            "us": 20
+          },
+          "duplicates_collapsed": 0,
+          "conflicts_dropped": [],
+          "capped": 0,
+          "skipped": {
+            "hidden": 0,
+            "empty": 0,
+            "subfolders": 0,
+            "other_types": 0
+          },
+          "suffixes": null,
+          "warnings": [],
+          "seed": 0,
+          "min_per_label": 5,
+          "max_per_label": 40
+        },
+        "label_leaks": [],
+        "fetched": {
+          "hub_id": "bamwor/world-cities",
+          "url": "https://huggingface.co/datasets/bamwor/world-cities",
+          "title": "World Cities Dataset 2026 (Population >= 100K)",
+          "kind": "hub",
+          "source": "bamwor/world-cities",
+          "licence": "cc-by-4.0",
+          "licence_source": "the Hub dataset card",
+          "label_values": {
+            "cn": "CN",
+            "in": "IN",
+            "us": "US",
+            "br": "BR",
+            "jp": "JP",
+            "ru": "RU",
+            "ph": "PH",
+            "id": "ID"
+          },
+          "counts": {
+            "cn": 20,
+            "in": 20,
+            "us": 20,
+            "br": 20,
+            "jp": 20,
+            "ru": 20,
+            "ph": 20,
+            "id": 20
+          },
+          "mapping": {
+            "config": "default",
+            "split": "train",
+            "input_columns": [
+              "latitude",
+              "longitude"
+            ],
+            "input_kind": "text",
+            "template": "{latitude}, {longitude}",
+            "extension": ".txt",
+            "label_column": "country_code",
+            "label_kind": "string",
+            "label_names": null,
+            "label_separator": null,
+            "media_type": null,
+            "origin": "llm",
+            "reason": "The coordinates identify the place, and country_code provides its country label.",
+            "folder_depth": null
+          },
+          "rows_seen": 1200,
+          "skipped": {},
+          "notes": [
+            "The coordinates identify the place, and country_code provides its country label."
+          ],
+          "tried": [
+            {
+              "hub_id": "geomelon/cities",
+              "reason": "inspect: the viewer's rows of geomelon/cities failed: HTTP 500 from datasets-server.huggingface.co: The previous steps are still being processed; folder: geomelon/cities holds no .geojson/.gpx/.kml files"
+            },
+            {
+              "hub_id": "gdurkin/naip-16d-city-cubes",
+              "reason": "inspect: gdurkin/naip-16d-city-cubes has no input column for geo: wanted a column named like latitude/lat and longitude/lng/lon/long with fitting values (columns: tile_id, city, west, south, east, north, chip_px, split, meta_json, naip_rgb, naip_ndvi, s2_rgb, dem_rgb, labels, landfire_family, cdl, s2_B08, s2_SCL, s2_NDVI, s2_NDWI, s2_MSAVI); folder: gdurkin/naip-16d-city-cubes holds no .geojson/.gpx/.kml files"
+            }
+          ]
+        }
+      },
+      "t": 18.22
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Searching the Hugging Face Hub and the web for labelled files of other categories.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "search",
+        "goal": "Which country is this place in?",
+        "modality": "geo"
+      },
+      "t": 18.22
+    },
+    {
+      "step": "data",
+      "status": "ok",
+      "message": "Found 20 candidate datasets for labelled files of other categories.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "search",
+        "queries": [
+          "geolocation",
+          "country classification",
+          "geoguessr",
+          "geographic coordinates",
+          "world cities",
+          "country place",
+          "cities",
+          "country",
+          "city",
+          "geonames",
+          "countries"
+        ],
+        "origin": "llm+rule",
+        "found": 20,
+        "top": [
+          "geomelon/cities",
+          "Lilambd/world-cities",
+          "gdurkin/naip-16d-city-cubes",
+          "happyendpoint/hotels-in-60-major-cities",
+          "EDK-Earth/wildlife-near-roads-cities",
+          "86Cao/china-city-osm-pbf",
+          "yuiseki/geonames",
+          "do-me/Geonames",
+          "kunifujiwara/voxcity-example-cities",
+          "Flightmussy/detourmap-places",
+          "Stratoscale/GeoNamesPincode",
+          "moondream/geoguessr-countries-finetune"
+        ],
+        "web": {
+          "used": true,
+          "reason": null,
+          "origin": "memo",
+          "hub_ids": [
+            "Flightmussy/detourmap-places"
+          ],
+          "tables": [],
+          "refused": [
+            {
+              "url": "https://github.com/joelacus/world-cities",
+              "reason": "a GitHub page, not a file (only blob and raw file URLs are read)"
+            }
+          ]
+        },
+        "excluded": [
+          {
+            "source": "bamwor/world-cities",
+            "reason": "in exclude_sources"
+          }
+        ]
+      },
+      "t": 21.462
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Trying geomelon/cities.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "geomelon/cities",
+        "source": "geomelon/cities",
+        "kind": "hub",
+        "downloads": 839,
+        "found_by": "hub",
+        "licence": "cc0-1.0",
+        "url": "https://huggingface.co/datasets/geomelon/cities"
+      },
+      "t": 21.462
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of geomelon/cities.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "geomelon/cities",
+        "source": "geomelon/cities",
+        "kind": "hub"
+      },
+      "t": 21.462
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "geomelon/cities does not fit: the viewer's rows of geomelon/cities failed: HTTP 500 from datasets-server.huggingface.co: The previous steps are still being processed",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "geomelon/cities",
+        "source": "geomelon/cities",
+        "kind": "hub",
+        "reason": "the viewer's rows of geomelon/cities failed: HTTP 500 from datasets-server.huggingface.co: The previous steps are still being processed"
+      },
+      "t": 21.949
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of geomelon/cities.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "geomelon/cities",
+        "source": "geomelon/cities",
+        "kind": "folder"
+      },
+      "t": 21.949
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "geomelon/cities does not fit: geomelon/cities holds no .geojson/.gpx/.kml files",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "geomelon/cities",
+        "source": "geomelon/cities",
+        "kind": "folder",
+        "reason": "geomelon/cities holds no .geojson/.gpx/.kml files"
+      },
+      "t": 22.136
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "Could not use geomelon/cities: inspect: the viewer's rows of geomelon/cities failed: HTTP 500 from datasets-server.huggingface.co: The previous steps are still being processed; folder: geomelon/cities holds no .geojson/.gpx/.kml files",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "geomelon/cities",
+        "source": "geomelon/cities",
+        "kind": "folder",
+        "reason": "inspect: the viewer's rows of geomelon/cities failed: HTTP 500 from datasets-server.huggingface.co: The previous steps are still being processed; folder: geomelon/cities holds no .geojson/.gpx/.kml files"
+      },
+      "t": 22.136
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Trying Lilambd/world-cities.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "Lilambd/world-cities",
+        "source": "Lilambd/world-cities",
+        "kind": "hub",
+        "downloads": 103,
+        "found_by": "hub",
+        "licence": "odbl",
+        "url": "https://huggingface.co/datasets/Lilambd/world-cities"
+      },
+      "t": 22.136
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of Lilambd/world-cities.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "Lilambd/world-cities",
+        "source": "Lilambd/world-cities",
+        "kind": "hub"
+      },
+      "t": 22.136
+    },
+    {
+      "step": "data",
+      "status": "ok",
+      "message": "Lilambd/world-cities fits: input lat, lon, label country_iso2.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "Lilambd/world-cities",
+        "source": "Lilambd/world-cities",
+        "kind": "hub",
+        "mapping": {
+          "config": "default",
+          "split": "train",
+          "input_columns": [
+            "lat",
+            "lon"
+          ],
+          "input_kind": "text",
+          "template": "{lat}, {lon}",
+          "extension": ".txt",
+          "label_column": "country_iso2",
+          "label_kind": "string",
+          "label_names": null,
+          "label_separator": null,
+          "media_type": null,
+          "origin": "llm",
+          "reason": "The coordinates identify the place, and country_iso2 provides its country label.",
+          "folder_depth": null
+        }
+      },
+      "t": 24.123
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Fetching labelled files from Lilambd/world-cities.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "fetch",
+        "hub_id": "Lilambd/world-cities",
+        "source": "Lilambd/world-cities",
+        "kind": "hub",
+        "folder": "<repo>/.sense/fetched/probes/geo-unseen/Lilambd__world-cities"
+      },
+      "t": 24.124
+    },
+    {
+      "step": "data",
+      "status": "ok",
+      "message": "Fetched 151 files in 8 labels from Lilambd/world-cities.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "fetch",
+        "hub_id": "Lilambd/world-cities",
+        "source": "Lilambd/world-cities",
+        "kind": "hub",
+        "counts": {
+          "pk": 20,
+          "vn": 20,
+          "ir": 20,
+          "tr": 20,
+          "kr": 19,
+          "de": 18,
+          "co": 17,
+          "my": 17
+        },
+        "rows_seen": 1200,
+        "skipped": {
+          "duplicate_input": 7
+        },
+        "bytes": 2863
+      },
+      "t": 28.926
+    },
+    {
+      "step": "data",
+      "status": "ok",
+      "message": "Using Lilambd/world-cities: 8 labels (pk, vn, ir, tr, kr, de, co, my).",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "Lilambd/world-cities",
+        "source": "Lilambd/world-cities",
+        "kind": "hub",
+        "labels": [
+          "pk",
+          "vn",
+          "ir",
+          "tr",
+          "kr",
+          "de",
+          "co",
+          "my"
+        ],
+        "licence": "odbl"
+      },
+      "t": 28.926
+    },
+    {
+      "step": "data",
+      "status": "info",
+      "message": "Also scoring 151 files of 8 other categories (co, de, ir, kr, my, pk, tr, vn), which the adapter was not built around.",
+      "data": {
+        "unseen": {
+          "name": "geo-unseen-6e4c73e55d",
+          "source": "https://huggingface.co/datasets/Lilambd/world-cities",
+          "labels": [
+            "co",
+            "de",
+            "ir",
+            "kr",
+            "my",
+            "pk",
+            "tr",
+            "vn"
+          ],
+          "per_label": {
+            "co": 17,
+            "de": 18,
+            "ir": 20,
+            "kr": 19,
+            "my": 17,
+            "pk": 20,
+            "tr": 20,
+            "vn": 20
+          },
+          "n": 151
+        }
+      },
+      "t": 28.948
+    },
+    {
+      "step": "verify",
+      "status": "start",
+      "message": "Scoring adapter:geo-latlon on dataset probe files against swapped-input and no-input controls, the model reading each file as it is, and 151 files of categories it was not built around.",
+      "data": {
+        "bridge": "adapter:geo-latlon",
+        "n_test": 160,
+        "native": true,
+        "unseen": "geo-unseen-6e4c73e55d"
+      },
+      "t": 33.374
+    },
+    {
+      "step": "verify",
+      "status": "ok",
+      "message": "adapter:geo-latlon scored 24.4% on 160 held-out probe files (chance 20.0%); controls: swapped input 21.9%, no input 21.2%, the raw file 23.8%, unseen categories 21.2% (chance 20.0%).",
+      "data": {
+        "card": {
+          "model": "qwen3.5-0.8b",
+          "modality": "geo",
+          "dataset": "geo-dataset-34cde8583e",
+          "scope": "closed",
+          "bridge": "adapter:geo-latlon",
+          "kind": "text",
+          "n": 160,
+          "chance": 0.2,
+          "accuracy": 0.2437,
+          "controls": {
+            "swapped": 0.2188,
+            "no_input": 0.2125,
+            "native": 0.2375,
+            "unseen_categories": 0.2119
+          },
+          "verdict": "candidate",
+          "reason": "Unseen categories: 21.2% on 151 files of 8 categories the adapter was not built around (co, de, ir, kr, my, pk, tr, vn; source: https://huggingface.co/datasets/Lilambd/world-cities), against 20.0% chance.",
+          "created": "2026-11-15T05:30:46+00:00",
+          "interval": [
+            0.1837,
+            0.3157
+          ],
+          "control_chance": {
+            "unseen_categories": 0.2
+          }
+        },
+        "controls": {
+          "swapped": 0.2188,
+          "no_input": 0.2125,
+          "native": 0.2375,
+          "unseen_categories": 0.2119
+        },
+        "control_chance": {
+          "unseen_categories": 0.2
+        },
+        "seconds": 74.97
+      },
+      "t": 108.339
+    },
+    {
+      "step": "decide",
+      "status": "start",
+      "message": "Checking adapter:geo-latlon against the bars for a text bridge: chance plus 15 points, 10 points above swapped input, 10 points above the model reading the raw file, 15 points above chance on the unseen categories, at least 10 probe files, and a 95% interval clear of chance.",
+      "data": {
+        "bridge": "adapter:geo-latlon"
+      },
+      "t": 108.339
+    },
+    {
+      "step": "decide",
+      "status": "ok",
+      "message": "adapter:geo-latlon failed: its 24.4% is not 10 points above the 21.9% it scored with swapped input.",
+      "data": {
+        "install": null,
+        "accepted": false,
+        "card": {
+          "model": "qwen3.5-0.8b",
+          "modality": "geo",
+          "dataset": "geo-dataset-34cde8583e",
+          "scope": "closed",
+          "bridge": "adapter:geo-latlon",
+          "kind": "text",
+          "n": 160,
+          "chance": 0.2,
+          "accuracy": 0.2437,
+          "controls": {
+            "swapped": 0.2188,
+            "no_input": 0.2125,
+            "native": 0.2375,
+            "unseen_categories": 0.2119
+          },
+          "verdict": "rejected",
+          "reason": "adapter:geo-latlon failed: its 24.4% is not 10 points above the 21.9% it scored with swapped input. Unseen categories: 21.2% on 151 files of 8 categories the adapter was not built around (co, de, ir, kr, my, pk, tr, vn; source: https://huggingface.co/datasets/Lilambd/world-cities), against 20.0% chance.",
+          "created": "2026-11-15T05:30:46+00:00",
+          "interval": [
+            0.1837,
+            0.3157
+          ],
+          "control_chance": {
+            "unseen_categories": 0.2
+          }
+        }
+      },
+      "t": 108.339
+    },
+    {
+      "step": "install",
+      "status": "info",
+      "message": "Installed nothing; adapter:geo-latlon did not pass its checks.",
+      "data": {
+        "bridge": "adapter:geo-latlon"
+      },
+      "t": 108.339
+    },
+    {
+      "step": "done",
+      "status": "ok",
+      "message": "No coordinates sense was installed for Qwen3.5 0.8B (local): adapter:geo-latlon failed: its 24.4% is not 10 points above the 21.9% it scored with swapped input.",
+      "data": {
+        "installed": null,
+        "needs_user": false,
+        "bridge": "adapter:geo-latlon"
+      },
+      "t": 108.339
+    }
+  ],
+  "cards": [
+    {
+      "model": "qwen3.5-0.8b",
+      "modality": "geo",
+      "dataset": "geo-dataset-34cde8583e",
+      "scope": "closed",
+      "bridge": "adapter:geo-latlon",
+      "kind": "text",
+      "n": 160,
+      "chance": 0.2,
+      "accuracy": 0.2437,
+      "controls": {
+        "swapped": 0.2188,
+        "no_input": 0.2125,
+        "native": 0.2375,
+        "unseen_categories": 0.2119
+      },
+      "verdict": "rejected",
+      "reason": "adapter:geo-latlon failed: its 24.4% is not 10 points above the 21.9% it scored with swapped input. Unseen categories: 21.2% on 151 files of 8 categories the adapter was not built around (co, de, ir, kr, my, pk, tr, vn; source: https://huggingface.co/datasets/Lilambd/world-cities), against 20.0% chance.",
+      "created": "2026-11-15T05:30:46+00:00",
+      "interval": [
+        0.1837,
+        0.3157
+      ],
+      "control_chance": {
+        "unseen_categories": 0.2
+      }
+    }
+  ],
+  "installed": null,
+  "error": null,
+  "seconds": 108.339,
+  "format": 1
+}

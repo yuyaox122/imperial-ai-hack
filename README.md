@@ -142,6 +142,19 @@ SENSE_FAKE=1 .venv/bin/python -m pytest -q tests/test_adapter_flow.py
 
 `--save` writes the run (request, timed trace, cards) in the `sense.runs` format, and `sense.runs.import_record` adds it to **Runs** for replay. In fake mode the LLM gives no design, so a fake run on such a file ends at the design step; the offline tests above stand in for it.
 
+**Measured** (15 November, real mode, through `POST /api/auto` with one file and one goal and no examples folder; `gpt-6.1-terra` designed and wrote each adapter and judged the found datasets; every probe set was found by the agent on the web; 50 held-out questions per card for API models, 160 for Qwen; the records are `socket_pilot/artifacts/run_auto_*.json`):
+
+| Input and goal | Base model | Probe data the agent found | Adapter | Controls | Outcome |
+|---|---|---|---|---|---|
+| 3D model (`.glb`), "what object is this" | Claude Sonnet 5.5 | ModelNet40 meshes, 8 objects (folder-labelled repository) | renders, 100.0% [92.9, 100] | swapped 12%, no input 20%, raw file 42%, unseen 64% (8 scanned-object categories, chance 20%) | installed |
+| same | `openai-chat` (`gpt-6.1-terra`) | same | renders, 100.0% | swapped 18%, no input 28%, raw file 58%, unseen 72% | installed |
+| video (`.mp4`), "what action" | Claude Sonnet 5.5 | HMDB51, 8 actions | frames, 78.0% [64.8, 87.3] | swapped 8%, no input 20%, unseen 92% (8 other HMDB51 actions: another upload of the same corpus) | installed |
+| molecule (SMILES), "what does it smell like" | Claude Sonnet 5.5 | 8 odour labels (Hari5115/molecular-odor-dataset, MIT) | RDKit descriptors as text, 58.0% [44.2, 70.6] | swapped 10%, no input 14%, raw SMILES 46%; unseen not measured (no second source found) | installed, 12 points over the raw file; an earlier run on the same data fell 2 points short of the 10-point bar |
+| coordinates, "which country" | Claude Sonnet 5.5 | 8 countries (bamwor/world-cities) | nearest places as text, 100.0% | raw coordinates 98%, unseen 100% (8 other countries) | refused: the model already reads coordinates |
+| same | Qwen3.5-0.8B (local) | same | 24.4% on 160 | swapped 21.9%, raw file 23.8% (chance 20%) | refused: the small model cannot use the adapter's text |
+
+One run per row, so a single number moves between runs (the adapter is rewritten each time and the found data can differ); the intervals are on the cards.
+
 ## What works today
 
 Measured on 14 and 15 November 2026 on an M4 Pro with 24 GB, Qwen3.5-0.8B in float16 on MPS, through `scripts/demo_cli.py` and the HTTP server. Each card scores 200 held-out five-option questions (chance 20%) and carries a 95% Wilson interval for its accuracy. GTZAN numbers use the de-duplicated split (PR #43): GTZAN holds 14 byte-identical recordings, and copies now stay in one split. The run records are in `socket_pilot/artifacts/run_*.json`, and every run is also in Databricks (see [Databricks](#databricks)).

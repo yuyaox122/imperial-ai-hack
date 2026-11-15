@@ -1,0 +1,1850 @@
+{
+  "id": "3af0ddfe7d5b",
+  "origin": "server",
+  "recorded": "2026-11-15T05:28:46+00:00",
+  "request": {
+    "model": "openai-chat",
+    "dataset": "3d-dataset-0bcf250073",
+    "modality": "3d",
+    "scope": "closed"
+  },
+  "status": "done",
+  "events": [
+    {
+      "step": "detect",
+      "status": "start",
+      "message": "Detecting the contents of mystery.glb.",
+      "data": {},
+      "t": 0.0
+    },
+    {
+      "step": "detect",
+      "status": "ok",
+      "message": "mystery.glb starts with the bytes of a binary glTF (GLB) file, so it is a 3D model. Since OpenAI chat (API) does not read 3D model files and no specialist is wired for them, the agent will write an adapter: code that turns the file into something OpenAI chat (API) reads.",
+      "data": {
+        "file": "mystery.glb",
+        "goal": "Tell me what object this 3D model is",
+        "modality": "3d",
+        "format": "glb",
+        "how": "magic bytes",
+        "detail": "mystery.glb starts with the bytes of a binary glTF (GLB) file, so it is a 3D model.",
+        "flow": "adapter"
+      },
+      "t": 0.001
+    },
+    {
+      "step": "design",
+      "status": "start",
+      "message": "Designing an adapter that lets OpenAI chat (API) sense mystery.glb: Tell me what object this 3D model is",
+      "data": {
+        "file": "mystery.glb",
+        "goal": "Tell me what object this 3D model is"
+      },
+      "t": 0.001
+    },
+    {
+      "step": "design",
+      "status": "ok",
+      "message": "A images adapter for 3D model (glb) files: Render the model from several complementary angles in a contact sheet, preserving its geometry and any available materials, so the model can identify the depicted object.",
+      "data": {
+        "modality": "3d",
+        "format": "glb",
+        "route": "images",
+        "description": "Render the model from several complementary angles in a contact sheet, preserving its geometry and any available materials, so the model can identify the depicted object.",
+        "libraries": [
+          "adapter_kit (this harness's helper module, on the adapter's path: import adapter_kit. video_frames(path, n=6) -> PIL frames and video_summary(path) -> dict, for video; contact_sheet(images) -> one PIL image; load_mesh(path), mesh_views(path, views=4) -> PIL renders and mesh_summary(path) -> dict with a plain description, for 3D meshes; read_molecule(path), molecule_summary(path) -> dict with a plain description and molecule_image(path), for molecules; read_coordinates(path) -> [(lat, lon)], coordinate_summary(lat, lon) -> dict and nearest_places(lat, lon), for coordinates; ValueError when a file cannot be read)"
+        ],
+        "question": "What object does this 3D model depict?",
+        "label_hint": "Object categories depicted by the models.",
+        "labels": [],
+        "probe_plan": "dataset",
+        "probe_reason": "A public dataset of 3D models with object-category labels provides independently labelled examples for semantic object recognition.",
+        "install": [],
+        "designed_modality": "3d-model",
+        "detection": {
+          "modality": "3d",
+          "format": "glb",
+          "how": "magic bytes",
+          "detail": "mystery.glb starts with the bytes of a binary glTF (GLB) file, so it is a 3D model."
+        },
+        "toolbox": [
+          "numpy",
+          "scipy",
+          "PIL",
+          "json",
+          "csv",
+          "math",
+          "struct",
+          "zipfile",
+          "gzip",
+          "io",
+          "re",
+          "xml.etree",
+          "statistics",
+          "trimesh",
+          "rdkit",
+          "soundfile",
+          "matplotlib",
+          "ffmpeg (via subprocess)",
+          "ffprobe (via subprocess)",
+          "adapter_kit (this harness's helper module, on the adapter's path: import adapter_kit. video_frames(path, n=6) -> PIL frames and video_summary(path) -> dict, for video; contact_sheet(images) -> one PIL image; load_mesh(path), mesh_views(path, views=4) -> PIL renders and mesh_summary(path) -> dict with a plain description, for 3D meshes; read_molecule(path), molecule_summary(path) -> dict with a plain description and molecule_image(path), for molecules; read_coordinates(path) -> [(lat, lon)], coordinate_summary(lat, lon) -> dict and nearest_places(lat, lon), for coordinates; ValueError when a file cannot be read)"
+        ],
+        "head_preview": "[hex dump of the first 768 of 31728 bytes] 00000000 67 6c 54 46 02 00 00 00 f0 7b 00 00 84 02 00 00 |glTF.....{......| 00000010 4a 53 4f 4e 7b 22 61 73 73 65 74 22 3a 7b 22 76 |JSON{\"asset\":{\"v| 00000020 65 72 73 69 6f 6e 22 3a 22 32 2e 30 22 2c 22 67 |ersion\":\"2.0\",\"g| 00000030 65 6e 65 72 61 74..."
+      },
+      "t": 2.541
+    },
+    {
+      "step": "build",
+      "status": "start",
+      "message": "Writing adapt(path) with adapter_kit (this harness's helper module, on the adapter's path: import adapter_kit. video_frames(path, n=6) -> PIL frames and video_summary(path) -> dict, for video; contact_sheet(images) -> one PIL image; load_mesh(path), mesh_views(path, views=4) -> PIL renders and mesh_summary(path) -> dict with a plain description, for 3D meshes; read_molecule(path), molecule_summary(path) -> dict with a plain description and molecule_image(path), for molecules; read_coordinates(path) -> [(lat, lon)], coordinate_summary(lat, lon) -> dict and nearest_places(lat, lon), for coordinates; ValueError when a file cannot be read) and running it on mystery.glb in the sandbox.",
+      "data": {
+        "libraries": [
+          "adapter_kit (this harness's helper module, on the adapter's path: import adapter_kit. video_frames(path, n=6) -> PIL frames and video_summary(path) -> dict, for video; contact_sheet(images) -> one PIL image; load_mesh(path), mesh_views(path, views=4) -> PIL renders and mesh_summary(path) -> dict with a plain description, for 3D meshes; read_molecule(path), molecule_summary(path) -> dict with a plain description and molecule_image(path), for molecules; read_coordinates(path) -> [(lat, lon)], coordinate_summary(lat, lon) -> dict and nearest_places(lat, lon), for coordinates; ValueError when a file cannot be read)"
+        ],
+        "sandboxed": true,
+        "max_attempts": 3
+      },
+      "t": 2.541
+    },
+    {
+      "step": "build",
+      "status": "ok",
+      "message": "The adapter ran on mystery.glb after 1 attempt (0.9 s).",
+      "data": {
+        "attempts": 1,
+        "libraries": [
+          "PIL",
+          "adapter_kit (this harness's helper module, on the adapter's path: import adapter_kit. video_frames(path, n=6) -> PIL frames and video_summary(path) -> dict, for video; contact_sheet(images) -> one PIL image; load_mesh(path), mesh_views(path, views=4) -> PIL renders and mesh_summary(path) -> dict with a plain description, for 3D meshes; read_molecule(path), molecule_summary(path) -> dict with a plain description and molecule_image(path), for molecules; read_coordinates(path) -> [(lat, lon)], coordinate_summary(lat, lon) -> dict and nearest_places(lat, lon), for coordinates; ValueError when a file cannot be read)",
+          "io",
+          "numpy",
+          "trimesh"
+        ],
+        "code_sha256": "7306f21e78c4d2087770ae0d66110b749d493441343a6f3079a91c95687b3c4a",
+        "code": "import io\nimport numpy as np\nfrom PIL import Image, ImageDraw\nimport adapter_kit\n\ndef adapt(path):\n    try:\n        views = adapter_kit.mesh_views(path, views=6)\n        if views:\n            return {\"images\": list(views)[:9]}\n    except Exception:\n        pass\n    try:\n        import trimesh\n        scene = trimesh.load(path, force='scene', process=False)\n        meshes = []\n        for node in scene.graph.nodes_geometry:\n            transform, name = scene.graph[node]\n            mesh = scene.geometry[name].copy()\n            mesh.apply_transform(transform)\n            if len(mesh.faces):\n                meshes.append(mesh)\n        if not meshes:\n            raise ValueError('No mesh faces')\n        mesh = trimesh.util.concatenate(meshes)\n        vertices = np.asarray(mesh.vertices, dtype=float)\n        faces = np.asarray(mesh.faces, dtype=int)\n        if len(faces) > 100000:\n            faces = faces[np.linspace(0, len(faces)-1, 100000, dtype=int)]\n        center = (vertices.min(axis=0) + vertices.max(axis=0)) / 2\n        vertices = vertices - center\n        try:\n            colors = np.asarray(mesh.visual.to_color().face_colors)[:, :3]\n            if len(colors) != len(faces):\n                colors = None\n        except Exception:\n            colors = None\n        images = []\n        directions = [(1,1,0.7), (-1,1,0.7), (-1,-1,0.7), (1,-1,0.7), (0,0,1), (0,1,0)]\n        for direction in directions:\n            d = np.array(direction, dtype=float)\n            d /= np.linalg.norm(d)\n            up = np.array([0., 0., 1.])\n            if abs(np.dot(d, up)) > 0.95:\n                up = np.array([0., 1., 0.])\n            right = np.cross(up, d)\n            right /= np.linalg.norm(right)\n            up = np.cross(d, right)\n            xy = np.column_stack((vertices @ right, vertices @ up))\n            lo, hi = xy.min(axis=0), xy.max(axis=0)\n            scale = 450.0 / max(float(np.max(hi-lo)), 1e-9)\n            xy = (xy - (lo+hi)/2) * scale\n            xy[:, 0] += 256\n            xy[:, 1] = 256 - xy[:, 1]\n            tri = vertices[faces]\n            normals = np.cross(tri[:, 1]-tri[:, 0], tri[:, 2]-tri[:, 0])\n            lengths = np.linalg.norm(normals, axis=1)\n            normals /= np.maximum(lengths[:, None], 1e-12)\n            light = np.array([0.4, -0.5, 0.8]); light /= np.linalg.norm(light)\n            shade = 0.45 + 0.55 * np.abs(normals @ light)\n            depth = (tri.mean(axis=1) @ d)\n            order = np.argsort(depth)\n            image = Image.new('RGB', (512, 512), (245, 245, 245))\n            draw = ImageDraw.Draw(image)\n            for i in order:\n                base = colors[i] if colors is not None else np.array([175, 185, 200])\n                color = tuple(np.clip(base * shade[i], 0, 255).astype(int))\n                draw.polygon([tuple(p) for p in xy[faces[i]]], fill=color)\n            images.append(image)\n        return {\"images\": images}\n    except Exception:\n        return {\"images\": [Image.new('RGB', (64, 64), 'white')]}\n",
+        "preview": "6 images: 256x256, 256x256, 256x256, 256x256, 256x256, 256x256",
+        "output_kind": "images",
+        "notes": [],
+        "seconds": 0.851
+      },
+      "t": 14.395
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Searching the Hugging Face Hub and the web for labelled probe files.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "search",
+        "goal": "Tell me what object this 3D model is",
+        "modality": "3d"
+      },
+      "t": 14.395
+    },
+    {
+      "step": "data",
+      "status": "ok",
+      "message": "Found 20 candidate datasets for labelled probe files.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "search",
+        "queries": [
+          "ModelNet",
+          "ShapeNet",
+          "3D object classification",
+          "3D shapes",
+          "3D objects",
+          "object 3d",
+          "modelnet",
+          "object",
+          "objects",
+          "shapenet"
+        ],
+        "origin": "llm+rule",
+        "found": 20,
+        "top": [
+          "BaldFatTiger/ShapeNetPU",
+          "kasvii/ShapeNetCars",
+          "huggingface/amazon-berkeley-objects",
+          "hugging-3d/google-scanned-objects",
+          "naderalfares/ModelNet40_Auto_aligned",
+          "markhitvdrz/idol-3d-objects",
+          "codepawl/scanned-objects-glb",
+          "mim-chess-vlas/rs-all-objects",
+          "ALLSIDES/simready-scanned-objects",
+          "naderalfares/ModelNet10",
+          "MichielBontenbal/ModelNet10_small_ply",
+          "Alexator26/gobjaverse-lvis-dataset-v4"
+        ],
+        "web": {
+          "used": true,
+          "reason": null,
+          "origin": "memo",
+          "hub_ids": [
+            "ccvl/3D-DST-models",
+            "Alexator26/gobjaverse-lvis-dataset-v4"
+          ],
+          "tables": [],
+          "refused": [
+            {
+              "hub_id": "ccvl/3D-DST-models",
+              "reason": "gated, private, disabled, or its card turns the viewer off"
+            }
+          ]
+        },
+        "excluded": []
+      },
+      "t": 17.723
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Trying BaldFatTiger/ShapeNetPU.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "BaldFatTiger/ShapeNetPU",
+        "source": "BaldFatTiger/ShapeNetPU",
+        "kind": "hub",
+        "downloads": 2962,
+        "found_by": "hub",
+        "licence": "other (shapenet-terms-of-use, https://huggingface.co/spaces/ShapeNet/README/blob/main/TERMS.md)",
+        "url": "https://huggingface.co/datasets/BaldFatTiger/ShapeNetPU"
+      },
+      "t": 17.723
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of BaldFatTiger/ShapeNetPU.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "BaldFatTiger/ShapeNetPU",
+        "source": "BaldFatTiger/ShapeNetPU",
+        "kind": "hub"
+      },
+      "t": 17.723
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "BaldFatTiger/ShapeNetPU does not fit: the viewer's splits of BaldFatTiger/ShapeNetPU failed: HTTP 501 from datasets-server.huggingface.co: Job has been terminated due to a temporary spike in resource usage and may be restarted later.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "BaldFatTiger/ShapeNetPU",
+        "source": "BaldFatTiger/ShapeNetPU",
+        "kind": "hub",
+        "reason": "the viewer's splits of BaldFatTiger/ShapeNetPU failed: HTTP 501 from datasets-server.huggingface.co: Job has been terminated due to a temporary spike in resource usage and may be restarted later."
+      },
+      "t": 17.909
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of BaldFatTiger/ShapeNetPU.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "BaldFatTiger/ShapeNetPU",
+        "source": "BaldFatTiger/ShapeNetPU",
+        "kind": "folder"
+      },
+      "t": 17.909
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "BaldFatTiger/ShapeNetPU does not fit: BaldFatTiger/ShapeNetPU holds no .off/.obj/.stl/.ply/.glb/.gltf files",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "BaldFatTiger/ShapeNetPU",
+        "source": "BaldFatTiger/ShapeNetPU",
+        "kind": "folder",
+        "reason": "BaldFatTiger/ShapeNetPU holds no .off/.obj/.stl/.ply/.glb/.gltf files"
+      },
+      "t": 23.67
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "Could not use BaldFatTiger/ShapeNetPU: inspect: the viewer's splits of BaldFatTiger/ShapeNetPU failed: HTTP 501 from datasets-server.huggingface.co: Job has been terminated due to a temporary spike in resource usage and may be restarted later.; folder: BaldFatTiger/ShapeNetPU holds no .off/.obj/.stl/.ply/.glb/.gltf files",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "BaldFatTiger/ShapeNetPU",
+        "source": "BaldFatTiger/ShapeNetPU",
+        "kind": "folder",
+        "reason": "inspect: the viewer's splits of BaldFatTiger/ShapeNetPU failed: HTTP 501 from datasets-server.huggingface.co: Job has been terminated due to a temporary spike in resource usage and may be restarted later.; folder: BaldFatTiger/ShapeNetPU holds no .off/.obj/.stl/.ply/.glb/.gltf files"
+      },
+      "t": 23.67
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Trying kasvii/ShapeNetCars.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "kasvii/ShapeNetCars",
+        "source": "kasvii/ShapeNetCars",
+        "kind": "hub",
+        "downloads": 753,
+        "found_by": "hub",
+        "licence": null,
+        "url": "https://huggingface.co/datasets/kasvii/ShapeNetCars"
+      },
+      "t": 23.67
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of kasvii/ShapeNetCars.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "kasvii/ShapeNetCars",
+        "source": "kasvii/ShapeNetCars",
+        "kind": "hub"
+      },
+      "t": 23.67
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "kasvii/ShapeNetCars does not fit: the viewer's rows of kasvii/ShapeNetCars failed: datasets-server.huggingface.co took over 40 s",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "kasvii/ShapeNetCars",
+        "source": "kasvii/ShapeNetCars",
+        "kind": "hub",
+        "reason": "the viewer's rows of kasvii/ShapeNetCars failed: datasets-server.huggingface.co took over 40 s"
+      },
+      "t": 87.163
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of kasvii/ShapeNetCars.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "kasvii/ShapeNetCars",
+        "source": "kasvii/ShapeNetCars",
+        "kind": "folder"
+      },
+      "t": 87.163
+    },
+    {
+      "step": "data",
+      "status": "ok",
+      "message": "kasvii/ShapeNetCars fits: input ?, label its 0/1 columns.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "kasvii/ShapeNetCars",
+        "source": "kasvii/ShapeNetCars",
+        "kind": "folder",
+        "mapping": {
+          "config": "3d3dccbd8359646396762337885a42d84c3aade9",
+          "split": "",
+          "input_columns": [],
+          "input_kind": "media",
+          "template": "",
+          "extension": ".ply",
+          "label_column": "",
+          "label_kind": "folder",
+          "label_names": [
+            "dora_sharp_point_ply",
+            "remesh"
+          ],
+          "label_separator": null,
+          "media_type": "Mesh",
+          "origin": "rule",
+          "reason": "rule: 2,092 .obj/.ply files labelled by the name of folder 1 of their path (e.g. dora_sharp_point_ply/meshes/100c3076c74ee1874eb766e5a46fceab.ply), 2 labels",
+          "folder_depth": 0
+        }
+      },
+      "t": 89.376
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Fetching labelled files from kasvii/ShapeNetCars.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "fetch",
+        "hub_id": "kasvii/ShapeNetCars",
+        "source": "kasvii/ShapeNetCars",
+        "kind": "folder",
+        "folder": "<repo>/.sense/fetched/probes/3d/kasvii__ShapeNetCars"
+      },
+      "t": 89.376
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "Fetching from kasvii/ShapeNetCars failed: the labels' files are of different types, so a file type would give the label away",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "fetch",
+        "hub_id": "kasvii/ShapeNetCars",
+        "source": "kasvii/ShapeNetCars",
+        "kind": "folder",
+        "reason": "the labels' files are of different types, so a file type would give the label away"
+      },
+      "t": 94.151
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "Could not use kasvii/ShapeNetCars: the labels' files are of different types, so a file type would give the label away",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "kasvii/ShapeNetCars",
+        "source": "kasvii/ShapeNetCars",
+        "kind": "folder",
+        "reason": "the labels' files are of different types, so a file type would give the label away"
+      },
+      "t": 94.151
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Trying huggingface/amazon-berkeley-objects.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "huggingface/amazon-berkeley-objects",
+        "source": "huggingface/amazon-berkeley-objects",
+        "kind": "hub",
+        "downloads": 9248,
+        "found_by": "hub",
+        "licence": "cc-by-4.0",
+        "url": "https://huggingface.co/datasets/huggingface/amazon-berkeley-objects"
+      },
+      "t": 94.151
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of huggingface/amazon-berkeley-objects.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "huggingface/amazon-berkeley-objects",
+        "source": "huggingface/amazon-berkeley-objects",
+        "kind": "hub"
+      },
+      "t": 94.151
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "huggingface/amazon-berkeley-objects does not fit: huggingface/amazon-berkeley-objects has no Mesh column for 3d (columns: item_id, item_name_en, brand_en, product_type, color_en, main_image_id, model_3d_id, spin_id, has_main_image, has_spins, has_3dmodel, has_material, has_part_labels)",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "huggingface/amazon-berkeley-objects",
+        "source": "huggingface/amazon-berkeley-objects",
+        "kind": "hub",
+        "reason": "huggingface/amazon-berkeley-objects has no Mesh column for 3d (columns: item_id, item_name_en, brand_en, product_type, color_en, main_image_id, model_3d_id, spin_id, has_main_image, has_spins, has_3dmodel, has_material, has_part_labels)"
+      },
+      "t": 96.453
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of huggingface/amazon-berkeley-objects.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "huggingface/amazon-berkeley-objects",
+        "source": "huggingface/amazon-berkeley-objects",
+        "kind": "folder"
+      },
+      "t": 96.453
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "huggingface/amazon-berkeley-objects does not fit: huggingface/amazon-berkeley-objects holds no .off/.obj/.stl/.ply/.glb/.gltf files",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "huggingface/amazon-berkeley-objects",
+        "source": "huggingface/amazon-berkeley-objects",
+        "kind": "folder",
+        "reason": "huggingface/amazon-berkeley-objects holds no .off/.obj/.stl/.ply/.glb/.gltf files"
+      },
+      "t": 97.036
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "Could not use huggingface/amazon-berkeley-objects: inspect: huggingface/amazon-berkeley-objects has no Mesh column for 3d (columns: item_id, item_name_en, brand_en, product_type, color_en, main_image_id, model_3d_id, spin_id, has_main_image, has_spins, has_3dmodel, has_material, has_part_labels); folder: huggingface/amazon-berkeley-objects holds ...",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "huggingface/amazon-berkeley-objects",
+        "source": "huggingface/amazon-berkeley-objects",
+        "kind": "folder",
+        "reason": "inspect: huggingface/amazon-berkeley-objects has no Mesh column for 3d (columns: item_id, item_name_en, brand_en, product_type, color_en, main_image_id, model_3d_id, spin_id, has_main_image, has_spins, has_3dmodel, has_material, has_part_labels); folder: huggingface/amazon-berkeley-objects holds no .off/.obj/.stl/.ply/.glb/.gltf files"
+      },
+      "t": 97.036
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Trying hugging-3d/google-scanned-objects.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "hugging-3d/google-scanned-objects",
+        "source": "hugging-3d/google-scanned-objects",
+        "kind": "hub",
+        "downloads": 2988,
+        "found_by": "hub",
+        "licence": "cc-by-4.0",
+        "url": "https://huggingface.co/datasets/hugging-3d/google-scanned-objects"
+      },
+      "t": 97.036
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of hugging-3d/google-scanned-objects.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "hugging-3d/google-scanned-objects",
+        "source": "hugging-3d/google-scanned-objects",
+        "kind": "hub"
+      },
+      "t": 97.036
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "hugging-3d/google-scanned-objects does not fit: hugging-3d/google-scanned-objects has no label column named for the goal (a string or list column named like modelnet/object/objects/shape/shapenet with at least 2 values) (columns: obj, mtl, texture.png, glb, thumbnail_0.jpg, thumbnail_1.jpg, thumbnail_2.jpg, thumbnail_3.jpg, thumbnail_4.jpg, js...",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "hugging-3d/google-scanned-objects",
+        "source": "hugging-3d/google-scanned-objects",
+        "kind": "hub",
+        "reason": "hugging-3d/google-scanned-objects has no label column named for the goal (a string or list column named like modelnet/object/objects/shape/shapenet with at least 2 values) (columns: obj, mtl, texture.png, glb, thumbnail_0.jpg, thumbnail_1.jpg, thumbnail_2.jpg, thumbnail_3.jpg, thumbnail_4.jpg, json, __key__, __url__)"
+      },
+      "t": 100.395
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "Could not use hugging-3d/google-scanned-objects: hugging-3d/google-scanned-objects has no label column named for the goal (a string or list column named like modelnet/object/objects/shape/shapenet with at least 2 values) (columns: obj, mtl, texture.png, glb, thumbnail_0.jpg, thumbnail_1.jpg, thumbnail_2.jpg, thumbnail_3.jpg, thumbnail_4.jpg, js...",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "hugging-3d/google-scanned-objects",
+        "source": "hugging-3d/google-scanned-objects",
+        "kind": "hub",
+        "reason": "hugging-3d/google-scanned-objects has no label column named for the goal (a string or list column named like modelnet/object/objects/shape/shapenet with at least 2 values) (columns: obj, mtl, texture.png, glb, thumbnail_0.jpg, thumbnail_1.jpg, thumbnail_2.jpg, thumbnail_3.jpg, thumbnail_4.jpg, json, __key__, __url__)"
+      },
+      "t": 100.395
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Trying naderalfares/ModelNet40_Auto_aligned.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "naderalfares/ModelNet40_Auto_aligned",
+        "source": "naderalfares/ModelNet40_Auto_aligned",
+        "kind": "hub",
+        "downloads": 2154,
+        "found_by": "hub",
+        "licence": "mit",
+        "url": "https://huggingface.co/datasets/naderalfares/ModelNet40_Auto_aligned"
+      },
+      "t": 100.395
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of naderalfares/ModelNet40_Auto_aligned.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "naderalfares/ModelNet40_Auto_aligned",
+        "source": "naderalfares/ModelNet40_Auto_aligned",
+        "kind": "hub"
+      },
+      "t": 100.395
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "naderalfares/ModelNet40_Auto_aligned does not fit: the viewer's splits of naderalfares/ModelNet40_Auto_aligned failed: HTTP 500 from datasets-server.huggingface.co: No (supported) data files found in naderalfares/ModelNet40_Auto_aligned",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "naderalfares/ModelNet40_Auto_aligned",
+        "source": "naderalfares/ModelNet40_Auto_aligned",
+        "kind": "hub",
+        "reason": "the viewer's splits of naderalfares/ModelNet40_Auto_aligned failed: HTTP 500 from datasets-server.huggingface.co: No (supported) data files found in naderalfares/ModelNet40_Auto_aligned"
+      },
+      "t": 100.56
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of naderalfares/ModelNet40_Auto_aligned.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "naderalfares/ModelNet40_Auto_aligned",
+        "source": "naderalfares/ModelNet40_Auto_aligned",
+        "kind": "folder"
+      },
+      "t": 100.56
+    },
+    {
+      "step": "data",
+      "status": "ok",
+      "message": "naderalfares/ModelNet40_Auto_aligned fits: input ?, label its 0/1 columns.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "naderalfares/ModelNet40_Auto_aligned",
+        "source": "naderalfares/ModelNet40_Auto_aligned",
+        "kind": "folder",
+        "mapping": {
+          "config": "aeb0af95f3ddc6503b5613c28ebcece569e3c2e2",
+          "split": "",
+          "input_columns": [],
+          "input_kind": "media",
+          "template": "",
+          "extension": ".off",
+          "label_column": "",
+          "label_kind": "folder",
+          "label_names": [
+            "chair",
+            "sofa",
+            "airplane",
+            "bookshelf",
+            "bed",
+            "vase",
+            "monitor",
+            "table",
+            "toilet",
+            "bottle",
+            "mantel",
+            "tv_stand",
+            "plant",
+            "piano",
+            "car",
+            "desk",
+            "dresser",
+            "night_stand",
+            "glass_box",
+            "guitar",
+            "range_hood",
+            "bench",
+            "cone",
+            "tent",
+            "flower_pot",
+            "laptop",
+            "keyboard",
+            "curtain",
+            "bathtub",
+            "sink",
+            "lamp",
+            "stairs",
+            "door",
+            "radio",
+            "xbox",
+            "stool",
+            "person",
+            "wardrobe",
+            "cup",
+            "bowl"
+          ],
+          "label_separator": null,
+          "media_type": "Mesh",
+          "origin": "rule",
+          "reason": "rule: 12,311 .off files labelled by the name of folder 1 of their path (e.g. airplane/test/airplane_0627.off), 40 labels",
+          "folder_depth": 0
+        }
+      },
+      "t": 105.67
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Fetching labelled files from naderalfares/ModelNet40_Auto_aligned.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "fetch",
+        "hub_id": "naderalfares/ModelNet40_Auto_aligned",
+        "source": "naderalfares/ModelNet40_Auto_aligned",
+        "kind": "folder",
+        "folder": "<repo>/.sense/fetched/probes/3d/naderalfares__ModelNet40_Auto_aligned"
+      },
+      "t": 105.67
+    },
+    {
+      "step": "data",
+      "status": "ok",
+      "message": "Fetched 160 files in 8 labels from naderalfares/ModelNet40_Auto_aligned.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "fetch",
+        "hub_id": "naderalfares/ModelNet40_Auto_aligned",
+        "source": "naderalfares/ModelNet40_Auto_aligned",
+        "kind": "folder",
+        "counts": {
+          "chair": 20,
+          "sofa": 20,
+          "airplane": 20,
+          "bookshelf": 20,
+          "bed": 20,
+          "vase": 20,
+          "monitor": 20,
+          "table": 20
+        },
+        "rows_seen": 12311,
+        "skipped": {
+          "too_large": 17
+        },
+        "bytes": 113553246
+      },
+      "t": 122.694
+    },
+    {
+      "step": "data",
+      "status": "ok",
+      "message": "Using naderalfares/ModelNet40_Auto_aligned: 8 labels (chair, sofa, airplane, bookshelf, bed, vase, monitor, table).",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "naderalfares/ModelNet40_Auto_aligned",
+        "source": "naderalfares/ModelNet40_Auto_aligned",
+        "kind": "folder",
+        "labels": [
+          "chair",
+          "sofa",
+          "airplane",
+          "bookshelf",
+          "bed",
+          "vase",
+          "monitor",
+          "table"
+        ],
+        "licence": "mit"
+      },
+      "t": 122.694
+    },
+    {
+      "step": "data",
+      "status": "ok",
+      "message": "Using 160 dataset probe files in 8 labels (airplane, bed, bookshelf, chair, monitor, sofa, table, vase); all are held out, since the adapter was written before they existed.",
+      "data": {
+        "name": "3d-dataset-0bcf250073",
+        "provenance": "dataset",
+        "source": "https://huggingface.co/datasets/naderalfares/ModelNet40_Auto_aligned",
+        "licence": "mit",
+        "labels": [
+          "airplane",
+          "bed",
+          "bookshelf",
+          "chair",
+          "monitor",
+          "sofa",
+          "table",
+          "vase"
+        ],
+        "counts": {
+          "airplane": 20,
+          "bed": 20,
+          "bookshelf": 20,
+          "chair": 20,
+          "monitor": 20,
+          "sofa": 20,
+          "table": 20,
+          "vase": 20
+        },
+        "n": 160,
+        "split": {
+          "fit": 96,
+          "dev": 32,
+          "test": 32
+        },
+        "meta": {
+          "folder": "<repo>/.sense/fetched/probes/3d/naderalfares__ModelNet40_Auto_aligned",
+          "copied_to": "<repo>/.sense/probes/3d-dataset-0bcf250073",
+          "per_label": {
+            "airplane": 20,
+            "bed": 20,
+            "bookshelf": 20,
+            "chair": 20,
+            "monitor": 20,
+            "sofa": 20,
+            "table": 20,
+            "vase": 20
+          },
+          "duplicates_collapsed": 0,
+          "conflicts_dropped": [],
+          "capped": 0,
+          "skipped": {
+            "hidden": 0,
+            "empty": 0,
+            "subfolders": 0,
+            "other_types": 0
+          },
+          "suffixes": null,
+          "warnings": [],
+          "seed": 0,
+          "min_per_label": 5,
+          "max_per_label": 40
+        },
+        "label_leaks": [],
+        "fetched": {
+          "hub_id": "naderalfares/ModelNet40_Auto_aligned",
+          "url": "https://huggingface.co/datasets/naderalfares/ModelNet40_Auto_aligned",
+          "title": "ModelNet40 Auto Aligned",
+          "kind": "folder",
+          "source": "naderalfares/ModelNet40_Auto_aligned",
+          "licence": "mit",
+          "licence_source": "the Hub dataset card",
+          "label_values": {
+            "chair": "chair",
+            "sofa": "sofa",
+            "airplane": "airplane",
+            "bookshelf": "bookshelf",
+            "bed": "bed",
+            "vase": "vase",
+            "monitor": "monitor",
+            "table": "table"
+          },
+          "counts": {
+            "chair": 20,
+            "sofa": 20,
+            "airplane": 20,
+            "bookshelf": 20,
+            "bed": 20,
+            "vase": 20,
+            "monitor": 20,
+            "table": 20
+          },
+          "mapping": {
+            "config": "aeb0af95f3ddc6503b5613c28ebcece569e3c2e2",
+            "split": "",
+            "input_columns": [],
+            "input_kind": "media",
+            "template": "",
+            "extension": ".off",
+            "label_column": "",
+            "label_kind": "folder",
+            "label_names": [
+              "chair",
+              "sofa",
+              "airplane",
+              "bookshelf",
+              "bed",
+              "vase",
+              "monitor",
+              "table",
+              "toilet",
+              "bottle",
+              "mantel",
+              "tv_stand",
+              "plant",
+              "piano",
+              "car",
+              "desk",
+              "dresser",
+              "night_stand",
+              "glass_box",
+              "guitar",
+              "range_hood",
+              "bench",
+              "cone",
+              "tent",
+              "flower_pot",
+              "laptop",
+              "keyboard",
+              "curtain",
+              "bathtub",
+              "sink",
+              "lamp",
+              "stairs",
+              "door",
+              "radio",
+              "xbox",
+              "stool",
+              "person",
+              "wardrobe",
+              "cup",
+              "bowl"
+            ],
+            "label_separator": null,
+            "media_type": "Mesh",
+            "origin": "rule",
+            "reason": "rule: 12,311 .off files labelled by the name of folder 1 of their path (e.g. airplane/test/airplane_0627.off), 40 labels",
+            "folder_depth": 0
+          },
+          "rows_seen": 12311,
+          "skipped": {
+            "too_large": 17
+          },
+          "notes": [
+            "the dataset viewer could not be used (the viewer's splits of naderalfares/ModelNet40_Auto_aligned failed: HTTP 500 from datasets-server.huggingface.co: No (supported) data files found in naderalfares/ModelNet40_Auto_aligned), so the files were read from the repository's folders",
+            "rule: 12,311 .off files labelled by the name of folder 1 of their path (e.g. airplane/test/airplane_0627.off), 40 labels",
+            "labels are the names of the folders the files sit in (folder 1 of each path), read from naderalfares/ModelNet40_Auto_aligned's file list at revision aeb0af95f3ddc6503b5613c28ebcece569e3c2e2; files are written as <n><extension>, never under their own names",
+            "licence 'mit' is what the Hub dataset card or its licence tag states for this repository; the card links to other sites (modelnet.cs.princeton.edu): if the files come from there, that source's own terms may apply, which this licence may not cover",
+            "the dataset card says: 'License: MIT'",
+            "stripped the metadata that can name a label from 160 files (glTF names and extras; OBJ/OFF comments and object names, PLY comments, STL solid names)"
+          ],
+          "tried": [
+            {
+              "hub_id": "BaldFatTiger/ShapeNetPU",
+              "reason": "inspect: the viewer's splits of BaldFatTiger/ShapeNetPU failed: HTTP 501 from datasets-server.huggingface.co: Job has been terminated due to a temporary spike in resource usage and may be restarted later.; folder: BaldFatTiger/ShapeNetPU holds no .off/.obj/.stl/.ply/.glb/.gltf files"
+            },
+            {
+              "hub_id": "kasvii/ShapeNetCars",
+              "reason": "set: the labels' files are of different types, so a file type would give the label away"
+            },
+            {
+              "hub_id": "huggingface/amazon-berkeley-objects",
+              "reason": "inspect: huggingface/amazon-berkeley-objects has no Mesh column for 3d (columns: item_id, item_name_en, brand_en, product_type, color_en, main_image_id, model_3d_id, spin_id, has_main_image, has_spins, has_3dmodel, has_material, has_part_labels); folder: huggingface/amazon-berkeley-objects holds no .off/.obj/.stl/.ply/.glb/.gltf files"
+            },
+            {
+              "hub_id": "hugging-3d/google-scanned-objects",
+              "reason": "inspect: hugging-3d/google-scanned-objects has no label column named for the goal (a string or list column named like modelnet/object/objects/shape/shapenet with at least 2 values) (columns: obj, mtl, texture.png, glb, thumbnail_0.jpg, thumbnail_1.jpg, thumbnail_2.jpg, thumbnail_3.jpg, thumbnail_4.jpg, json, __key__, __url__)"
+            }
+          ]
+        }
+      },
+      "t": 122.948
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Searching the Hugging Face Hub and the web for labelled files of other categories.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "search",
+        "goal": "Tell me what object this 3D model is",
+        "modality": "3d"
+      },
+      "t": 122.948
+    },
+    {
+      "step": "data",
+      "status": "ok",
+      "message": "Found 20 candidate datasets for labelled files of other categories.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "search",
+        "queries": [
+          "ModelNet",
+          "ShapeNet",
+          "3D object classification",
+          "3D shapes",
+          "3D objects",
+          "object 3d",
+          "modelnet",
+          "object",
+          "objects",
+          "shapenet"
+        ],
+        "origin": "llm+rule",
+        "found": 20,
+        "top": [
+          "BaldFatTiger/ShapeNetPU",
+          "kasvii/ShapeNetCars",
+          "huggingface/amazon-berkeley-objects",
+          "hugging-3d/google-scanned-objects",
+          "markhitvdrz/idol-3d-objects",
+          "codepawl/scanned-objects-glb",
+          "mim-chess-vlas/rs-all-objects",
+          "ALLSIDES/simready-scanned-objects",
+          "naderalfares/ModelNet10",
+          "MichielBontenbal/ModelNet10_small_ply",
+          "g-ronimo/objects",
+          "Alexator26/gobjaverse-lvis-dataset-v4"
+        ],
+        "web": {
+          "used": true,
+          "reason": null,
+          "origin": "memo",
+          "hub_ids": [
+            "ccvl/3D-DST-models",
+            "Alexator26/gobjaverse-lvis-dataset-v4"
+          ],
+          "tables": [],
+          "refused": [
+            {
+              "hub_id": "ccvl/3D-DST-models",
+              "reason": "gated, private, disabled, or its card turns the viewer off"
+            }
+          ]
+        },
+        "excluded": [
+          {
+            "source": "naderalfares/ModelNet40_Auto_aligned",
+            "reason": "in exclude_sources"
+          }
+        ]
+      },
+      "t": 126.012
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Trying BaldFatTiger/ShapeNetPU.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "BaldFatTiger/ShapeNetPU",
+        "source": "BaldFatTiger/ShapeNetPU",
+        "kind": "hub",
+        "downloads": 2962,
+        "found_by": "hub",
+        "licence": "other (shapenet-terms-of-use, https://huggingface.co/spaces/ShapeNet/README/blob/main/TERMS.md)",
+        "url": "https://huggingface.co/datasets/BaldFatTiger/ShapeNetPU"
+      },
+      "t": 126.012
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of BaldFatTiger/ShapeNetPU.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "BaldFatTiger/ShapeNetPU",
+        "source": "BaldFatTiger/ShapeNetPU",
+        "kind": "hub"
+      },
+      "t": 126.012
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "BaldFatTiger/ShapeNetPU does not fit: the viewer's splits of BaldFatTiger/ShapeNetPU failed: HTTP 501 from datasets-server.huggingface.co: Job has been terminated due to a temporary spike in resource usage and may be restarted later.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "BaldFatTiger/ShapeNetPU",
+        "source": "BaldFatTiger/ShapeNetPU",
+        "kind": "hub",
+        "reason": "the viewer's splits of BaldFatTiger/ShapeNetPU failed: HTTP 501 from datasets-server.huggingface.co: Job has been terminated due to a temporary spike in resource usage and may be restarted later."
+      },
+      "t": 126.164
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of BaldFatTiger/ShapeNetPU.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "BaldFatTiger/ShapeNetPU",
+        "source": "BaldFatTiger/ShapeNetPU",
+        "kind": "folder"
+      },
+      "t": 126.164
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "BaldFatTiger/ShapeNetPU does not fit: BaldFatTiger/ShapeNetPU holds no .off/.obj/.stl/.ply/.glb/.gltf files",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "BaldFatTiger/ShapeNetPU",
+        "source": "BaldFatTiger/ShapeNetPU",
+        "kind": "folder",
+        "reason": "BaldFatTiger/ShapeNetPU holds no .off/.obj/.stl/.ply/.glb/.gltf files"
+      },
+      "t": 131.658
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "Could not use BaldFatTiger/ShapeNetPU: inspect: the viewer's splits of BaldFatTiger/ShapeNetPU failed: HTTP 501 from datasets-server.huggingface.co: Job has been terminated due to a temporary spike in resource usage and may be restarted later.; folder: BaldFatTiger/ShapeNetPU holds no .off/.obj/.stl/.ply/.glb/.gltf files",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "BaldFatTiger/ShapeNetPU",
+        "source": "BaldFatTiger/ShapeNetPU",
+        "kind": "folder",
+        "reason": "inspect: the viewer's splits of BaldFatTiger/ShapeNetPU failed: HTTP 501 from datasets-server.huggingface.co: Job has been terminated due to a temporary spike in resource usage and may be restarted later.; folder: BaldFatTiger/ShapeNetPU holds no .off/.obj/.stl/.ply/.glb/.gltf files"
+      },
+      "t": 131.658
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Trying kasvii/ShapeNetCars.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "kasvii/ShapeNetCars",
+        "source": "kasvii/ShapeNetCars",
+        "kind": "hub",
+        "downloads": 753,
+        "found_by": "hub",
+        "licence": null,
+        "url": "https://huggingface.co/datasets/kasvii/ShapeNetCars"
+      },
+      "t": 131.658
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of kasvii/ShapeNetCars.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "kasvii/ShapeNetCars",
+        "source": "kasvii/ShapeNetCars",
+        "kind": "hub"
+      },
+      "t": 131.658
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "kasvii/ShapeNetCars does not fit: the viewer's rows of kasvii/ShapeNetCars failed: datasets-server.huggingface.co took over 40 s",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "kasvii/ShapeNetCars",
+        "source": "kasvii/ShapeNetCars",
+        "kind": "hub",
+        "reason": "the viewer's rows of kasvii/ShapeNetCars failed: datasets-server.huggingface.co took over 40 s"
+      },
+      "t": 196.559
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of kasvii/ShapeNetCars.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "kasvii/ShapeNetCars",
+        "source": "kasvii/ShapeNetCars",
+        "kind": "folder"
+      },
+      "t": 196.559
+    },
+    {
+      "step": "data",
+      "status": "ok",
+      "message": "kasvii/ShapeNetCars fits: input ?, label its 0/1 columns.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "kasvii/ShapeNetCars",
+        "source": "kasvii/ShapeNetCars",
+        "kind": "folder",
+        "mapping": {
+          "config": "3d3dccbd8359646396762337885a42d84c3aade9",
+          "split": "",
+          "input_columns": [],
+          "input_kind": "media",
+          "template": "",
+          "extension": ".ply",
+          "label_column": "",
+          "label_kind": "folder",
+          "label_names": [
+            "dora_sharp_point_ply",
+            "remesh"
+          ],
+          "label_separator": null,
+          "media_type": "Mesh",
+          "origin": "rule",
+          "reason": "rule: 2,092 .obj/.ply files labelled by the name of folder 1 of their path (e.g. dora_sharp_point_ply/meshes/100c3076c74ee1874eb766e5a46fceab.ply), 2 labels",
+          "folder_depth": 0
+        }
+      },
+      "t": 198.064
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Fetching labelled files from kasvii/ShapeNetCars.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "fetch",
+        "hub_id": "kasvii/ShapeNetCars",
+        "source": "kasvii/ShapeNetCars",
+        "kind": "folder",
+        "folder": "<repo>/.sense/fetched/probes/3d-unseen/kasvii__ShapeNetCars"
+      },
+      "t": 198.064
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "Fetching from kasvii/ShapeNetCars failed: the labels' files are of different types, so a file type would give the label away",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "fetch",
+        "hub_id": "kasvii/ShapeNetCars",
+        "source": "kasvii/ShapeNetCars",
+        "kind": "folder",
+        "reason": "the labels' files are of different types, so a file type would give the label away"
+      },
+      "t": 202.52
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "Could not use kasvii/ShapeNetCars: the labels' files are of different types, so a file type would give the label away",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "kasvii/ShapeNetCars",
+        "source": "kasvii/ShapeNetCars",
+        "kind": "folder",
+        "reason": "the labels' files are of different types, so a file type would give the label away"
+      },
+      "t": 202.52
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Trying huggingface/amazon-berkeley-objects.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "huggingface/amazon-berkeley-objects",
+        "source": "huggingface/amazon-berkeley-objects",
+        "kind": "hub",
+        "downloads": 9248,
+        "found_by": "hub",
+        "licence": "cc-by-4.0",
+        "url": "https://huggingface.co/datasets/huggingface/amazon-berkeley-objects"
+      },
+      "t": 202.52
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of huggingface/amazon-berkeley-objects.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "huggingface/amazon-berkeley-objects",
+        "source": "huggingface/amazon-berkeley-objects",
+        "kind": "hub"
+      },
+      "t": 202.52
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "huggingface/amazon-berkeley-objects does not fit: huggingface/amazon-berkeley-objects has no Mesh column for 3d (columns: item_id, item_name_en, brand_en, product_type, color_en, main_image_id, model_3d_id, spin_id, has_main_image, has_spins, has_3dmodel, has_material, has_part_labels)",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "huggingface/amazon-berkeley-objects",
+        "source": "huggingface/amazon-berkeley-objects",
+        "kind": "hub",
+        "reason": "huggingface/amazon-berkeley-objects has no Mesh column for 3d (columns: item_id, item_name_en, brand_en, product_type, color_en, main_image_id, model_3d_id, spin_id, has_main_image, has_spins, has_3dmodel, has_material, has_part_labels)"
+      },
+      "t": 204.574
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of huggingface/amazon-berkeley-objects.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "huggingface/amazon-berkeley-objects",
+        "source": "huggingface/amazon-berkeley-objects",
+        "kind": "folder"
+      },
+      "t": 204.574
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "huggingface/amazon-berkeley-objects does not fit: huggingface/amazon-berkeley-objects holds no .off/.obj/.stl/.ply/.glb/.gltf files",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "huggingface/amazon-berkeley-objects",
+        "source": "huggingface/amazon-berkeley-objects",
+        "kind": "folder",
+        "reason": "huggingface/amazon-berkeley-objects holds no .off/.obj/.stl/.ply/.glb/.gltf files"
+      },
+      "t": 205.028
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "Could not use huggingface/amazon-berkeley-objects: inspect: huggingface/amazon-berkeley-objects has no Mesh column for 3d (columns: item_id, item_name_en, brand_en, product_type, color_en, main_image_id, model_3d_id, spin_id, has_main_image, has_spins, has_3dmodel, has_material, has_part_labels); folder: huggingface/amazon-berkeley-objects holds ...",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "huggingface/amazon-berkeley-objects",
+        "source": "huggingface/amazon-berkeley-objects",
+        "kind": "folder",
+        "reason": "inspect: huggingface/amazon-berkeley-objects has no Mesh column for 3d (columns: item_id, item_name_en, brand_en, product_type, color_en, main_image_id, model_3d_id, spin_id, has_main_image, has_spins, has_3dmodel, has_material, has_part_labels); folder: huggingface/amazon-berkeley-objects holds no .off/.obj/.stl/.ply/.glb/.gltf files"
+      },
+      "t": 205.028
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Trying hugging-3d/google-scanned-objects.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "hugging-3d/google-scanned-objects",
+        "source": "hugging-3d/google-scanned-objects",
+        "kind": "hub",
+        "downloads": 2988,
+        "found_by": "hub",
+        "licence": "cc-by-4.0",
+        "url": "https://huggingface.co/datasets/hugging-3d/google-scanned-objects"
+      },
+      "t": 205.029
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of hugging-3d/google-scanned-objects.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "hugging-3d/google-scanned-objects",
+        "source": "hugging-3d/google-scanned-objects",
+        "kind": "hub"
+      },
+      "t": 205.029
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "hugging-3d/google-scanned-objects does not fit: hugging-3d/google-scanned-objects has no label column named for the goal (a string or list column named like modelnet/object/objects/shape/shapenet with at least 2 values) (columns: obj, mtl, texture.png, glb, thumbnail_0.jpg, thumbnail_1.jpg, thumbnail_2.jpg, thumbnail_3.jpg, thumbnail_4.jpg, js...",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "hugging-3d/google-scanned-objects",
+        "source": "hugging-3d/google-scanned-objects",
+        "kind": "hub",
+        "reason": "hugging-3d/google-scanned-objects has no label column named for the goal (a string or list column named like modelnet/object/objects/shape/shapenet with at least 2 values) (columns: obj, mtl, texture.png, glb, thumbnail_0.jpg, thumbnail_1.jpg, thumbnail_2.jpg, thumbnail_3.jpg, thumbnail_4.jpg, json, __key__, __url__)"
+      },
+      "t": 208.473
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "Could not use hugging-3d/google-scanned-objects: hugging-3d/google-scanned-objects has no label column named for the goal (a string or list column named like modelnet/object/objects/shape/shapenet with at least 2 values) (columns: obj, mtl, texture.png, glb, thumbnail_0.jpg, thumbnail_1.jpg, thumbnail_2.jpg, thumbnail_3.jpg, thumbnail_4.jpg, js...",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "hugging-3d/google-scanned-objects",
+        "source": "hugging-3d/google-scanned-objects",
+        "kind": "hub",
+        "reason": "hugging-3d/google-scanned-objects has no label column named for the goal (a string or list column named like modelnet/object/objects/shape/shapenet with at least 2 values) (columns: obj, mtl, texture.png, glb, thumbnail_0.jpg, thumbnail_1.jpg, thumbnail_2.jpg, thumbnail_3.jpg, thumbnail_4.jpg, json, __key__, __url__)"
+      },
+      "t": 208.473
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Trying markhitvdrz/idol-3d-objects.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "markhitvdrz/idol-3d-objects",
+        "source": "markhitvdrz/idol-3d-objects",
+        "kind": "hub",
+        "downloads": 227,
+        "found_by": "hub",
+        "licence": null,
+        "url": "https://huggingface.co/datasets/markhitvdrz/idol-3d-objects"
+      },
+      "t": 208.473
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of markhitvdrz/idol-3d-objects.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "markhitvdrz/idol-3d-objects",
+        "source": "markhitvdrz/idol-3d-objects",
+        "kind": "hub"
+      },
+      "t": 208.473
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "markhitvdrz/idol-3d-objects does not fit: markhitvdrz/idol-3d-objects has no Mesh column for 3d (columns: image)",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "markhitvdrz/idol-3d-objects",
+        "source": "markhitvdrz/idol-3d-objects",
+        "kind": "hub",
+        "reason": "markhitvdrz/idol-3d-objects has no Mesh column for 3d (columns: image)"
+      },
+      "t": 210.825
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of markhitvdrz/idol-3d-objects.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "markhitvdrz/idol-3d-objects",
+        "source": "markhitvdrz/idol-3d-objects",
+        "kind": "folder"
+      },
+      "t": 210.825
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "markhitvdrz/idol-3d-objects does not fit: none of markhitvdrz/idol-3d-objects's 6 .off/.obj/.stl/.ply/.glb/.gltf files sits in a folder that can name a label (they sit in the top folder or in split or generic folders only)",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "markhitvdrz/idol-3d-objects",
+        "source": "markhitvdrz/idol-3d-objects",
+        "kind": "folder",
+        "reason": "none of markhitvdrz/idol-3d-objects's 6 .off/.obj/.stl/.ply/.glb/.gltf files sits in a folder that can name a label (they sit in the top folder or in split or generic folders only)"
+      },
+      "t": 211.027
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "Could not use markhitvdrz/idol-3d-objects: inspect: markhitvdrz/idol-3d-objects has no Mesh column for 3d (columns: image); folder: none of markhitvdrz/idol-3d-objects's 6 .off/.obj/.stl/.ply/.glb/.gltf files sits in a folder that can name a label (they sit in the top folder or in split or generic folders only)",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "markhitvdrz/idol-3d-objects",
+        "source": "markhitvdrz/idol-3d-objects",
+        "kind": "folder",
+        "reason": "inspect: markhitvdrz/idol-3d-objects has no Mesh column for 3d (columns: image); folder: none of markhitvdrz/idol-3d-objects's 6 .off/.obj/.stl/.ply/.glb/.gltf files sits in a folder that can name a label (they sit in the top folder or in split or generic folders only)"
+      },
+      "t": 211.027
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Trying codepawl/scanned-objects-glb.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "codepawl/scanned-objects-glb",
+        "source": "codepawl/scanned-objects-glb",
+        "kind": "hub",
+        "downloads": 16303,
+        "found_by": "hub",
+        "licence": "cc-by-4.0",
+        "url": "https://huggingface.co/datasets/codepawl/scanned-objects-glb"
+      },
+      "t": 211.027
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of codepawl/scanned-objects-glb.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "codepawl/scanned-objects-glb",
+        "source": "codepawl/scanned-objects-glb",
+        "kind": "hub"
+      },
+      "t": 211.027
+    },
+    {
+      "step": "data",
+      "status": "ok",
+      "message": "codepawl/scanned-objects-glb fits: input mesh, label category.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "codepawl/scanned-objects-glb",
+        "source": "codepawl/scanned-objects-glb",
+        "kind": "hub",
+        "mapping": {
+          "config": "default",
+          "split": "train",
+          "input_columns": [
+            "mesh"
+          ],
+          "input_kind": "media",
+          "template": "",
+          "extension": ".glb",
+          "label_column": "category",
+          "label_kind": "string",
+          "label_names": null,
+          "label_separator": null,
+          "media_type": "Mesh",
+          "origin": "rule",
+          "reason": "rule: input mesh; label category (string)",
+          "folder_depth": null
+        }
+      },
+      "t": 212.983
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Fetching labelled files from codepawl/scanned-objects-glb.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "fetch",
+        "hub_id": "codepawl/scanned-objects-glb",
+        "source": "codepawl/scanned-objects-glb",
+        "kind": "hub",
+        "folder": "<repo>/.sense/fetched/probes/3d-unseen/codepawl__scanned-objects-glb"
+      },
+      "t": 212.983
+    },
+    {
+      "step": "data",
+      "status": "ok",
+      "message": "Fetched 122 files in 8 labels from codepawl/scanned-objects-glb.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "fetch",
+        "hub_id": "codepawl/scanned-objects-glb",
+        "source": "codepawl/scanned-objects-glb",
+        "kind": "hub",
+        "counts": {
+          "toy": 20,
+          "shoe": 20,
+          "household": 20,
+          "kitchen": 20,
+          "electronics": 19,
+          "board_game": 10,
+          "bottles_and_cups": 9,
+          "health_and_beauty": 4
+        },
+        "rows_seen": 200,
+        "skipped": {
+          "page_failed": 1
+        },
+        "bytes": 52905252
+      },
+      "t": 278.916
+    },
+    {
+      "step": "data",
+      "status": "ok",
+      "message": "Using codepawl/scanned-objects-glb: 8 labels (toy, shoe, household, kitchen, electronics, board_game, bottles_and_cups, health_and_beauty).",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "codepawl/scanned-objects-glb",
+        "source": "codepawl/scanned-objects-glb",
+        "kind": "hub",
+        "labels": [
+          "toy",
+          "shoe",
+          "household",
+          "kitchen",
+          "electronics",
+          "board_game",
+          "bottles_and_cups",
+          "health_and_beauty"
+        ],
+        "licence": "cc-by-4.0"
+      },
+      "t": 278.916
+    },
+    {
+      "step": "data",
+      "status": "info",
+      "message": "Also scoring 122 files of 8 other categories (board game, bottles and cups, electronics, health and beauty, household, kitchen, shoe, toy), which the adapter was not built around.",
+      "data": {
+        "unseen": {
+          "name": "3d-unseen-88d3c5d174",
+          "source": "https://huggingface.co/datasets/codepawl/scanned-objects-glb",
+          "labels": [
+            "board game",
+            "bottles and cups",
+            "electronics",
+            "health and beauty",
+            "household",
+            "kitchen",
+            "shoe",
+            "toy"
+          ],
+          "per_label": {
+            "board game": 10,
+            "bottles and cups": 9,
+            "electronics": 19,
+            "health and beauty": 4,
+            "household": 20,
+            "kitchen": 20,
+            "shoe": 20,
+            "toy": 20
+          },
+          "n": 122
+        }
+      },
+      "t": 278.967
+    },
+    {
+      "step": "verify",
+      "status": "start",
+      "message": "Scoring adapter:3d-glb on dataset probe files against swapped-input and no-input controls, the model reading each file as it is, and 122 files of categories it was not built around.",
+      "data": {
+        "bridge": "adapter:3d-glb",
+        "n_test": 160,
+        "native": true,
+        "unseen": "3d-unseen-88d3c5d174"
+      },
+      "t": 279.03
+    },
+    {
+      "step": "verify",
+      "status": "ok",
+      "message": "adapter:3d-glb scored 100.0% on 50 held-out probe files (chance 20.0%); controls: swapped input 18.0%, no input 28.0%, the raw file 58.0%, unseen categories 72.0% (chance 20.0%).",
+      "data": {
+        "card": {
+          "model": "openai-chat",
+          "modality": "3d",
+          "dataset": "3d-dataset-0bcf250073",
+          "scope": "closed",
+          "bridge": "adapter:3d-glb",
+          "kind": "image",
+          "n": 50,
+          "chance": 0.2,
+          "accuracy": 1.0,
+          "controls": {
+            "swapped": 0.18,
+            "no_input": 0.28,
+            "native": 0.58,
+            "unseen_categories": 0.72
+          },
+          "verdict": "candidate",
+          "reason": "Unseen categories: 72.0% on 50 files of 8 categories the adapter was not built around (board game, bottles and cups, electronics, health and beauty, household, kitchen, shoe, toy; source: https://huggingface.co/datasets/codepawl/scanned-objects-glb), against 20.0% chance.",
+          "created": "2026-11-15T05:28:46+00:00",
+          "interval": [
+            0.9286,
+            1.0
+          ],
+          "control_chance": {
+            "unseen_categories": 0.2
+          }
+        },
+        "controls": {
+          "swapped": 0.18,
+          "no_input": 0.28,
+          "native": 0.58,
+          "unseen_categories": 0.72
+        },
+        "control_chance": {
+          "unseen_categories": 0.2
+        },
+        "seconds": 82.01
+      },
+      "t": 361.04
+    },
+    {
+      "step": "decide",
+      "status": "start",
+      "message": "Checking adapter:3d-glb against the bars for an image bridge: chance plus 15 points, 10 points above swapped input, 10 points above the model reading the raw file, 15 points above chance on the unseen categories, at least 10 probe files, and a 95% interval clear of chance.",
+      "data": {
+        "bridge": "adapter:3d-glb"
+      },
+      "t": 361.04
+    },
+    {
+      "step": "decide",
+      "status": "ok",
+      "message": "adapter:3d-glb passed: it scored 100.0% against 20.0% chance, meets the 35.0% bar for an image bridge, 42.0 points above the 58.0% the model scored on the raw file, and 72.0% on categories it was not built around (20.0% chance there).",
+      "data": {
+        "install": "adapter:3d-glb",
+        "accepted": true,
+        "card": {
+          "model": "openai-chat",
+          "modality": "3d",
+          "dataset": "3d-dataset-0bcf250073",
+          "scope": "closed",
+          "bridge": "adapter:3d-glb",
+          "kind": "image",
+          "n": 50,
+          "chance": 0.2,
+          "accuracy": 1.0,
+          "controls": {
+            "swapped": 0.18,
+            "no_input": 0.28,
+            "native": 0.58,
+            "unseen_categories": 0.72
+          },
+          "verdict": "installed",
+          "reason": "adapter:3d-glb passed: it scored 100.0% against 20.0% chance, meets the 35.0% bar for an image bridge, 42.0 points above the 58.0% the model scored on the raw file, and 72.0% on categories it was not built around (20.0% chance there). Unseen categories: 72.0% on 50 files of 8 categories the adapter was not built around (board game, bottles and cups, electronics, health and beauty, household, kitchen, shoe, toy; source: https://huggingface.co/datasets/codepawl/scanned-objects-glb), against 20.0% chance.",
+          "created": "2026-11-15T05:28:46+00:00",
+          "interval": [
+            0.9286,
+            1.0
+          ],
+          "control_chance": {
+            "unseen_categories": 0.2
+          }
+        }
+      },
+      "t": 361.04
+    },
+    {
+      "step": "install",
+      "status": "start",
+      "message": "Installing adapter:3d-glb for OpenAI chat (API).",
+      "data": {
+        "bridge": "adapter:3d-glb",
+        "replaced": null
+      },
+      "t": 361.046
+    },
+    {
+      "step": "install",
+      "status": "ok",
+      "message": "Installed adapter:3d-glb; OpenAI chat (API) can now take 3D model files in chat.",
+      "data": {
+        "bridge": "adapter:3d-glb",
+        "replaced": null,
+        "directory": "<repo>/.sense/openai-chat/3d"
+      },
+      "t": 361.047
+    },
+    {
+      "step": "done",
+      "status": "ok",
+      "message": "OpenAI chat (API) can now take 3D model files through adapter:3d-glb: it scored 100.0% on 50 probe files, against 20.0% chance.",
+      "data": {
+        "installed": "adapter:3d-glb",
+        "needs_user": false,
+        "bridge": "adapter:3d-glb"
+      },
+      "t": 361.047
+    }
+  ],
+  "cards": [
+    {
+      "model": "openai-chat",
+      "modality": "3d",
+      "dataset": "3d-dataset-0bcf250073",
+      "scope": "closed",
+      "bridge": "adapter:3d-glb",
+      "kind": "image",
+      "n": 50,
+      "chance": 0.2,
+      "accuracy": 1.0,
+      "controls": {
+        "swapped": 0.18,
+        "no_input": 0.28,
+        "native": 0.58,
+        "unseen_categories": 0.72
+      },
+      "verdict": "installed",
+      "reason": "adapter:3d-glb passed: it scored 100.0% against 20.0% chance, meets the 35.0% bar for an image bridge, 42.0 points above the 58.0% the model scored on the raw file, and 72.0% on categories it was not built around (20.0% chance there). Unseen categories: 72.0% on 50 files of 8 categories the adapter was not built around (board game, bottles and cups, electronics, health and beauty, household, kitchen, shoe, toy; source: https://huggingface.co/datasets/codepawl/scanned-objects-glb), against 20.0% chance.",
+      "created": "2026-11-15T05:28:46+00:00",
+      "interval": [
+        0.9286,
+        1.0
+      ],
+      "control_chance": {
+        "unseen_categories": 0.2
+      }
+    }
+  ],
+  "installed": "adapter:3d-glb",
+  "error": null,
+  "seconds": 361.047,
+  "format": 1
+}
