@@ -20,6 +20,8 @@ Public surface (do not rename):
 
 decide_need asks agent.llm.ask_json and accepts only a kind of "labelled" or "probe" with at most 20 string labels;
 otherwise a word rule decides (any of "any ", "anything", "describe", "whatever", "open-ended" means probe).
+need.answered_by is "<provider>/<model>" of the language model whose answer was used (the answer's own
+answered_by, else agent.llm.describe()), or None when the word rule decided.
 
 Named categories. need.labels are what the goal names; a real language model may name the kind of category ("music
 genres"), use plurals ("dogs") or spell a class another way ("hiphop"). A requested label is compared with a set's
@@ -143,6 +145,7 @@ class DataNeed:
     scope: str  # "closed" for labelled, "open" for probe
     labels: list[str]  # categories named in the goal, possibly empty
     reason: str
+    answered_by: str | None = None  # "<provider>/<model>" of the language model that decided; None for a rule
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -180,7 +183,12 @@ class FetchReport:
 # ----------------------------------------------------------------------------- what data is needed
 def decide_need(goal: str, detection: Detection) -> DataNeed:
     payload = {"goal": goal, "modality": detection.modality, "format": detection.format}
-    return _need_from(llm.ask_json(_NEED_INSTRUCTION, payload, NEED_SCHEMA)) or _rule_need(goal)
+    answer = llm.ask_json(_NEED_INSTRUCTION, payload, NEED_SCHEMA)
+    need = _need_from(answer)
+    if need is None:
+        return _rule_need(goal)
+    need.answered_by = getattr(answer, "answered_by", None) or llm.describe()
+    return need
 
 
 def _need_from(answer: object) -> DataNeed | None:
