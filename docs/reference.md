@@ -135,7 +135,7 @@ SENSE_FAKE=1 .venv/bin/python -m pytest -q tests/test_adapter_flow.py
 | coordinates, "which country" | Claude Sonnet 5.5 | 8 countries (bamwor/world-cities) | nearest places as text, 100.0% | raw coordinates 98%, unseen 100% (8 other countries) | refused: the model already reads coordinates |
 | same | Qwen3.5-0.8B (local) | same | 24.4% on 160 | swapped 21.9%, raw file 23.8% (chance 20%) | refused: the small model cannot use the adapter's text |
 
-One run per row, so a single number moves between runs (the adapter is rewritten each time and the found data can differ); the intervals are on the cards.
+One run per row, so a single number moves between runs (the adapter is rewritten each time and the found data can differ); the intervals are on the cards. The 3D run on Claude Sonnet 5.5 was repeated once, on a fresh `SENSE_HOME` while recording the demo video (`run_auto_claude-sonnet_3d-repeat.json`): it found the same two datasets and installed again at 100.0% [92.9, 100], with swapped input 8%, no input 18%, raw file 34% and unseen categories 70%.
 
 **Blind test: a format the code never names.** We gave Claude Sonnet 5.5 a MIDI file (written by a script: a waltz-like melody with no title or text events) and the goal "What genre of music is this?". MIDI appears nowhere in the detection code, the profiles or the toolbox. `agent/detect.py` reported unknown bytes, and the agent designed a text adapter. It asked to install `mido`; the installer rated the pinned plan ok, and the operator approved it. The adapter it wrote ran on the first attempt and reported tempo, meter, instruments, ranges and rhythm. Three runs followed (records in `socket_pilot/artifacts`):
 
