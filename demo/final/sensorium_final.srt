@@ -1,0 +1,59 @@
+1
+00:00:00,200 --> 00:00:02,700
+This is Sensorium.
+
+2
+00:00:03,200 --> 00:00:14,700
+Your model reads text and images, but real work runs on 3D scans, video, molecules and GPS tracks. Sensorium gives the model you already use a new sense, with proof first.
+
+3
+00:00:15,200 --> 00:00:22,700
+Here's Claude with a 3D file. It never reaches the model. File not received.
+
+4
+00:00:23,200 --> 00:00:27,700
+So we ask the agent. One file, one sentence.
+
+5
+00:00:28,200 --> 00:00:36,700
+It detects a 3D model, designs an adapter that renders it, and writes the code in a sandbox with no network.
+
+6
+00:00:37,200 --> 00:00:42,700
+This is the code it wrote. It ran first time.
+
+7
+00:00:43,200 --> 00:00:45,700
+Then it goes looking for test data,
+
+8
+00:00:46,200 --> 00:00:59,700
+on the Hugging Face Hub and across the web with Linkup. It finds labelled ModelNet meshes, and a second set of objects it was never built around.
+
+9
+00:01:00,200 --> 00:01:07,700
+Now Claude answers fifty held-out questions through the adapter, and again under controls.
+
+10
+00:01:08,200 --> 00:01:19,700
+One hundred percent. With another file's input: eight. Reading the raw file: thirty-six. Categories it never saw: seventy-two. Every bar cleared, so it installs.
+
+11
+00:01:20,200 --> 00:01:29,700
+Same model, same question. Now it sees a chair, and says which sense carried the file. The model's weights never changed.
+
+12
+00:01:30,200 --> 00:01:37,700
+Under the hood: a frozen model, sandboxed adapters, and fixed rules that decide. Linkup finds the data. Databricks records the runs.
+
+13
+00:01:38,200 --> 00:01:49,700
+We designed it in Figma. Every variable maps to the app's CSS, and every component has an installed and a refused state, with equal weight.
+
+14
+00:01:50,200 --> 00:01:53,700
+It also says no. Claude already reads coordinates.
+
+15
+00:01:54,200 --> 00:01:59,700
+Thirty-three formats, anything else from scratch. 3D: three for three. Sensorium.
