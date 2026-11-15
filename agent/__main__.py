@@ -38,11 +38,13 @@ LOUD = "!" * 78
 def _print_plan(payload: dict) -> None:
     plan = payload.get("plan") if isinstance(payload, dict) else None
     print(f"\nThe agent asks to install packages into the adapter toolbox: {payload.get('summary') or ''}", flush=True)
+    if (plan or {}).get("verdict"):
+        print(f"What the checks found: {plan['verdict']}")
     for package in (plan or {}).get("packages") or []:
         reasons = "; ".join(package.get("reasons") or []) or "no concerns"
         print(f"  {package.get('name')} {package.get('version')}: {package.get('verdict')} ({reasons})")
-    if payload.get("review"):
-        print(f"  Review: {payload['review']}")
+    if payload.get("review"):  # apart from the checks, and labelled so: it never decides
+        print(f"An LLM's opinion, not one of the checks: {payload['review']}")
 
 
 def ask_on_terminal(kind: str, payload: dict) -> bool:
