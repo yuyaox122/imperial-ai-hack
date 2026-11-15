@@ -14,7 +14,10 @@ directory wins over its parents, and the working directory's chain over the repo
   SENSE_QWEN_2B         Hugging Face id or local path (default: Qwen/Qwen3.5-2B)
   SENSE_CLAP            Hugging Face id or local path (default: laion/clap-htsat-unfused)
   SENSE_SAMPLE_DIRS     os.pathsep-separated directories of audio files offered as samples in the interface
-  OPENAI_API_KEY        optional: enables the LLM planner and API base models
+  OPENAI_API_KEY        optional: enables the LLM planner (with the default SENSE_LLM_PROVIDER, openai) and the
+                        openai-chat base model
+  ANTHROPIC_API_KEY     optional: enables the LLM planner when SENSE_LLM_PROVIDER is anthropic, and the
+                        claude-sonnet base model
   SENSE_API_VERIFY_ITEMS  held-out items verification scores for an API (not open-weight) base model (default 50,
                         at least 10); each item costs three paid requests (the bridge, swapped input, no input),
                         or up to seven through a tool bridge (two rounds of tool calls before each answer), so
@@ -97,6 +100,10 @@ def sample_dirs() -> list[Path]:
 
 def openai_key() -> str | None:
     return os.environ.get("OPENAI_API_KEY") or None
+
+
+def anthropic_key() -> str | None:
+    return os.environ.get("ANTHROPIC_API_KEY") or None
 
 
 API_VERIFY_MIN_ITEMS = 10  # fewer can leave the swapped-input control with held-out examples of one label only

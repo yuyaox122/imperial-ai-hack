@@ -64,9 +64,12 @@ Settings can also go in `.env` or `.env.local` (`KEY=VALUE` lines) in the reposi
 | `SENSE_QWEN_0P8B`, `SENSE_QWEN_2B` | Hugging Face id or local directory | `Qwen/Qwen3.5-0.8B`, `Qwen/Qwen3.5-2B` |
 | `SENSE_CLAP` | Hugging Face id or local directory | `laion/clap-htsat-unfused` |
 | `SENSE_SAMPLE_DIRS` | `:`-separated directories of raw audio | none |
-| `OPENAI_API_KEY` | enables the LLM planner, the LLM need step of an autonomous run and the `openai-chat` API base model; never used in fake mode | none |
-| `SENSE_LLM_MODEL` | OpenAI model for the LLM planner and the need step | `gpt-5.4-mini` |
-| `SENSE_API_MODEL` | OpenAI model behind `openai-chat` | `gpt-5.4-mini` |
+| `OPENAI_API_KEY` | enables the `openai-chat` API base model, and the LLM planner and the LLM need step of an autonomous run when `SENSE_LLM_PROVIDER` is `openai`; never used in fake mode | none |
+| `ANTHROPIC_API_KEY` | enables the `claude-sonnet` API base model, and the LLM planner and the need step when `SENSE_LLM_PROVIDER` is `anthropic`; never used in fake mode | none |
+| `SENSE_LLM_PROVIDER` | which API answers the LLM planner and the need step: `openai` or `anthropic`; any other value stops the run with an error | `openai` |
+| `SENSE_LLM_MODEL` | model for the LLM planner and the need step, at that provider | `gpt-6.1-terra` (OpenAI), `claude-sonnet-5-5` (Anthropic) |
+| `SENSE_API_MODEL` | OpenAI model behind `openai-chat` | `gpt-6.1-terra` |
+| `SENSE_CLAUDE_MODEL` | Anthropic model behind `claude-sonnet` | `claude-sonnet-5-5` |
 | `SENSE_API_VERIFY_ITEMS` | held-out questions scored for an API base model; each costs three paid requests (up to seven through the tool bridge) | 50 (at least 10) |
 | `SENSE_API_CACHE` | `0` turns off the cache of an API model's multiple-choice answers under `<SENSE_HOME>/api_cache` | on |
 | `LINKUP_API_KEY` | enables live web search (Linkup) in the research and data steps of an autonomous run; never used in fake mode | none |
@@ -89,12 +92,12 @@ The trace has these steps (`agent/auto.py`):
 
 1. **detect** reads the file's first bytes, never its name (`agent/detect.py`): WAV, FLAC, Ogg and MP3 are audio; PNG and JPEG are images; otherwise text, CSV, FASTA or unknown. Every model here reads text and images natively, so for those the run ends at once: no sense is needed.
 2. **research** asks Linkup's web search which pretrained encoders fit the goal, checks each named model on the Hugging Face Hub, and records each as a claim with its source (`agent/discover.py`, `agent/research.py`). Only a specialist the harness can load is used. Today that is CLAP, for audio; a CSV, FASTA or unknown file ends here, and the run says what it would need.
-3. **data** decides whether the goal needs labelled categories (closed scope) or open description (open scope): the LLM decides when `OPENAI_API_KEY` is set, otherwise a word rule. It then asks Linkup for labelled audio datasets on the Hugging Face Hub, checks each one on the Hub, fetches a capped sample from at most two of them through the Hugging Face dataset viewer (at most 30 files per label, 10 labels, 200 MB and 3 minutes), and builds a labelled set from the sample with `sense.datasets.from_folder` (`agent/data.py`). If that fails, it falls back to the pre-wired set (GTZAN or ESC-50) whose title and labels best match the goal's words. If none matches, the run ends and asks for a folder with at least 10 clips per category. With `--examples` (or the `examples` field of `POST /api/auto`, a folder on the server) the user's folder is used instead, in closed scope.
+3. **data** decides whether the goal needs labelled categories (closed scope) or open description (open scope): the LLM decides when the key for `SENSE_LLM_PROVIDER` is set (`OPENAI_API_KEY`, or `ANTHROPIC_API_KEY` for `anthropic`), otherwise a word rule; the need in the trace names the model that answered (`answered_by`, none for the rule). It then asks Linkup for labelled audio datasets on the Hugging Face Hub, checks each one on the Hub, fetches a capped sample from at most two of them through the Hugging Face dataset viewer (at most 30 files per label, 10 labels, 200 MB and 3 minutes), and builds a labelled set from the sample with `sense.datasets.from_folder` (`agent/data.py`). If that fails, it falls back to the pre-wired set (GTZAN or ESC-50) whose title and labels best match the goal's words. If none matches, the run ends and asks for a folder with at least 10 clips per category. With `--examples` (or the `examples` field of `POST /api/auto`, a folder on the server) the user's folder is used instead, in closed scope.
 4. **inspect, plan, fit, verify** are the same as for a labelled set (below).
 5. **claims** settles each research claim against our own measurement (`agent/claims.py`). A specialist claim is confirmed when the specialist-alone control scores at least 25 points above chance on our held-out clips, refuted when it does not, and "not testable" when that specialist was not the one run. A dataset claim is compared with what the fetched sample actually held.
 6. **decide, install, done** are the same as for a labelled set: `RulePlanner` has the last word.
 
-Without `LINKUP_API_KEY` (or with the network down), research and dataset search use earlier answers cached under `<SENSE_HOME>/research` if there are any; otherwise the trace says research was unavailable, and the run uses CLAP and the pre-wired sets. Without `OPENAI_API_KEY`, the need step uses the word rule. Fake mode never touches the network: research gives canned answers and every fetch fails, so a fake run that needs data, with no examples folder, ends on a pre-wired set or on a request for a folder.
+Without `LINKUP_API_KEY` (or with the network down), research and dataset search use earlier answers cached under `<SENSE_HOME>/research` if there are any; otherwise the trace says research was unavailable, and the run uses CLAP and the pre-wired sets. Without that key, the need step uses the word rule. Fake mode never touches the network: research gives canned answers and every fetch fails, so a fake run that needs data, with no examples folder, ends on a pre-wired set or on a request for a folder.
 
 Status: the autonomous flow is covered by tests that never touch the network: fake-mode runs, Hub and dataset-viewer answers recorded on 14 November, and a Linkup answer built from Linkup's documentation (`tests/fixtures/research/`). No real autonomous run is recorded in `socket_pilot/artifacts`. See [What does not work yet](#what-does-not-work-yet).
 
@@ -104,7 +107,7 @@ Measured on 14 and 15 November 2026 on an M4 Pro with 24 GB, Qwen3.5-0.8B in flo
 
 The acceptance rules are in one place, `RulePlanner` in `agent/planner.py`. A vector bridge passes when it beats chance and swapped input by 25 points each; for open scope it must also score at least 45% on classes left out of fitting and stay within 20 points of its accuracy on fitted classes. A text or tool bridge passes when it beats chance by 15 points and swapped input by 10. The vector bridge is preferred when the two are within 3 points.
 
-With `OPENAI_API_KEY` set, the LLM planner (`agent/planner_llm.py`) proposes which bridges to try and which to install. The loop verifies every bridge the model can take whatever the planner proposes (vector and text for an open-weight model; text, plus tool when the model can call tools, for an API model), and the planner may only install a bridge that passes the rules above; otherwise the rules decide.
+With the key for `SENSE_LLM_PROVIDER` set (`OPENAI_API_KEY`, or `ANTHROPIC_API_KEY` for `anthropic`), the LLM planner (`agent/planner_llm.py`) proposes which bridges to try and which to install; the plan and decide events name the model that answered (`answered_by`, none when the rules decided). The loop verifies every bridge the model can take whatever the planner proposes (vector and text for an open-weight model; text, plus tool when the model can call tools, for an API model), and the planner may only install a bridge that passes the rules above; otherwise the rules decide.
 
 | Run | Candidate | Accuracy | Swapped input | No input | Nearest-example lookup | Specialist alone | Text bridge | Unseen classes | Verdict |
 |---|---|---|---|---|---|---|---|---|---|
@@ -192,7 +195,7 @@ Auth comes from `~/.databrickscfg` or `DATABRICKS_HOST` and `DATABRICKS_TOKEN` (
 - **The image bridge is not built.** No bridge renders audio as an image such as a spectrogram. API models are verified on 50 held-out questions, not 200, so their intervals are wider (about 12 points either way).
 - **Qwen3.5-2B is listed but untested in this harness.** It loads through the same code as the 0.8B; only the research scripts have run it.
 - **Chat history is text only.** Up to 8 earlier turns (4,000 characters each) go with each message, but their files do not, so a follow-up about a file needs the file attached again.
-- **Images in chat reach API models only.** Chat shows a PNG or JPEG as it is to an API model (`openai-chat`), reported with kind "native"; `QwenModel.chat` takes text and vector inputs only, so a local model is told why the image was not shown.
+- **Images in chat reach API models only.** Chat shows a PNG or JPEG as it is to an API model (`openai-chat`, `claude-sonnet`), reported with kind "native"; `QwenModel.chat` takes text and vector inputs only, so a local model is told why the image was not shown.
 - **A live run does not survive a restart.** One run at a time. Finished runs are recorded under `<SENSE_HOME>/runs` and can be replayed (**Runs** in the interface, `GET /api/runs`, `POST /api/replay`), and `DELETE /api/jobs/<id>` cancels a live run or a replay, but the state of a run still going is held in memory and lost on restart. A run started in another browser tab shows up only as the 409 message.
 - **Replaying a record from `socket_pilot/artifacts` does not bring its sense back.** A record carries its sense only when it was recorded or imported while that very sense was installed on the same machine, so the committed records replay the trace and cards only.
 - **No `.m4a`.** `soundfile` cannot read AAC, so Voice Memos and QuickTime recordings are reported as not shown to the model; convert them to WAV first. Chat takes `.wav .mp3 .flac .ogg .opus .aif .aiff .au`.
@@ -205,15 +208,17 @@ Auth comes from `~/.databrickscfg` or `DATABRICKS_HOST` and `DATABRICKS_TOKEN` (
 
 - Base models (frozen): [Qwen/Qwen3.5-0.8B](https://huggingface.co/Qwen/Qwen3.5-0.8B), [Qwen/Qwen3.5-2B](https://huggingface.co/Qwen/Qwen3.5-2B)
 - Audio and text encoder (frozen): [laion/clap-htsat-unfused](https://huggingface.co/laion/clap-htsat-unfused)
-- Optional, through the OpenAI API: `gpt-5.4-mini` as the LLM planner, the need step of an autonomous run, and the `openai-chat` base model
+- Optional, through the OpenAI API: `gpt-6.1-terra` as the LLM planner, the need step of an autonomous run, and the `openai-chat` base model
+- Optional, through the Anthropic API: Claude Sonnet 5.5 (`claude-sonnet-5-5`) as the `claude-sonnet` base model, and as the LLM planner and the need step when `SENSE_LLM_PROVIDER` is `anthropic`
 - [GTZAN](https://huggingface.co/datasets/marsyas/gtzan): 999 music clips, 10 genres; split 60/20/20 per genre for fitting, dev and test
 - [ESC-50](https://github.com/karolpiczak/ESC-50): 2,000 environmental sound clips, 50 classes; folds 1 to 3 fit, fold 4 dev, fold 5 test
 - [AudioCaps](https://github.com/cdjkim/audiocaps): caption text only (12,000 captions from `train.csv`), for the caption text bridge
 - At run time, an autonomous run may fetch a capped sample of a labelled audio dataset that research finds on the Hugging Face Hub; the trace and the claims ledger name its id, source page and licence
-- Libraries: PyTorch, torchvision, Transformers, NumPy, SciPy, soundfile, Pillow, FastAPI, Uvicorn, python-multipart, the OpenAI Python SDK; optional: Databricks SDK, MLflow; tests: pytest, httpx, Playwright
+- Libraries: PyTorch, torchvision, Transformers, NumPy, SciPy, soundfile, Pillow, FastAPI, Uvicorn, python-multipart, the OpenAI Python SDK, the Anthropic Python SDK; optional: Databricks SDK, MLflow; tests: pytest, httpx, Playwright
 - Services and APIs:
   - [Databricks](https://www.databricks.com) Free Edition (Unity Catalog, SQL warehouse, Volumes, MLflow) for the run records
   - the [OpenAI API](https://platform.openai.com/docs/api-reference/chat) (Chat Completions), for the LLM planner, the need step and `openai-chat`
+  - the [Anthropic API](https://platform.claude.com/docs) (Messages, with structured outputs and the server-side refusal fallback beta), for `claude-sonnet` and, when `SENSE_LLM_PROVIDER` is `anthropic`, the LLM planner and the need step
   - the [Linkup](https://www.linkup.so) search API (`POST https://api.linkup.so/v1/search`, structured output), for the research and data steps
   - the Hugging Face Hub API (`https://huggingface.co/api`: model and dataset records) and the Hugging Face dataset viewer (`https://datasets-server.huggingface.co`: splits and rows of a dataset), for the research and data steps; all of this network access goes through `agent/research.py`
 
@@ -221,8 +226,8 @@ Auth comes from `~/.databrickscfg` or `DATABRICKS_HOST` and `DATABRICKS_TOKEN` (
 
 | Path | Contents |
 |---|---|
-| `sense/` | contracts, settings, base models (local Qwen3.5, an API model), the CLAP specialist, datasets (built-in and `from_folder`), bridges, verification, the installed-sense registry, recorded runs |
-| `agent/` | rule planner and acceptance rules, LLM planner, the fit-verify-install loop (`loop.py`), background jobs, and the autonomous flow: `auto.py` (`python -m agent`), `detect.py`, `research.py`, `discover.py`, `data.py`, `claims.py`, `llm.py` |
+| `sense/` | contracts, settings, base models (local Qwen3.5, two API models), the CLAP specialist, datasets (built-in and `from_folder`), bridges, verification, the installed-sense registry, recorded runs |
+| `agent/` | rule planner and acceptance rules, LLM planner, the fit-verify-install loop (`loop.py`), background jobs, and the autonomous flow: `auto.py` (`python -m agent`), `detect.py`, `research.py`, `discover.py`, `data.py`, `claims.py`, `llm.py`, `llm_anthropic.py` |
 | `server/app.py` | HTTP API and the static interface; its module docstring is the HTTP contract |
 | `server/replay.py` | plays a recorded run back as a job |
 | `web/` | the interface (no build step) |

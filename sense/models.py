@@ -23,7 +23,8 @@ Fake mode (SENSE_FAKE=1) lists two deterministic models for tests and interface 
                                  bridges.build refuses to build a vector bridge for it, as for a real API model)
 
 Prompt shape: one line per input ("Audio clip: <4 slot tokens>" or "Audio clip: <text>"), then the message or
-the question. API models may be added in sense/models_api.py, which is imported here if it exists.
+the question. API models live in sense/models_api.py (openai-chat) and sense/models_anthropic.py
+(claude-sonnet), each imported here if it exists; one that cannot be imported is skipped with a warning.
 
 Chat history and streaming (contracts.BaseModel). chat() takes `history`, the earlier turns oldest first, text
 only. Every model here also has chat_stream(), which yields the reply in pieces that join to chat()'s reply.
@@ -42,6 +43,7 @@ from __future__ import annotations
 
 import gc
 import hashlib
+import importlib
 import re
 import sys
 import threading
@@ -615,11 +617,13 @@ class FakeModel:
             yield " ".join(words[k : k + 3]) + (" " if k + 3 < len(words) else "")
 
 
-# API models, if a developer has added them. Imported last so that it can call register_model.
-try:
-    import sense.models_api  # noqa: F401,E402
-except ModuleNotFoundError as err:
-    if err.name != "sense.models_api":
-        warnings.warn(f"sense.models_api was not loaded: {err}", stacklevel=1)
-except ImportError as err:
-    warnings.warn(f"sense.models_api was not loaded: {err}", stacklevel=1)
+# API models, if a developer has added them. Imported last so that they can call register_model: openai-chat, then
+# claude-sonnet (sense.models_anthropic, which needs the anthropic package).
+for _module in ("sense.models_api", "sense.models_anthropic"):
+    try:
+        importlib.import_module(_module)
+    except ModuleNotFoundError as err:
+        if err.name != _module:
+            warnings.warn(f"{_module} was not loaded: {err}", stacklevel=1)
+    except ImportError as err:
+        warnings.warn(f"{_module} was not loaded: {err}", stacklevel=1)

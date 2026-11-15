@@ -201,13 +201,13 @@ def test_cache_file_is_keyed_on_the_request_as_sent(api, tmp_path):
     api.client.chat.completions.create.return_value = completion("B")
     api.module.OpenAIChatModel().choose([ChoiceItem("Which sound?", ["cat", "dog"])])
     messages = api.client.chat.completions.create.call_args.kwargs["messages"]
-    request = {"model": "gpt-5.4-mini", "instruction": messages[0]["content"], "content": messages[1]["content"],
+    request = {"model": "gpt-6.1-terra", "instruction": messages[0]["content"], "content": messages[1]["content"],
                "limit": 16}
     key = hashlib.sha256(json.dumps(request, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
-    path = tmp_path / "home" / "api_cache" / "gpt-5.4-mini" / key[:2] / f"{key}.json"
+    path = tmp_path / "home" / "api_cache" / "gpt-6.1-terra" / key[:2] / f"{key}.json"
     assert cache_files(tmp_path) == [path]  # no temporary file is left behind
     record = json.loads(path.read_text())
-    assert record["answer"] == "B" and record["model"] == "gpt-5.4-mini" and record["created"]
+    assert record["answer"] == "B" and record["model"] == "gpt-6.1-terra" and record["created"]
 
 
 def test_a_different_prompt_input_image_or_model_misses_the_cache(api, monkeypatch, tmp_path):
@@ -302,7 +302,7 @@ def test_a_cached_answer_that_is_not_an_option_is_asked_again_and_replaced(api, 
     api.client.chat.completions.create.return_value = completion("B")
     api.module.OpenAIChatModel().choose([item])
     [path] = cache_files(tmp_path)
-    path.write_text(json.dumps({"answer": stored, "model": "gpt-5.4-mini", "created": "2026-01-01T00:00:00+00:00"}))
+    path.write_text(json.dumps({"answer": stored, "model": "gpt-6.1-terra", "created": "2026-01-01T00:00:00+00:00"}))
     model = api.module.OpenAIChatModel()
     assert model.choose([item]) == [1]
     assert api.client.chat.completions.create.call_count == 2
@@ -628,10 +628,10 @@ def test_the_cache_key_includes_each_tool_key(api, tmp_path):
     assert create.call_count == 4 and len(cache_files(tmp_path)) == 2
 
     messages = create.call_args_list[0].kwargs["messages"]
-    request = {"model": "gpt-5.4-mini", "instruction": messages[0]["content"], "content": messages[1]["content"],
+    request = {"model": "gpt-6.1-terra", "instruction": messages[0]["content"], "content": messages[1]["content"],
                "limit": 16, "tools": ["clip-a"]}
     key = hashlib.sha256(json.dumps(request, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
-    assert (tmp_path / "home" / "api_cache" / "gpt-5.4-mini" / key[:2] / f"{key}.json") in cache_files(tmp_path)
+    assert (tmp_path / "home" / "api_cache" / "gpt-6.1-terra" / key[:2] / f"{key}.json") in cache_files(tmp_path)
 
     again = item("clip-a")
     second = api.module.OpenAIChatModel()
@@ -729,7 +729,7 @@ def test_chat_stream_yields_the_deltas_in_order_and_counts_usage(api):
     kwargs = create.call_args.kwargs
     assert kwargs["stream"] is True and kwargs["stream_options"] == {"include_usage": True}
     assert kwargs["max_completion_tokens"] == 32
-    assert kwargs["temperature"] == 0 and kwargs["reasoning_effort"] == "none" and kwargs["model"] == "gpt-5.4-mini"
+    assert kwargs["temperature"] == 0 and kwargs["reasoning_effort"] == "none" and kwargs["model"] == "gpt-6.1-terra"
     assert kwargs["messages"][1:] == [*HISTORY, {"role": "user", "content": "And now?"}]
     assert "tools" not in kwargs and "listen" not in kwargs["messages"][0]["content"]
     assert model.usage() == {"calls": 1, "cache_hits": 0, "prompt_tokens": 40, "completion_tokens": 6}
