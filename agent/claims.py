@@ -12,6 +12,8 @@ Public surface (do not rename):
 
 A claim starts "unverified". settle_specialist_claims settles each specialist claim that is still unverified
 (a claim already refuted, such as an id the Hub does not have, keeps its status and evidence):
+  - `used` is None: the set's embeddings record no Hub specialist identity, so no claim can be tied to our
+    measurement -> "not_testable", and the evidence says so (not that the model was never loaded);
   - its subject is not the specialist `used` in this run -> "not_testable";
   - no card has a "specialist_alone" control -> "not_testable";
   - else, with s that control, and the chance and n of the same card: s >= chance + MARGIN -> "confirmed",
@@ -28,6 +30,8 @@ from dataclasses import asdict, dataclass, field
 from sense.contracts import ReportCard
 
 MARGIN = 0.25
+_NO_PROVENANCE = ("our set's embeddings do not record which Hub specialist made them, so this claim was not tested "
+                  "on our data")
 _HUB_ID = re.compile(r"^[\w.-]+/[\w.-]+$")
 
 
@@ -78,7 +82,9 @@ def settle_specialist_claims(claims: list[Claim], used: str | None, cards: list[
         if claim.kind != "specialist" or claim.status != "unverified":
             continue
         synthetic_match = used == "fake-clap" and claim.subject == synthetic_subject
-        if claim.subject != used and not synthetic_match:
+        if used is None:
+            claim.status, claim.evidence = "not_testable", _NO_PROVENANCE
+        elif claim.subject != used and not synthetic_match:
             claim.status, claim.evidence = "not_testable", "not loaded in this harness, so not run on our data"
         elif card is None:
             claim.status, claim.evidence = "not_testable", "the specialist-alone control was not run"
