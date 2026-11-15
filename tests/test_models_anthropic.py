@@ -234,19 +234,20 @@ def test_choose_returns_option_indices_and_repeats_from_the_cache(claude, tmp_pa
     assert json.loads(files[0].read_text())["model"] == "claude-sonnet-5-5"
 
 
-@pytest.mark.parametrize("answer", ["", "C", "a", "AB", "A.", "A because a dog barks"])
-def test_anything_but_one_option_letter_fails(claude, answer, tmp_path):
+@pytest.mark.parametrize("answer", ["", "C", "a", "AB", "A because a dog barks", "I can't see the 3D model"])
+def test_anything_but_one_option_letter_is_an_uncached_abstention(claude, answer, tmp_path):
     claude.create.return_value = reply(answer)
-    with pytest.raises(ValueError):
-        claude.module.AnthropicChatModel().choose([ChoiceItem("Question", ["cat", "dog"])])
+    model = claude.module.AnthropicChatModel()
+    assert model.choose([ChoiceItem("Question", ["cat", "dog"])]) == [-1] and model.abstained == 1
     assert cache_files(tmp_path) == []
 
 
-@pytest.mark.parametrize("response", [reply("A", stop="max_tokens"), reply([], stop="refusal"), reply("A", stop="refusal")])
-def test_a_cut_off_or_refused_choice_fails_and_is_not_cached(claude, response, tmp_path):
+@pytest.mark.parametrize("response", [reply("A", stop="max_tokens"), reply([], stop="refusal"), reply("A", stop="refusal"),
+                                      reply("I can't see the 3D model, and no image or audio", stop="max_tokens")])
+def test_a_cut_off_or_refused_choice_is_an_uncached_abstention(claude, response, tmp_path):
     claude.create.return_value = response
-    with pytest.raises(ValueError):
-        claude.module.AnthropicChatModel().choose([ChoiceItem("Question", ["cat", "dog"])])
+    model = claude.module.AnthropicChatModel()
+    assert model.choose([ChoiceItem("Question", ["cat", "dog"])]) == [-1] and model.abstained == 1
     assert cache_files(tmp_path) == []
 
 

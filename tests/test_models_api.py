@@ -153,20 +153,28 @@ def test_invalid_options_fail_before_network(api, options):
     api.client.chat.completions.create.assert_not_called()
 
 
-@pytest.mark.parametrize("answer", ["", "Z", "a", "1", "AB", "A.", "A because a dog barks"])
-def test_malformed_letter_fails_verification(api, answer):
+@pytest.mark.parametrize("answer", ["", "Z", "a", "1", "AB", "A because a dog barks", "A dog", "I can't hear it"])
+def test_anything_but_an_option_letter_is_an_abstention_counted_wrong(api, answer):
     api.client.chat.completions.create.return_value = completion(answer)
-    with pytest.raises(ValueError):
-        api.module.OpenAIChatModel().choose([ChoiceItem("Question", ["cat", "dog"])])
+    model = api.module.OpenAIChatModel()
+    assert model.choose([ChoiceItem("Question", ["cat", "dog"])]) == [api.module.ABSTAIN] == [-1]
+    assert model.abstained == 1
+
+
+@pytest.mark.parametrize("answer,index", [("A.", 0), ("B) dog", 1), ("B\nbecause it barks", 1), (" A ", 0)])
+def test_a_letter_followed_by_punctuation_counts_as_that_letter(api, answer, index):
+    api.client.chat.completions.create.return_value = completion(answer)
+    model = api.module.OpenAIChatModel()
+    assert model.choose([ChoiceItem("Question", ["cat", "dog"])]) == [index] and model.abstained == 0
 
 
 @pytest.mark.parametrize("response", [
     completion(None), completion("A", finish="length"), completion("A", refusal="No"),
 ])
-def test_missing_truncated_or_refused_answers_fail(api, response):
+def test_missing_truncated_or_refused_answers_are_abstentions(api, response):
     api.client.chat.completions.create.return_value = response
-    with pytest.raises(ValueError):
-        api.module.OpenAIChatModel().choose([ChoiceItem("Question", ["cat", "dog"])])
+    model = api.module.OpenAIChatModel()
+    assert model.choose([ChoiceItem("Question", ["cat", "dog"])]) == [-1] and model.abstained == 1
 
 
 def test_api_failure_propagates_instead_of_inventing_score(api):
@@ -277,8 +285,7 @@ def test_cache_is_on_by_default(monkeypatch, value):
 def test_an_invalid_answer_is_not_cached(api, tmp_path, response):
     item = ChoiceItem("Which sound?", ["cat", "dog"])
     api.client.chat.completions.create.return_value = response
-    with pytest.raises(ValueError):
-        api.module.OpenAIChatModel().choose([item])
+    assert api.module.OpenAIChatModel().choose([item]) == [-1]
     assert cache_files(tmp_path) == []
     api.client.chat.completions.create.return_value = completion("B")
     assert api.module.OpenAIChatModel().choose([item]) == [1]
@@ -597,10 +604,11 @@ def test_after_two_rounds_of_tool_calls_the_model_must_answer(api):
     assert model.usage() == {"calls": 3, "cache_hits": 0, "prompt_tokens": 40, "completion_tokens": 17}
 
 
-def test_a_model_that_still_calls_tools_when_it_must_answer_fails(api):
+def test_a_model_that_still_calls_tools_when_it_must_answer_abstains(api):
     api.client.chat.completions.create.side_effect = lambda **kwargs: calling(tool_call({"clip": 1}))
-    with pytest.raises(ValueError, match="no complete answer"):
-        api.module.OpenAIChatModel().choose([ChoiceItem("Which sound?", ["cat", "dog"], [tool_input()])])
+    model = api.module.OpenAIChatModel()
+    assert model.choose([ChoiceItem("Which sound?", ["cat", "dog"], [tool_input()])]) == [-1]
+    assert model.abstained == 1
     assert api.client.chat.completions.create.call_count == 3
 
 

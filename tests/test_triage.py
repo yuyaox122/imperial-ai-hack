@@ -212,3 +212,15 @@ def test_a_record_from_before_the_variants_reads_as_ranger(installed):
     record["question"] = triage.RANGER  # what the first 0.8B record (PR #56) holds
     assert {b["question"] for b in sink.triage_rows(record)[0]} == {"ranger"}
     assert "question 'ranger'" in triage.table(record)
+
+
+def test_an_abstention_flags_nothing_rather_than_the_last_option():
+    """An API model that does not answer with a letter abstains (choose gives -1); opts[-1] would be the last
+    option, which the neutral question's shuffle can make a target."""
+    class Abstains:
+        def choose(self, items):
+            return [-1] * len(items)
+
+    for question in ("ranger", "neutral"):
+        answers, _ = triage._ask(Abstains(), question, [None, None, None], seed=0)
+        assert answers == [triage.NONE] * 3

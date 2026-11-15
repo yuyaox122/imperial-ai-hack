@@ -12,7 +12,11 @@ Public surface (do not rename):
                                     the reply in pieces, as it arrives (see "History and streaming" below)
 
 Choice answers are single letters at temperature zero, returned as option indices
-in input order. A malformed answer fails verification rather than inventing a score. Every request sends
+in input order. A reply that is not one option letter (an explanation, a refusal, a reply cut off at the token
+limit; a leading letter followed by punctuation, such as "B.", counts as that letter) is an abstention: choose
+returns ABSTAIN (-1) for that item, which never matches an answer, so it counts as wrong rather than inventing a
+score, and the model's `abstained` counts them. Abstentions are not cached. A model asked with no input (the
+no-input control) often abstains, which is the honest outcome. Every request sends
 temperature 0 together with reasoning_effort "none": gpt-6.1-terra takes temperature 0 only with reasoning_effort
 "none" (temperature 0 alone is a 400).
 
@@ -116,6 +120,7 @@ class APIChatModel:
         self._usage_lock = threading.Lock()
         self._usage = {"calls": 0, "cache_hits": 0, "prompt_tokens": 0, "completion_tokens": 0}
         self._cache_warned = False
+        self.abstained = 0  # choice items answered with something other than one option letter (choose gave -1)
 
     def usage(self) -> dict[str, int]:
         """Requests sent to the API, answers served from the cache, and tokens the API reported, so far."""
@@ -159,9 +164,16 @@ class APIChatModel:
             cached = self._cache_read(cached_at, valid)
             if cached is not None:
                 return string.ascii_uppercase.index(cached)
-        answer = self._complete(instruction, message, item.inputs, limit)
-        if len(answer) != 1 or answer not in valid:
-            raise ValueError("The API model must return one valid option letter")
+        try:
+            answer = _letter(self._complete(instruction, message, item.inputs, limit), valid)
+        except ValueError:  # cut off while explaining, refused, or no text at all
+            answer = None
+        if answer is None:
+            # Not one option letter (for example "I can't see the 3D model..." when the question comes with no
+            # input): an abstention. -1 never matches an answer, so it counts as wrong; it is not cached.
+            with self._usage_lock:
+                self.abstained += 1
+            return ABSTAIN
         if cached_at is not None:
             self._cache_write(cached_at, answer)
         return string.ascii_uppercase.index(answer)
@@ -353,6 +365,21 @@ def _prompt(message: str, inputs: list[SenseInput]) -> str:
                 f"Audio clip {clip}: you cannot hear it directly; call the {TOOL} tool with clip={clip} to hear it."
             )
     return "\n\n".join([message, *lines])
+
+
+ABSTAIN = -1  # what choose returns for an item the model did not answer with one option letter
+
+
+def _letter(answer: str, valid: str) -> str | None:
+    """The option letter in a reply: the reply itself when it is one valid letter, or its first character when that
+    is a valid letter followed by punctuation or a line break ("B.", "B) chair", "C\\n..."); None for anything else,
+    including a reply that starts with a word ("I can't see...", "A model of...", "A because...")."""
+    answer = answer.strip()
+    if len(answer) == 1:
+        return answer if answer in valid else None
+    if answer[:1] in valid and answer[1:2] in (".", ")", ":", ",", ";", "\n"):
+        return answer[0]
+    return None
 
 
 def _image_type(image: bytes) -> str:

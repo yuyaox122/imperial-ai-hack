@@ -161,7 +161,9 @@ def _ask(model, question: str, inputs: list, seed: int) -> tuple[list[str], list
         text = RANGER if question == "ranger" else NEUTRAL
         options = [_options(seed, k, shuffle_none=question == "neutral") for k in range(n)]
         picks = model.choose([ChoiceItem(text, opts, g) for opts, g in zip(options, given)])
-        return [opts[p] for opts, p in zip(options, picks)], None
+        # An API model that does not answer with one option letter abstains (choose gives -1): nothing is flagged,
+        # never opts[-1], which would be whichever option happens to be last.
+        return [opts[p] if p >= 0 else NONE for opts, p in zip(options, picks)], None
     if question == "yesno":
         items, yes_at = [], []
         for k in range(n):
