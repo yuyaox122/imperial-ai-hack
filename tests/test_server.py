@@ -134,11 +134,11 @@ def test_chat_with_sample_and_unsupported_file(env):
     client, _, _ = env
     sid = client.get("/api/samples", params={"dataset": "gtzan"}).json()[0]["id"]
     r = client.post("/api/chat", data={"model": "m1", "message": "go", "sample_ids": [sid]},
-                    files=[("files", ("notes.txt", b"x", "text/plain"))])
+                    files=[("files", ("data.bin", b"\x00\x01binary", "application/octet-stream"))])
     body = r.json()
     assert body["reply"] == "go|1"
     assert [u["kind"] for u in body["used"]] == ["none", "vector"]
-    assert "notes.txt" in body["used"][0]["detail"]
+    assert "data.bin" in body["used"][0]["detail"]
 
 
 def test_chat_without_installed_sense(env):
@@ -180,7 +180,7 @@ def test_unreadable_file_is_reported_and_the_rest_still_reach_the_model(env):
 def test_only_formats_soundfile_reads_count_as_audio(env):
     client, _, _ = env
     r = client.post("/api/chat", data={"model": "m1", "message": "hi"}, files=[
-        ("files", ("memo.m4a", b"abc", "audio/mp4")),
+        ("files", ("memo.m4a", b"\x00\x00\x00\x20ftypM4A \x00\x00\x00\x00", "audio/mp4")),  # AAC: soundfile cannot read it
         ("files", ("clip.aiff", b"abc", "audio/aiff")),
     ])
     m4a, aiff = r.json()["used"]

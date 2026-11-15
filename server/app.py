@@ -40,10 +40,14 @@ All JSON. Errors: {"detail": "<what went wrong and what to do>"} with a 4xx or 5
                                                     claims, decide, install, done, and a native file or one that
                                                     needs the user ends earlier. job.request.dataset is "" until the
                                                     data step picks a set. The upload is kept under
-                                                    <SENSE_HOME>/uploads, because the run reads it after this
-                                                    returns. 400 for an unknown model, an empty goal, no file or a
-                                                    missing examples folder; 409 while an agent run or a replay is
-                                                    in progress. A finished run is recorded for replay as with fit
+                                                    <SENSE_HOME>/uploads/<12 hex>/<its name, made safe and cut to 120
+                                                    bytes>, because the run reads it after this returns, and removed
+                                                    once the run has ended (a folder left by a server that stopped
+                                                    mid-run is removed a day later). 400 for an unknown model, an
+                                                    empty goal, no file or a missing examples folder; 413 for a file
+                                                    over MAX_UPLOAD_BYTES (200 MB); 409 while an agent run or a
+                                                    replay is in progress. A finished run is recorded for replay as
+                                                    with fit
   GET  /api/jobs/<job_id>
        -> JobState dict                             id, request, status, events[], cards[], installed, error
                                                     a replayed job (id "replay-...") also has
@@ -77,8 +81,15 @@ All JSON. Errors: {"detail": "<what went wrong and what to do>"} with a 4xx or 5
   POST /api/chat                                    multipart form: model, message, files (0..n uploads), sample_ids (0..n)
                                                     and, optionally, history
        -> {"reply": str, "used": [{"bridge", "kind", "source", "detail"}]}
-          `used` lists how each file reached the model; a file whose modality has no installed sense, or that
-          cannot be read, is reported with kind "none" and is not shown to the model. For kind "tool" (the model
+          `used` lists how each file reached the model, uploads first, then samples. A file's modality is decided
+          from its bytes, as POST /api/auto decides it (agent.detect: magic bytes, then text), and a listed audio
+          extension (sense.specialists.AUDIO_EXTENSIONS) also means audio. Kind "native" (bridge ""): the model
+          takes the file as it is: a text file's text, at most TEXT_FILE_CHARS (8000) characters, is sent after the
+          message; an image (PNG or JPEG, at most 20 MB) is shown to a model that takes images (an API model whose
+          ModelInfo.native lists "image"; the local models take no images yet). Otherwise the installed sense for
+          the file's modality carries it, and `kind` is its bridge kind. A file the model cannot take, whose
+          modality has no installed sense, that cannot be read or that is empty, is reported with kind "none" and
+          is not shown to the model; the detail says why. For kind "tool" (the model
           could call the listen tool, which asks CLAP about the file) the detail says whether the model called it
           and what the last call returned: "the model called listen 1 time: Similarity ... Best match: rock." or
           "the model could call listen but did not".
@@ -86,7 +97,8 @@ All JSON. Errors: {"detail": "<what went wrong and what to do>"} with a 4xx or 5
           text only (the files of earlier turns are not sent again). Only the last MAX_HISTORY_TURNS (8) are kept,
           each cut to HISTORY_CHARS (4000) characters. Missing, empty or [] starts a new conversation; anything
           else that is not such a list is a 400 that says what form it takes.
-          400 for an empty message; 409 while an agent run holds a different local model.
+          400 for an empty message; 413 for a file over MAX_UPLOAD_BYTES (200 MB); 409 while an agent run holds a
+          different local model.
   POST /api/chat/stream                             the same form as POST /api/chat
        -> text/event-stream: Server-Sent Events ("event: <name>\\ndata: <JSON>\\n\\n"), in this order
             used    the `used` list, as POST /api/chat gives it but sent before the reply, so a tool input's
@@ -98,8 +110,9 @@ All JSON. Errors: {"detail": "<what went wrong and what to do>"} with a 4xx or 5
             error   {"detail": "The model failed to answer: ..."}, and the stream ends
           The reply streams when the model has chat_stream (contracts.BaseModel); otherwise chat()'s reply comes
           as one token event. Everything found wrong before the stream begins is an ordinary JSON error, as for
-          POST /api/chat: 400 for an empty message, a bad history or an unknown model or sample, 409 while an
-          agent run holds a different local model, 500 if the model or the installed sense cannot be loaded.
+          POST /api/chat: 400 for an empty message, a bad history or an unknown model or sample, 413 for a file
+          over 200 MB, 409 while an agent run holds a different local model, 500 if the model or the installed
+          sense cannot be loaded.
           One model call runs at a time, here as in POST /api/chat: the stream holds the chat lock until the reply
           ends. Uploads are deleted when the stream ends, also when the client goes away first.
   GET  /                                            web/index.html; other files under web/ are served at /static/
@@ -114,6 +127,7 @@ import hashlib
 import json
 import logging
 import os
+import shutil
 import tempfile
 import threading
 import time
@@ -130,9 +144,10 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel as RequestBody
 
 from agent import jobs
+from agent.detect import detect
 from sense import datasets, models, registry
 from sense.config import REPO
-from sense.contracts import FitRequest, SenseInput
+from sense.contracts import FitRequest, ModelInfo, SenseInput
 from sense import config, runs
 from sense.specialists import AUDIO_EXTENSIONS  # what soundfile reads; not .m4a
 from server import replay
@@ -146,6 +161,12 @@ HISTORY_FORM = (
     'a JSON list of the earlier turns, oldest first, such as [{"role": "user", "content": "What is this?"}, '
     '{"role": "assistant", "content": "A dog barking."}]'
 )
+MAX_UPLOAD_BYTES = 200 * 2**20  # the most one uploaded file may hold; a larger one is a 413
+UPLOAD_CHUNK = 2**20  # uploads are copied to disk this many bytes at a time, never read into memory whole
+NAME_BYTES = 120  # a kept upload's file name is cut to this many bytes, its extension kept (file systems allow 255)
+UPLOAD_KEEP_SECONDS = 24 * 3600  # an upload folder this old was left by a server that stopped while a run read it
+TEXT_FILE_CHARS = 8000  # a text file given to the model as it is: at most this many characters of it
+IMAGE_BYTES = 20 * 2**20  # the most an image shown to the model as it is may hold (what the OpenAI API takes)
 
 app = FastAPI(title="Sense harness")
 _sample_paths: dict[str, Path] = {}  # opaque id -> path, filled only from datasets.sample_files
@@ -212,8 +233,95 @@ def _sample_id(path: str) -> str:
     return hashlib.sha1(str(path).encode()).hexdigest()[:12]
 
 
-def _modality_of(name: str) -> str | None:
-    return "audio" if Path(name).suffix.lower() in AUDIO_EXTENSIONS else None
+def _modality_of(name: str, path: Path) -> str | None:
+    """The modality of an attached file, decided from its bytes as POST /api/auto decides it (agent.detect), so
+    that chat gives the model every file the agent taught it to read, whatever the file is called. Magic bytes
+    (WAV, FLAC, Ogg, MP3, PNG, JPEG) decide first; then a listed audio extension means audio, since soundfile also
+    reads AIFF and AU, which agent.detect does not know, and the bridge reports a file it cannot read; then text.
+    None for anything else, such as CSV, FASTA or an unknown binary format."""
+    try:
+        found = detect(path)
+    except ValueError:  # an empty file
+        found = None
+    if found is not None and found.how == "magic bytes":
+        return found.modality
+    if Path(name).suffix.lower() in AUDIO_EXTENSIONS:
+        return "audio"
+    return "text" if found is not None and found.modality == "text" else None
+
+
+def _takes_images(info: ModelInfo) -> bool:
+    """Whether chat can show this model an image as it is. Only API model adapters take image inputs
+    (sense.models_api); the local adapters in sense.models take text and vector inputs only, even when their
+    ModelInfo.native lists "image"."""
+    return "image" in info.native and not info.open_weights
+
+
+def _not_native(info: ModelInfo, modality: str) -> str | None:
+    """Why chat cannot give the model a file of `modality` as it is, or None when it can (text, and images for a
+    model that takes them)."""
+    if modality == "text":
+        return None if "text" in info.native else f"{info.label} does not read text files."
+    if modality == "image":
+        if _takes_images(info):
+            return None
+        if "image" in info.native:
+            return f"{info.label} cannot be shown images here: image inputs are wired up for API models only."
+        return f"{info.label} does not read images, and no image sense can be installed yet."
+    return f"{info.label} does not read {modality} as it is."
+
+
+def _read_text(path: Path) -> tuple[str, bool]:
+    """The start of a text file, decoded as agent.detect reads it (UTF-16 after a byte-order mark, else UTF-8), at
+    most TEXT_FILE_CHARS characters; and whether the file goes on past that."""
+    with path.open("rb") as handle:
+        raw = handle.read(TEXT_FILE_CHARS * 4 + 4)  # enough bytes for TEXT_FILE_CHARS characters in any encoding
+        more = bool(handle.read(1))
+    codec = "utf-16" if raw[:2] in (b"\xff\xfe", b"\xfe\xff") else "utf-8-sig"
+    text = raw.decode(codec, errors="replace")
+    return text[:TEXT_FILE_CHARS], more or len(text) > TEXT_FILE_CHARS
+
+
+def _cannot_save(name: str, exc: OSError) -> HTTPException:
+    return HTTPException(
+        status_code=500,
+        detail=f"Could not save '{name}' on the server ({exc.strerror or type(exc).__name__}). "
+        "Check the server's disk space, then send it again.",
+    )
+
+
+def _save_upload(upload: UploadFile, path: Path) -> None:
+    """Copy an upload to `path`, a chunk at a time. A 413 when it holds more than MAX_UPLOAD_BYTES, a 500 when the
+    server cannot write it; the caller removes what was written."""
+    name = upload.filename or "the upload"
+    total = 0
+    try:
+        with open(path, "wb") as handle:
+            while chunk := upload.file.read(UPLOAD_CHUNK):
+                total += len(chunk)
+                if total > MAX_UPLOAD_BYTES:
+                    raise HTTPException(
+                        status_code=413,
+                        detail=f"'{name}' is larger than {MAX_UPLOAD_BYTES // 2**20} MB, the most one file may be. "
+                        "Send a shorter or smaller file.",
+                    )
+                handle.write(chunk)
+    except OSError as exc:
+        raise _cannot_save(name, exc) from exc
+
+
+def _safe_name(filename: str | None) -> str:
+    """A file name that is safe on the server's disk: the base name of `filename` with only letters, digits, spaces
+    and ._- kept (anything else becomes _), cut to NAME_BYTES bytes with its extension kept; "upload" if nothing
+    is left."""
+    name = "".join(c if c.isalnum() or c in "._- " else "_" for c in Path(filename or "").name).strip(" .")
+    if len(name.encode()) > NAME_BYTES:
+        stem, suffix = os.path.splitext(name)
+        if len(suffix.encode()) > 16:  # not an extension worth keeping
+            stem, suffix = name, ""
+        stem = stem.encode()[: NAME_BYTES - len(suffix.encode())].decode(errors="ignore")
+        name = (stem.rstrip(" .") + suffix).strip(" .")
+    return name or "upload"
 
 
 def _remember_samples(dataset: str) -> list[dict]:
@@ -315,14 +423,34 @@ UPLOADS = "uploads"  # under SENSE_HOME: files handed to POST /api/auto, kept fo
 
 def _keep_upload(upload: UploadFile) -> Path:
     """Save an upload under <SENSE_HOME>/uploads/<12 hex>/<its file name, made safe> and return the path. Unlike
-    chat uploads it is kept: the agent run reads it from its own thread after the request has returned."""
-    name = "".join(c if c.isalnum() or c in "._- " else "_" for c in Path(upload.filename or "").name).strip(" .")
+    chat uploads it outlives the request: the agent run reads it from its own thread after the request has
+    returned, and the folder is removed once the run has ended (_record_when_finished). Raises a 413 or a 500,
+    and then leaves nothing behind."""
     folder = config.home() / UPLOADS / os.urandom(6).hex()
-    folder.mkdir(parents=True, exist_ok=True)
-    path = folder / (name or "upload")
-    with open(path, "wb") as handle:
-        handle.write(upload.file.read())
+    try:
+        folder.mkdir(parents=True)
+        path = folder / _safe_name(upload.filename)
+        _save_upload(upload, path)
+    except OSError as exc:
+        shutil.rmtree(folder, ignore_errors=True)
+        raise _cannot_save(upload.filename or "the upload", exc) from exc
+    except BaseException:
+        shutil.rmtree(folder, ignore_errors=True)
+        raise
     return path
+
+
+def _sweep_uploads() -> None:
+    """Remove upload folders older than UPLOAD_KEEP_SECONDS: left by a server that stopped before the run that
+    read them ended (no run takes that long). Never raises."""
+    root = config.home() / UPLOADS
+    cutoff = time.time() - UPLOAD_KEEP_SECONDS
+    try:
+        for folder in root.iterdir() if root.is_dir() else ():
+            if folder.is_dir() and folder.stat().st_mtime < cutoff:
+                shutil.rmtree(folder, ignore_errors=True)
+    except OSError:
+        log.warning("Old uploads under %s could not be removed.", root, exc_info=True)
 
 
 @app.post("/api/auto")
@@ -345,6 +473,7 @@ def api_auto(
                 f"The examples folder '{examples.strip()}' does not exist on the server. Give a folder with one "
                 "sub-folder of files per label, or leave examples out."
             )
+    _sweep_uploads()
     path = _keep_upload(file)
     with _start_lock:
         try:
@@ -356,11 +485,10 @@ def api_auto(
             except RuntimeError as exc:
                 text = str(exc)
                 raise HTTPException(status_code=409, detail=f"{text[:1].upper()}{text[1:]}. Wait for it to finish, then start again.")
-        except HTTPException:
-            _delete([path])
-            path.parent.rmdir()
+        except BaseException:  # no run will read the upload
+            shutil.rmtree(path.parent, ignore_errors=True)
             raise
-        _record_when_finished(job_id)
+        _record_when_finished(job_id, upload=path.parent)
     return {"job_id": job_id}
 
 
@@ -416,7 +544,7 @@ class _ChatTurn:
     """A chat request, checked, with its files bridged: everything the model needs to answer it."""
 
     base: Any  # the loaded model
-    message: str
+    message: str  # what the model is sent: the user's message, then the text of each attached text file
     inputs: list[SenseInput]
     used: list[dict]  # how each file reached the model, as the response reports it
     tool_used: list[tuple[dict, SenseInput]]  # entries of `used` whose detail is only known after the reply
@@ -454,8 +582,9 @@ def _prepare_chat(
     model: str, message: str, history: str, files: list[UploadFile], sample_ids: list[str], temp_paths: list[Path],
 ) -> _ChatTurn:
     """What POST /api/chat and POST /api/chat/stream do before the model answers: check the request, save the
-    uploads to temporary files (appended to `temp_paths`, which the caller deletes), load the model and bridge each
-    file. Raises HTTPException."""
+    uploads to temporary files (appended to `temp_paths`, which the caller deletes), load the model and give it each
+    file: as it is (a text file, or an image for a model that takes images) or through the installed sense for the
+    file's modality. Raises HTTPException."""
     _check_model(model)
     if not message.strip():
         raise _bad_request("The message is empty. Type a question for the model, then send it.")
@@ -466,10 +595,14 @@ def _prepare_chat(
     for upload in files:
         if not upload.filename:
             continue
-        fd, tmp = tempfile.mkstemp(suffix=Path(upload.filename).suffix.lower())
-        with os.fdopen(fd, "wb") as handle:
-            handle.write(upload.file.read())
+        suffix = Path(upload.filename).suffix.lower()  # only a listed audio extension: never the client's long text
+        try:
+            fd, tmp = tempfile.mkstemp(suffix=suffix if suffix in AUDIO_EXTENSIONS else "")
+            os.close(fd)
+        except OSError as exc:
+            raise _cannot_save(upload.filename, exc) from exc
         temp_paths.append(Path(tmp))
+        _save_upload(upload, Path(tmp))
         attached.append((upload.filename, Path(tmp)))
     for sid in sample_ids:
         path = _sample_path(sid)
@@ -481,33 +614,65 @@ def _prepare_chat(
         base = models.load_model(model)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Could not load model '{model}': {exc}")
+    modalities = [_modality_of(name, path) for name, path in attached]
     bridges = {}
-    if any(_modality_of(name) for name, _ in attached):  # plain text chat must not depend on the senses
+    if any(m and _not_native(base.info, m) for m in modalities):  # chat that needs no sense must not depend on them
         try:
             bridges = {b.modality: b for b in registry.get_bridges(model)}
         except RuntimeError as exc:
             raise HTTPException(status_code=500, detail=str(exc))
 
     inputs: list[SenseInput] = []
+    texts: list[str] = []  # the text files, added to the message after it
     used: list[dict] = []
     tool_used: list[tuple[dict, SenseInput]] = []  # entries whose detail is only known after the reply
-    for name, path in attached:
-        modality = _modality_of(name)
-        bridge = bridges.get(modality) if modality else None
-        if bridge is None:
-            if modality is None:
-                why = f"only audio files in these formats can be given to it: {' '.join(sorted(AUDIO_EXTENSIONS))}."
+
+    def not_shown(name: str, why: str) -> None:
+        detail = f"'{name}' was not shown to the model: {why}"
+        used.append({"bridge": "", "kind": "none", "source": name, "detail": detail})
+
+    for (name, path), modality in zip(attached, modalities):
+        if modality is None:
+            if path.stat().st_size == 0:
+                not_shown(name, "it is empty.")
             else:
-                why = f"{base.info.label} has no installed {modality} sense. Run the agent for this model first."
-            used.append({"bridge": "", "kind": "none", "source": name,
-                         "detail": f"'{name}' was not shown to the model: {why}"})
+                images = ", images (PNG or JPEG)" if _takes_images(base.info) else ""
+                not_shown(name, f"only text files{images} and audio files in these formats can be given to it: "
+                                f"{' '.join(sorted(AUDIO_EXTENSIONS))}.")
+            continue
+        why_not_native = _not_native(base.info, modality)
+        if why_not_native is None and modality == "text":
+            text, cut = _read_text(path)
+            texts.append(f'The attached file "{name}" holds this text'
+                         f'{" (only its start is given here: the file is longer)" if cut else ""}:\n{text}')
+            detail = "its text was given to the model with the message"
+            if cut:
+                detail = f"the first {TEXT_FILE_CHARS} characters of its text were given to the model with the message"
+            used.append({"bridge": "", "kind": "native", "source": name, "detail": detail})
+            continue
+        if why_not_native is None:  # an image, for a model that takes images
+            if path.stat().st_size > IMAGE_BYTES:
+                not_shown(name, f"it is larger than {IMAGE_BYTES // 2**20} MB, the most an image may be.")
+                continue
+            image = path.read_bytes()
+            if not image.startswith((b"\x89PNG\r\n\x1a\n", b"\xff\xd8\xff")):  # what SenseInput.image may hold
+                not_shown(name, "only PNG and JPEG images can be shown to it.")
+                continue
+            inputs.append(SenseInput(kind="image", modality="image", source=name, image=image,
+                                     detail="shown to the model as an image"))
+            used.append({"bridge": "", "kind": "native", "source": name, "detail": inputs[-1].detail})
+            continue
+        bridge = bridges.get(modality)
+        if bridge is None:
+            if modality == "audio":
+                not_shown(name, f"{base.info.label} has no installed audio sense. Run the agent for this model first.")
+            else:
+                not_shown(name, why_not_native)
             continue
         try:
             item = bridge.prepare(path)
         except (ValueError, FileNotFoundError) as exc:  # this file is unreadable; answer with the others
-            why = str(exc).replace(str(path), name).replace(path.name, name)
-            used.append({"bridge": "", "kind": "none", "source": name,
-                         "detail": f"'{name}' was not shown to the model: {why}"})
+            not_shown(name, str(exc).replace(str(path), name).replace(path.name, name))
             continue
         except Exception as exc:
             raise HTTPException(status_code=500, detail=f"Could not read '{name}' with bridge '{bridge.name}': {exc}")
@@ -516,7 +681,8 @@ def _prepare_chat(
         used.append({"bridge": bridge.name, "kind": bridge.kind, "source": item.source, "detail": item.detail})
         if item.kind == "tool" and item.tool is not None:
             tool_used.append((used[-1], item))
-    return _ChatTurn(base=base, message=message, inputs=inputs, used=used, tool_used=tool_used, history=earlier)
+    prompt = "\n\n".join([message, *texts])  # what the model is sent: the message, then each text file
+    return _ChatTurn(base=base, message=prompt, inputs=inputs, used=used, tool_used=tool_used, history=earlier)
 
 
 def _delete(paths: list[Path]) -> None:
@@ -537,7 +703,7 @@ def api_chat(
         turn = _prepare_chat(model, message, history, files, sample_ids, temp_paths)
         try:
             with _chat_lock:
-                reply = turn.base.chat(message, turn.inputs, max_new_tokens=CHAT_TOKENS, **turn.options())
+                reply = turn.base.chat(turn.message, turn.inputs, max_new_tokens=CHAT_TOKENS, **turn.options())
         except Exception as exc:
             raise HTTPException(status_code=500, detail=f"The model failed to answer: {exc}")
         turn.finish_tool_details()
@@ -637,27 +803,33 @@ def _tool_detail(item: SenseInput) -> str:
 
 
 # ----------------------------------------------------------------------------- replay
-def _record_when_finished(job_id: str) -> None:
-    """Record the agent run with sense.runs once it has finished, from a daemon thread. Never raises.
+def _record_when_finished(job_id: str, upload: Path | None = None) -> None:
+    """Record the agent run with sense.runs once it has finished, from a daemon thread, then remove `upload` (the
+    folder of the file POST /api/auto kept for the run), whether or not the recording worked. Never raises.
     Call with _start_lock held, so that a fit or replay started next finds this watcher in _recorder."""
     global _recorder
     home = config.home()
 
     def watch() -> None:
+        ended = False
         try:
             while True:
                 state = jobs.get(job_id)
-                if state is None:  # the job is gone (jobs were reset): nothing to record
+                if state is None:  # the job is gone (jobs were reset): nothing to record; _sweep_uploads removes it
                     return
                 if state.status != "running":
                     break
                 time.sleep(WATCH_SECONDS)
+            ended = True
             if config.home() != home:
                 log.warning("Agent run %s was not recorded: SENSE_HOME changed while it ran.", job_id)
                 return
             runs.save_run(state, origin="server")
         except Exception:
             log.exception("Agent run %s could not be recorded for replay.", job_id)
+        finally:
+            if ended and upload is not None:  # the run has ended, so nothing reads its upload any more
+                shutil.rmtree(upload, ignore_errors=True)
 
     watcher = threading.Thread(target=watch, name=f"record-run-{job_id}", daemon=True)
     watcher.start()
