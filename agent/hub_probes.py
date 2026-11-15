@@ -7,28 +7,35 @@ dataset viewer, picks an input column and a label column, and writes a capped sa
 (the folder format agent.data.build_set and sense.adapters.probe_folder read). For some inputs the best labelled
 data is a plain table file instead (an odour table as a CSV on GitHub, a city list with a country column), so
 find_probes also asks a Linkup web search (agent.research) for datasets: the Hub ids it names join the Hub
-candidates and its file URLs become table candidates, read with the same column, label and honesty rules. The Hub
-search needs no API key; without the web search (no LINKUP_API_KEY, fake mode, no network) the Hub is searched alone.
+candidates and its file URLs become table candidates, read with the same column, label and honesty rules. Many Hub
+datasets keep their files in one folder per label without dataset-viewer support, so when a Hub candidate's viewer
+fails, find_probes reads it as a folder-labelled repository (a FolderCandidate): its file list from the Hub tree API,
+its labels from its folder names. The Hub search needs no API key; without the web search (no LINKUP_API_KEY, fake
+mode, no network) the Hub is searched alone.
 
 Public surface (do not rename):
   ProbesUnavailable                 raised when no usable probe set can be had; the message says why
-  HubCandidate                      hub_id, title, downloads, likes, licence, tags, url, gated, score, found_by;
-                                    to_dict()
+  HubCandidate                      hub_id, title, downloads, likes, licence, tags, url, gated, score, found_by,
+                                    revision; to_dict()
   TableCandidate                    url, title, licence, licence_source, label_hint, page_url, given_url, score;
                                     to_dict()
-  Mapping                           which columns are input and label; to_dict()
+  FolderCandidate                   hub_id, title, licence, tags, url, revision, downloads, found_by, score;
+                                    FolderCandidate.of(hub_candidate); to_dict()
+  Mapping                           which columns are input and label (a folder: label_kind "folder" and
+                                    folder_depth); to_dict()
   FetchReport                       folder, labels, counts, rows_seen, skipped, licence, source_url, notes, hub_id,
                                     label_values, bytes, licence_source
   SEARCH_SCHEMA, MAPPING_SCHEMA     structured-output schemas for agent.llm.ask_json
   WEB_SCHEMA                        the structured-output schema of the Linkup search (agent.research)
   search_hub(goal, modality, *, limit=20) -> list[HubCandidate]
-  choose_mapping(candidate, goal, modality, *, wanted_labels=None, budget_s=None) -> Mapping
+  choose_mapping(candidate, goal, modality, *, wanted_labels=None, budget_s=None, min_per_label=6) -> Mapping
   fetch_probes(candidate, mapping, dest, *, wanted_labels=None, n_per_label=20, max_labels=8, min_per_label=6,
                budget_s=120, max_bytes=150_000_000, disjoint_from=()) -> FetchReport
   find_probes(goal, modality, dest_root, *, wanted_labels=None, emit=None, max_candidates=3, max_inspect=12,
               total_budget_s=None, exclude_sources=(), disjoint_from=(), **fetch_kwargs) -> (folder, info)
   safe_label(text, index) -> str
-choose_mapping and fetch_probes take a HubCandidate or a TableCandidate.
+choose_mapping and fetch_probes take a HubCandidate, a TableCandidate or a FolderCandidate (choose_mapping's
+min_per_label applies to a FolderCandidate only).
 
 modality is "audio", "image", "video", "3d", "chemical", "coordinates" or "text", or an alias such as smell, taste,
 molecule, smiles, location, place, gps or mesh; any other word still works with the generic rules.
@@ -41,9 +48,10 @@ that only names the input (molecule, place, video, 3d, ...) is searched only ins
 one GET of https://huggingface.co/api/datasets?search=..&limit=..&full=true&sort=downloads. Results are merged and
 deduplicated; gated, private and disabled datasets, those whose card turns the viewer off and ids that are not
 plain owner/name are dropped. Order: relevance (2 for each topic word and 1 for each input word found in the
-dataset's id or title, plus 1 for the Hub's modality tag of this modality and 1 for a *-classification task tag),
-then how many queries found it, then downloads. The licence is cardData.license (with cardData.license_name and
-license_link in brackets when the card gives them), else a "license:" tag, else None.
+dataset's id or title, its words taken with camelCase split and whole so "ModelNet40" names modelnet, plus
+MODALITY_TAG_BONUS for the Hub's modality tag of this modality and 1 for a *-classification task tag), then how many
+queries found it, then downloads. The licence is cardData.license (with cardData.license_name and license_link in
+brackets when the card gives them), else a "license:" tag, else None; revision is the record's sha (its commit).
 
 choose_mapping reads the viewer's /splits (config "default" if there is one, split train, else test, validation)
 and /first-rows (else the first /rows page) for the real features and sample values. It asks ask_json
@@ -91,11 +99,13 @@ than half of the chosen labels' rows leaking refuses the dataset. Media cells ar
 time, the label with the fewest files first, only from https URLs on huggingface.co or hf.co hosts (redirects too),
 each at most FILE_MAX_BYTES and all written files together at most max_bytes, within budget_s; failures are skipped
 and counted by reason. Each file then has the metadata that can name its label stripped: names and extras in a
-GLB/glTF, PNG text chunks, JPEG EXIF/XMP/IPTC/comment segments, and for audio and video an ffmpeg stream-copy remux
-without global, stream or chapter metadata (when ffmpeg is installed). A file whose remaining text runs (ASCII or
-UTF-16, first and last SCAN_BYTES) still name its own label (such as a source path ...\\drink\\...) is dropped as
-skipped["leak"], and more than half of the downloaded files leaking refuses the dataset (checked early after
-LEAK_SAMPLE files). A file whose bytes were already written under the same label is skipped as a duplicate, and
+GLB/glTF, OBJ and OFF comments and OBJ object, group and material names, PLY comment lines, an STL's solid name (or a
+binary STL's header), a molfile's title and comment lines and SDF data fields, SMILES names, GeoJSON properties, KML
+and GPX names, descriptions and metadata, PNG text chunks, JPEG EXIF/XMP/IPTC/comment segments, and for audio and
+video an ffmpeg stream-copy remux without global, stream or chapter metadata (when ffmpeg is installed). A file
+whose remaining text runs (ASCII or UTF-16, first and last SCAN_BYTES) still name its own label (such as a source
+path ...\\drink\\...) is dropped as skipped["leak"], and more than half of the downloaded files leaking refuses the
+dataset (checked early after LEAK_SAMPLE files). A file whose bytes were already written under the same label is skipped as a duplicate, and
 identical bytes under two labels are removed from both (skipped["conflicting_labels"]). Labels with fewer than
 min_per_label files are dropped; fewer than 2 left, or a wanted label missing, raises ProbesUnavailable. Labels
 are always the dataset's own values, never generated.
@@ -142,29 +152,63 @@ when it gave one, else the first line of the repository's LICENSE (LICENSE.md, L
 for a GitHub file, the record's licence for a Zenodo file or the dataset card's for a Hugging Face file, else
 "unknown"; FetchReport.licence_source says where it was read.
 
+Folder-labelled repositories (FolderCandidate). The files come from the Hub tree API,
+GET https://huggingface.co/api/datasets/<id>/tree/<revision>?recursive=true (no key), paged through its Link
+header's rel="next" URL (which must stay on the same huggingface.co path), at most TREE_MAX_PAGES pages within
+TREE_BUDGET_S; a cut listing is said in the notes. The revision is the candidate's commit (the search record's sha),
+else the Hub record's, else "main" (said in the notes). The input files are those with the modality's extensions
+(_FOLDER_EXT: 3d .off .obj .stl .ply .glb .gltf; video .mp4 .avi .mov .webm .mkv; audio .wav .flac .mp3 .ogg; image
+.png .jpg .jpeg; molecule .mol .sdf .smi; coordinates .geojson .gpx .kml; text has none), skipping paths with
+hidden, empty, "." or ".." parts. Each file's label is the nearest folder above it whose name is neither a split or
+generic name (train, test, val, valid, validation, dev, data, files, raw, all, images, clips, ..., numbered folds,
+parts and splits, numbers) nor an id (mostly digits, a hash or UUID, a numbered item such as chair_0001), so
+ModelNet's <class>/<split>/... and UCF101's <split>/<Class>/... both label by class. The repository's label depth is
+the depth most of those files share (a tie goes to the deeper); it must hold more than half of them and give at
+least 2 labels with min_per_label files, else ProbesUnavailable says why (folder names that look like ids are
+named). The labels are trusted only when the repository's id or title names the goal's topic (the same rule as for
+a generic label column, so an unrelated repository's folders never label the goal) or the folder names name the
+goal's words or the wanted labels. fetch_probes then takes the files at that depth (a file the list says is over
+FILE_MAX_BYTES is skipped without a request), picks labels as for a viewer dataset (wanted, else most frequent;
+disjoint_from with the same loose matching and country aliases), picks each label's files evenly spread over them
+from a point seeded by the repository and revision, and downloads them only from
+https://huggingface.co/datasets/<id>/resolve/<revision>/<path> (redirects to the Hub's CDN hosts allowed), with
+the same per-file and total byte caps, time budget, metadata stripping and leak scan as viewer media, into
+dest/<safe label>/<n><extension> (n counts the listed files; never the original file name). The source is the Hub
+id (info["source"], what exclude_sources takes; "<id>@<revision>" works too) plus info["revision"], and
+FetchReport.source_url is the tree URL at that revision. The licence is the card's or its licence tag's, as for a
+Hub dataset; the notes say labels came from folder names and quote what the dataset card (README.md at the
+revision, at most LICENCE_MAX_BYTES) says: the other sites it links to (whose own terms may apply to re-hosted
+files, which the card's licence may not cover) and up to 3 of its lines on licences, terms, academic or
+non-commercial use or copyright. Nothing about the terms is invented.
+
 find_probes searches, then inspects candidates in rank order with choose_mapping (at most max_inspect: a look at
 the columns costs two cached viewer calls, or a table's download, and most search hits do not fit) and runs
 fetch_probes into dest_root/<owner>__<name> (a table: dest_root/web__<file stem>__<url hash>) for at most
-max_candidates of those whose columns fit. The whole step has one deadline, total_budget_s (default
-INSPECT_ALLOWANCE_S plus max_candidates fetch budgets): the searches and inspections run within it and each fetch
-gets the smaller of its budget_s and the time left. exclude_sources skips candidates whose Hub id, dataset page or
-file URL (a GitHub blob URL and its raw file alike) is listed, files in the same folder as a listed file (other
-files of the same dataset) and files under a listed repository or folder URL; disjoint_from goes to fetch_probes.
-For the unseen-categories control, the agent calls find_probes again after the main probe set, with
-exclude_sources=[info["source"]] and disjoint_from=list(info["label_values"].values()), and gets an independent set
-whose categories the adapter has not seen. emit (if given) is called with small JSON-serialisable dicts
-{"action": "search" | "candidate" | "inspect" | "fetch", "status": "start" | "ok" | "fail", ...}; candidate,
-inspect and fetch events carry hub_id ("" for a table), source and kind ("hub" | "table"), and the search's "ok"
-event the web search's summary and the excluded sources. It returns the folder and an info dict (hub_id, url,
-title, licence, licence_source, kind, source: the Hub id or table URL to pass to exclude_sources, labels,
-label_values, counts, mapping, rows_seen, skipped, queries, query_origin, tried: [{hub_id, reason}, or for a table
-{hub_id: "", url, reason}], notes, web: {used, reason, origin, hub_ids, tables, refused}, excluded: [{source,
-reason}], disjoint_from), or raises ProbesUnavailable naming every candidate's reason and, when it was not used,
-why the web search was not.
+max_candidates of those whose columns fit. When a Hub candidate's inspection fails for any reason other than a
+missing label column (the viewer fails, or shows no input column of the modality, or its media cells link nowhere
+usable), the same candidate is inspected as a folder-labelled repository in the same turn (no extra place among
+max_inspect; its fetch counts toward max_candidates), and its tried reason gives both failures. The whole step has
+one deadline, total_budget_s (default INSPECT_ALLOWANCE_S plus max_candidates fetch budgets): the searches and
+inspections run within it and each fetch gets the smaller of its budget_s and the time left. exclude_sources skips
+candidates whose Hub id, dataset page or file URL (a GitHub blob URL and its raw file alike) is listed, files in the
+same folder as a listed file (other files of the same dataset) and files under a listed repository or folder URL;
+disjoint_from goes to fetch_probes. For the unseen-categories control, the agent calls find_probes again after the
+main probe set, with exclude_sources=[info["source"]] and disjoint_from=list(info["label_values"].values()), and gets
+an independent set whose categories the adapter has not seen. emit (if given) is called with small
+JSON-serialisable dicts {"action": "search" | "candidate" | "inspect" | "fetch", "status": "start" | "ok" | "fail",
+...}; candidate, inspect and fetch events carry hub_id ("" for a table), source and kind ("hub" | "table" |
+"folder": a folder attempt's events after the viewer's inspect fail), and the search's "ok" event the web search's
+summary and the excluded sources. It returns the folder and an info dict (hub_id, url, title, licence,
+licence_source, kind, source: the Hub id or table URL to pass to exclude_sources, revision: a folder's commit, else
+None, labels, label_values, counts, mapping, rows_seen, skipped, queries, query_origin, tried: [{hub_id, reason}, or
+for a table {hub_id: "", url, reason}], notes, web: {used, reason, origin, hub_ids, tables, refused}, excluded:
+[{source, reason}], disjoint_from), or raises ProbesUnavailable naming every candidate's reason and, when it was not
+used, why the web search was not.
 
 Every Hub and viewer request and media download goes through _http_get (User-Agent "sense-harness", a timeout
-checked before every read, a byte cap, https Hugging Face hosts only), and every table file and licence request
-through _table_get (the same, on the table hosts above), so tests replace those two functions. A JSON request
+checked before every read, a byte cap, https Hugging Face hosts only), a tree page through _http_get_page (the same,
+also returning the Link header), and every table file and licence request through _table_get (the same, on the
+table hosts above), so tests replace those three functions. A JSON request
 answered HTTP 429, 502, 503 or 504 is retried after RETRY_WAITS (or the server's Retry-After, at most
 MAX_RETRY_WAIT), never past the caller's deadline; an HTTP 500 is the viewer's own refusal and is not retried. The
 Hub, the viewer, GitHub and Zenodo need no API key; the web search uses research's LINKUP_API_KEY when it is set.
@@ -233,6 +277,8 @@ WEB_DOMAINS = ("huggingface.co", "github.com", "raw.githubusercontent.com", "zen
                "gist.githubusercontent.com")
 TABLE_HOSTS = frozenset(("github.com", "raw.githubusercontent.com", "gist.githubusercontent.com", "zenodo.org"))
 TABLE_SUFFIXES = (".csv", ".tsv", ".tab", ".json", ".jsonl", ".ndjson")  # .txt is read too when named directly
+TREE_MAX_PAGES = 25  # the Hub tree API answers 1,000 files and folders a page: a repository's first 25,000 are listed
+TREE_BUDGET_S = 60.0  # listing one repository's files
 
 _now = time.monotonic  # tests replace it to run the budget
 _sleep = time.sleep  # tests replace it to skip the waits
@@ -324,6 +370,17 @@ _MEDIA_EXT = {
     "Image": (".jpg", (".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".tif", ".tiff")),
     "Video": (".mp4", (".mp4", ".webm", ".avi", ".mkv", ".mov", ".m4v")),
     "Mesh": (".glb", (".glb", ".gltf", ".obj", ".ply", ".stl", ".off")),
+    # the folder kind only: molecule and geometry files
+    "Molecule": (".mol", (".mol", ".sdf", ".smi")),
+    "Geo": (".geojson", (".geojson", ".gpx", ".kml")),
+}
+_FOLDER_EXT = {  # the files a folder-labelled repository may hold for each kind of input
+    "Mesh": (".off", ".obj", ".stl", ".ply", ".glb", ".gltf"),
+    "Video": (".mp4", ".avi", ".mov", ".webm", ".mkv"),
+    "Audio": (".wav", ".flac", ".mp3", ".ogg"),
+    "Image": (".png", ".jpg", ".jpeg"),
+    "Molecule": (".mol", ".sdf", ".smi"),
+    "Geo": (".geojson", ".gpx", ".kml"),
 }
 _STOP = frozenset("""
 a an the this that these those it its is are was were be been being of in on at to for from by with as and or not
@@ -357,27 +414,31 @@ class _Profile:
     tag: str | None = None  # the Hub's modality:<tag>
     label_words: tuple[str, ...] = ()  # column names that label this modality by themselves
     input_words: tuple[str, ...] = ()  # words that only name the input, never the label's topic
+    folder: str | None = None  # the _FOLDER_EXT key of the files a folder-labelled repository may hold
 
 
 _PROFILES = {
     "audio": _Profile(("audio", "sound"), media=("Audio",), tag="audio", label_words=("genre",),
-                      input_words=("audio", "sound", "recording", "clip", "wav")),
-    "image": _Profile(("image",), media=("Image",), tag="image", input_words=("image", "picture", "photo")),
+                      input_words=("audio", "sound", "recording", "clip", "wav"), folder="Audio"),
+    "image": _Profile(("image",), media=("Image",), tag="image", input_words=("image", "picture", "photo"),
+                      folder="Image"),
     "video": _Profile(("action", "ucf101", "kinetics", "video", "hmdb"), media=("Video",), tag="video",
-                      label_words=("action", "activity"), input_words=("video", "clip", "movie", "footage")),
+                      label_words=("action", "activity"), input_words=("video", "clip", "movie", "footage"),
+                      folder="Video"),
     "3d": _Profile(("modelnet", "objects", "3d", "mesh", "shapenet"), media=("Mesh",), tag="3d",
-                   label_words=("object", "shape"), input_words=("3d", "mesh", "model", "point", "cloud", "glb")),
+                   label_words=("object", "shape"), input_words=("3d", "mesh", "model", "point", "cloud", "glb"),
+                   folder="Mesh"),
     "chemical": _Profile(("odor", "smell", "olfaction", "odorant", "scent"),
                          slots=(_Slot(("smiles", "smile", "mol", "molecule"), "smiles"),), ext=".smi",
                          label_words=("odor", "odour", "descriptor", "smell", "scent", "taste", "flavor"),
                          input_words=("molecule", "molecular", "smiles", "chemical", "chemistry", "compound", "mol",
-                                      "chem", "structure")),
+                                      "chem", "structure"), folder="Molecule"),
     "coordinates": _Profile(("cities", "city", "geonames", "country", "countries"),
                             slots=(_Slot(("latitude", "lat"), "lat"),
                                    _Slot(("longitude", "lng", "lon", "long"), "lon")),
                             tag="geospatial", label_words=("country", "continent", "region", "state"),
                             input_words=("place", "location", "coordinate", "latitude", "longitude", "lat", "lon",
-                                         "gps", "geo", "point", "position")),
+                                         "gps", "geo", "point", "position"), folder="Geo"),
     "text": _Profile((), slots=(_Slot(("text", "sentence", "content", "document")),), tag="text",
                      input_words=("text", "sentence", "document")),
 }
@@ -428,9 +489,37 @@ class HubCandidate:
     gated: bool = False
     score: int = 0  # search relevance; ordering only
     found_by: str = "hub"  # "hub" (the Hub search), "web" (the web search named it) or "both"
+    revision: str | None = None  # the repository's commit when the Hub record gave it
 
     def to_dict(self) -> dict:
         return asdict(self)
+
+
+@dataclass(eq=False)
+class FolderCandidate:
+    """A Hub dataset repository whose files sit in one folder per label, read through the Hub's file list and
+    resolve URLs rather than the dataset viewer: find_probes tries one when a HubCandidate's viewer fails."""
+
+    hub_id: str
+    title: str
+    licence: str | None
+    tags: list[str]
+    url: str  # https://huggingface.co/datasets/<id>
+    revision: str | None = None  # the commit the files are listed and downloaded at; pinned when first listed
+    downloads: int = 0
+    found_by: str = "hub"
+    score: int = 0
+    _files: tuple | None = field(default=None, repr=False)  # (files as (path, size), notes) once listed
+
+    @classmethod
+    def of(cls, candidate: HubCandidate) -> "FolderCandidate":
+        return cls(candidate.hub_id, candidate.title, candidate.licence, list(candidate.tags), candidate.url,
+                   candidate.revision, candidate.downloads, candidate.found_by, candidate.score)
+
+    def to_dict(self) -> dict:
+        return {"hub_id": self.hub_id, "title": self.title, "licence": self.licence, "tags": list(self.tags),
+                "url": self.url, "revision": self.revision, "downloads": self.downloads,
+                "found_by": self.found_by, "score": self.score}
 
 
 @dataclass(eq=False)
@@ -461,13 +550,14 @@ class Mapping:
     input_kind: str  # "media" | "text"
     template: str  # text: e.g. "{latitude}, {longitude}"; media: ""
     extension: str  # ".wav", ".jpg", ".mp4", ".glb", ".smi", ".txt", ...
-    label_column: str  # "" for multihot
-    label_kind: str  # "classlabel" | "string" | "list" | "multihot"
-    label_names: list[str] | None = None  # ClassLabel names, or the 0/1 columns of a multihot label
+    label_column: str  # "" for multihot and folder
+    label_kind: str  # "classlabel" | "string" | "list" | "multihot" | "folder"
+    label_names: list[str] | None = None  # ClassLabel names, the 0/1 columns of a multihot label, or label folders
     label_separator: str | None = None  # a "list" label in one string: ";", "|", ",", "/" or LIST_LITERAL
-    media_type: str | None = None  # "Audio" | "Image" | "Video" | "Mesh" for media inputs
+    media_type: str | None = None  # "Audio" | "Image" | "Video" | "Mesh" (a folder also "Molecule" | "Geo")
     origin: str = "rule"  # "llm" | "rule" (a mapping's origin; search queries record "llm+rule" or "rule")
     reason: str = ""
+    folder_depth: int | None = None  # folder: which folder of a file's path names its label (0 = the top one)
 
     def to_dict(self) -> dict:
         out = asdict(self)
@@ -520,6 +610,16 @@ def _http_get(url: str, *, timeout: float = TIMEOUT_S, max_bytes: int = JSON_MAX
     return _get(url, timeout, max_bytes, _Redirects)
 
 
+def _http_get_page(url: str, *, timeout: float = TIMEOUT_S,
+                   max_bytes: int = JSON_MAX_BYTES) -> tuple[bytes, str | None]:
+    """_http_get that also returns the response's Link header, or None: the Hub tree API pages through it."""
+    if not _allowed_url(url):
+        raise _HttpError("host_refused", f"only https Hugging Face URLs are fetched, not {_host(url)}")
+    seen: dict = {}
+    body = _get(url, timeout, max_bytes, _Redirects, seen)
+    return body, seen.get("link")
+
+
 def _table_get(url: str, *, timeout: float = TABLE_TIMEOUT_S, max_bytes: int = TABLE_MAX_BYTES) -> bytes:
     """_http_get for table files and their licences: https URLs on Hugging Face, github.com,
     raw.githubusercontent.com, gist.githubusercontent.com or zenodo.org only, redirects too."""
@@ -529,13 +629,15 @@ def _table_get(url: str, *, timeout: float = TABLE_TIMEOUT_S, max_bytes: int = T
     return _get(url, timeout, max_bytes, _TableRedirects)
 
 
-def _get(url: str, timeout: float, max_bytes: int, redirects: type) -> bytes:
+def _get(url: str, timeout: float, max_bytes: int, redirects: type, seen: dict | None = None) -> bytes:
     if timeout <= 0:
         raise _HttpError("timeout", "no time left")
     deadline = _now() + timeout
     request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Accept": "*/*"})
     try:
         with urllib.request.build_opener(redirects).open(request, timeout=timeout) as response:
+            if seen is not None:
+                seen["link"] = response.headers.get("Link")
             length = response.headers.get("Content-Length")
             if length and length.isdigit() and int(length) > max_bytes:
                 raise _HttpError("too_large", f"{_host(url)} offers {int(length):,} bytes, over the {max_bytes:,} cap")
@@ -631,12 +733,19 @@ def _get_json(base: str, params: dict, *, timeout: float = TIMEOUT_S, what: str,
     RETRY_WAITS (or the server's Retry-After, at most MAX_RETRY_WAIT), but a wait that would end within 2 s of the
     deadline is not taken."""
     url = base + ("?" + urllib.parse.urlencode(params) if params else "")
+    return _attempts(lambda seconds: json.loads(_http_get(url, timeout=seconds, max_bytes=JSON_MAX_BYTES)),
+                     what=what, timeout=timeout, deadline=deadline, retry=retry)
+
+
+def _attempts(request: Callable[[float], object], *, what: str, timeout: float, deadline: float | None,
+              retry: bool) -> object:
+    """request(seconds) (a JSON request and its parse), retried as _get_json says."""
     for pause_s in (RETRY_WAITS if retry else ()) + (None,):
         attempt = timeout if deadline is None else min(timeout, deadline - _now())
         if attempt <= 0:
             raise _RequestFailed("timeout", f"{what} failed: the time budget was spent")
         try:
-            return json.loads(_http_get(url, timeout=attempt, max_bytes=JSON_MAX_BYTES))
+            return request(attempt)
         except _HttpError as exc:
             pause = None if pause_s is None else min(max(exc.retry_after or 0.0, pause_s), MAX_RETRY_WAIT)
             if pause is None or exc.reason not in RETRY_REASONS or (deadline is not None
@@ -752,10 +861,19 @@ def _ranked(candidates: list, hits: Counter, queries: list[str], modality: str) 
 def _relevance(candidate, words: set[str]) -> int:
     """How many of the search words appear in the dataset's id or title (plurals and word stems alike)."""
     if isinstance(candidate, TableCandidate):
-        tokens = set(_tokens(urllib.parse.urlsplit(candidate.url).path) + _tokens(candidate.title))
+        tokens = set(_name_tokens(urllib.parse.urlsplit(candidate.url).path, candidate.title))
     else:
-        tokens = set(_tokens(candidate.hub_id) + _tokens(candidate.title))
+        tokens = set(_name_tokens(candidate.hub_id, candidate.title))
     return sum(1 for word in words if any(_same_word(token, word) for token in tokens))
+
+
+def _name_tokens(*names: str) -> list[str]:
+    """The words of names, with camelCase split and also whole ("ModelNet40" gives model, net40 and modelnet40, so
+    it names modelnet)."""
+    out = []
+    for name in names:
+        out += _tokens(name) + re.findall(r"[a-z0-9]+", str(name).lower())
+    return out
 
 
 def _source_of(candidate) -> str:
@@ -831,8 +949,13 @@ def _candidate(item: object) -> HubCandidate | None:
         return None
     tags = [t for t in item.get("tags") or [] if isinstance(t, str)] if isinstance(item.get("tags"), list) else []
     title = card.get("pretty_name") if isinstance(card.get("pretty_name"), str) else hub_id
+    sha = item.get("sha")
     return HubCandidate(hub_id, title.strip()[:120] or hub_id, _int(item.get("downloads")), _int(item.get("likes")),
-                        _licence(card, tags), tags[:40], f"https://huggingface.co/datasets/{hub_id}", False)
+                        _licence(card, tags), tags[:40], f"https://huggingface.co/datasets/{hub_id}", False,
+                        revision=sha if isinstance(sha, str) and _SHA.fullmatch(sha) else None)
+
+
+_SHA = re.compile(r"[0-9a-f]{40}")
 
 
 def _int(value: object) -> int:
@@ -873,11 +996,14 @@ class _Named:
     hint: str = ""
 
 
-def choose_mapping(candidate: HubCandidate | TableCandidate, goal: str, modality: str, *,
-                   wanted_labels: list[str] | None = None, budget_s: float | None = None) -> Mapping:
+def choose_mapping(candidate: HubCandidate | TableCandidate | FolderCandidate, goal: str, modality: str, *,
+                   wanted_labels: list[str] | None = None, budget_s: float | None = None,
+                   min_per_label: int = 6) -> Mapping:
     deadline = None if budget_s is None else _now() + budget_s
     if isinstance(candidate, TableCandidate):
         return _choose_table(candidate, goal, modality, list(wanted_labels or []), deadline)
+    if isinstance(candidate, FolderCandidate):
+        return _choose_folder(candidate, goal, modality, list(wanted_labels or []), deadline, min_per_label)
     return _choose(candidate, goal, modality, list(wanted_labels or []), deadline)
 
 
@@ -1134,7 +1260,7 @@ def _rule_mapping(named: _Named, goal, columns, rows, profile, modality, wanted)
         raise ProbesUnavailable(f"{hub_id}'s {inputs[0]} cells do not link to https Hugging Face files "
                                 f"(e.g. {_example_src(columns[inputs[0]], rows)})")
     topic = _topic_words(goal, modality, profile)
-    on_topic = any(_same_word(token, word) for token in _tokens(hub_id) + _tokens(named.title) for word in topic)
+    on_topic = _names_topic(named, topic)
     weights = _topic_weights(goal, modality, profile)
     goal_words = [w for w in weights if w in _content_words(goal)]
     label = _rule_label(weights, columns, rows, set(inputs), on_topic, goal_words, wanted)
@@ -1155,6 +1281,12 @@ def _rule_mapping(named: _Named, goal, columns, rows, profile, modality, wanted)
         raise ProbesUnavailable(f"{hub_id}'s input column {leaky!r} determines the label {column!r} (few distinct "
                                 "values, each with one label), so the input would give the label away")
     return mapping
+
+
+def _names_topic(named: _Named, topic: set[str]) -> bool:
+    """Whether a source's own name or title names one of the topic words: what lets a generic label column, a
+    ClassLabel, a block of 0/1 columns or a repository's folder names label probes."""
+    return any(_same_word(token, word) for token in _name_tokens(named.name, named.title) for word in topic)
 
 
 def _label_hints(columns, inputs: set, topic: tuple, on_topic: bool) -> str:
@@ -1407,7 +1539,7 @@ def _list_literal(text: str) -> list[str] | None:
 
 
 # ----------------------------------------------------------------------------- fetching probes
-def fetch_probes(candidate: HubCandidate | TableCandidate, mapping: Mapping, dest: Path, *,
+def fetch_probes(candidate: HubCandidate | TableCandidate | FolderCandidate, mapping: Mapping, dest: Path, *,
                  wanted_labels: list[str] | None = None, n_per_label: int = 20, max_labels: int = 8,
                  min_per_label: int = 6, budget_s: float = 120, max_bytes: int = 150_000_000,
                  disjoint_from: list[str] | tuple = ()) -> FetchReport:
@@ -1420,6 +1552,8 @@ def fetch_probes(candidate: HubCandidate | TableCandidate, mapping: Mapping, des
                          _disjoint(disjoint_from, wanted_labels))
         if isinstance(candidate, TableCandidate):
             return _fetch_table(candidate, mapping, dest, limits, start + budget_s)
+        if isinstance(candidate, FolderCandidate):
+            return _fetch_folder(candidate, mapping, dest, limits, start + budget_s)
         return _fetch(candidate, mapping, dest, limits, start, start + budget_s)
     except ProbesUnavailable:
         shutil.rmtree(dest, ignore_errors=True)
@@ -1527,10 +1661,11 @@ def _fetch(candidate, mapping, dest, limits: _Limits, start, deadline):
 
 
 def _write_probes(name: str, mapping: Mapping, dest: Path, seen: dict, rows_seen: int, skipped: Counter,
-                  notes: list, limits: _Limits, deadline: float) -> FetchReport:
+                  notes: list, limits: _Limits, deadline: float, seed: str | None = None) -> FetchReport:
     """The rows read (seen: row index -> (input, labels)) into dest/<label>/<row index><extension>: inputs merged,
-    labels chosen, multi-labelled and leaking rows dropped, files written or downloaded. The caller fills in the
-    licence and the source."""
+    labels chosen, multi-labelled and leaking rows dropped, files written or downloaded. Each label's inputs are
+    picked evenly spread over them, starting from a point that the seed (if any) and the label set. The caller
+    fills in the licence and the source."""
     if not seen:
         raise ProbesUnavailable(f"none of the {rows_seen} rows read from {name} had both an input and a label")
     entries, mixed = _merge_inputs(seen, skipped, notes)
@@ -1542,7 +1677,7 @@ def _write_probes(name: str, mapping: Mapping, dest: Path, seen: dict, rows_seen
         _leak_check(by_label, chosen, skipped, notes, name)
     folders = {value: safe_label(value, i) for i, value in enumerate(chosen)}
     n_per_label, min_per_label = limits.n_per_label, limits.min_per_label
-    queues = {value: _spread(sorted(by_label[value]), n_per_label) for value in chosen}
+    queues = {value: _spread(sorted(by_label[value]), n_per_label, _phase(seed, value)) for value in chosen}
     if mapping.input_kind == "text":
         counts, sizes = _write_texts(queues, folders, mapping, dest, n_per_label)
     else:
@@ -1808,11 +1943,19 @@ def _word_pattern(label: str) -> re.Pattern:
     return re.compile(rf"(?<![^\W_])(?:{body})(?![^\W_])", re.IGNORECASE)
 
 
-def _spread(items: list, k: int) -> list:
-    """k items evenly spaced through the list first, then the rest as spares for failed downloads."""
+def _phase(seed: str | None, label: str) -> float:
+    """Where in [0, 1) of the first step a label's evenly spaced picks start: 0 without a seed."""
+    if seed is None:
+        return 0.0
+    return int(hashlib.sha256(f"{seed}\n{label}".encode()).hexdigest()[:8], 16) / 2 ** 32
+
+
+def _spread(items: list, k: int, phase: float = 0.0) -> list:
+    """k items evenly spaced through the list first (from phase, in [0, 1), of the first step), then the rest as
+    spares for failed downloads."""
     if len(items) <= k:
         return list(items)
-    picks = sorted({int(i * len(items) / k) for i in range(k)})
+    picks = sorted({int((i + phase) * len(items) / k) for i in range(k)})
     chosen = set(picks)
     return [items[j] for j in picks] + [x for j, x in enumerate(items) if j not in chosen]
 
@@ -1927,7 +2070,10 @@ def _download_all(queues, folders, mapping, dest, n_per_label, deadline, max_byt
         pool.shutdown(wait=False, cancel_futures=True)  # an abandoned download never writes: only this loop does
     if cleaning["stripped"]:
         how = {"Audio": "tags, by an ffmpeg remux", "Video": "tags, by an ffmpeg remux",
-               "Mesh": "glTF names and extras", "Image": "PNG text chunks, JPEG EXIF/XMP/comments"}.get(
+               "Mesh": "glTF names and extras; OBJ/OFF comments and object names, PLY comments, STL solid names",
+               "Image": "PNG text chunks, JPEG EXIF/XMP/comments",
+               "Molecule": "molfile title and comment lines, SDF data fields, SMILES names",
+               "Geo": "GeoJSON properties, KML/GPX names, descriptions and metadata"}.get(
             mapping.media_type, "names and tags")
         notes.append(f"stripped the metadata that can name a label from {cleaning['stripped']} files ({how})")
     if cleaning["unstripped"]:
@@ -2007,6 +2153,8 @@ def _strip_metadata(data: bytes, ext: str, media_type: str | None, ffmpeg: str |
             out = _strip_png(data)
         elif data[:3] == b"\xff\xd8\xff":
             out = _strip_jpeg(data)
+        elif ext in _FILE_STRIPPERS:
+            out = _FILE_STRIPPERS[ext](data)
         elif media_type in ("Audio", "Video"):
             out = _remux(data, ext, media_type, ffmpeg, timeout_s) if ffmpeg else None
         else:
@@ -2131,6 +2279,128 @@ def _remux(data: bytes, ext: str, media_type: str, ffmpeg: str, timeout_s: float
         if done.returncode != 0 or not target.is_file():
             return None
         return target.read_bytes() or None
+
+
+# Mesh, molecule and geometry files keep names in plain text: an OBJ's comments and o/g lines, a PLY's comment
+# lines, an STL's solid name (or a binary STL's 80-byte header), an OFF's comments, a molfile's title and comment
+# lines and an SDF's data fields, a SMILES file's names, GeoJSON properties and KML/GPX names and descriptions. Each
+# helper drops those and leaves the geometry or structure byte for byte; None when the file is not of its format.
+def _lines_without(data: bytes, drop: Callable[[bytes], bool]) -> bytes:
+    return b"".join(line for line in data.splitlines(keepends=True) if not drop(line.strip()))
+
+
+def _cut_comments(data: bytes) -> bytes:
+    """data with every "#" comment cut from its line; a line holding only a comment is dropped."""
+    out = []
+    for line in data.splitlines(keepends=True):
+        if b"#" in line:
+            body = line.split(b"#", 1)[0].rstrip()
+            if not body.strip():
+                continue
+            line = body + line[len(line.rstrip(b"\r\n")):]
+        out.append(line)
+    return b"".join(out)
+
+
+def _strip_obj(data: bytes) -> bytes | None:
+    if not re.search(rb"(?m)^[ \t]*v[ \t]", data[:SCAN_BYTES]):
+        return None
+    return _lines_without(_cut_comments(data), lambda line: line.split(None, 1)[:1] in (
+        [b"o"], [b"g"], [b"mtllib"], [b"usemtl"]))
+
+
+def _strip_off(data: bytes) -> bytes | None:
+    if not re.match(rb"[A-Z0-9]{0,4}OFF", data.lstrip()[:12]):
+        return None
+    return _cut_comments(data)
+
+
+def _strip_ply(data: bytes) -> bytes | None:
+    end = data.find(b"end_header")
+    newline = data.find(b"\n", end) if data.startswith(b"ply") and end >= 0 else -1
+    if newline < 0:
+        return None
+    header = _lines_without(data[:newline + 1], lambda line: line.startswith((b"comment", b"obj_info")))
+    return header + data[newline + 1:]
+
+
+def _strip_stl(data: bytes) -> bytes | None:
+    if len(data) >= 84 and 84 + 50 * struct.unpack_from("<I", data, 80)[0] == len(data):
+        return b"\x00" * 80 + data[80:]  # a binary STL: its free-text 80-byte header often names the part
+    if data.lstrip()[:5].lower() == b"solid":
+        return re.sub(rb"(?im)^([ \t]*(?:end)?solid)[ \t][^\r\n]*", rb"\1", data)
+    return None
+
+
+def _strip_mol(data: bytes) -> bytes | None:
+    """The molfile with its title, program/timestamp and comment lines (the first three) blanked, up to M  END."""
+    lines = data.splitlines(keepends=True)
+    end = next((i for i, line in enumerate(lines) if line.strip() == b"M  END"), None)
+    if end is None or end < 3:
+        return None
+    blank = [line[len(line.rstrip(b"\r\n")):] or b"\n" for line in lines[:3]]
+    return b"".join(blank + lines[3:end + 1])
+
+
+def _strip_sdf(data: bytes) -> bytes | None:
+    """Each record's molfile stripped (_strip_mol) and its data fields (> <name> blocks after M  END) dropped."""
+    out, record = [], []
+    for line in data.splitlines(keepends=True) + [None]:  # None ends the last record
+        if line is not None and line.strip() != b"$$$$":
+            record.append(line)
+            continue
+        if b"".join(record).strip():
+            mol = _strip_mol(b"".join(record))
+            if mol is None:
+                return None
+            out.append(mol + (line or b""))
+        record = []
+    return b"".join(out) or None
+
+
+def _strip_smi(data: bytes) -> bytes | None:
+    """One SMILES string a line, without the names that may follow it."""
+    lines = [line.split()[0] for line in data.decode("ascii").splitlines()
+             if line.strip() and not line.lstrip().startswith("#")]
+    if not lines or not all(_SMILES.match(smiles) for smiles in lines):
+        return None
+    return ("\n".join(lines) + "\n").encode("ascii")
+
+
+_GEO_KEYS = frozenset(("type", "features", "geometry", "geometries", "coordinates", "bbox"))
+
+
+def _strip_geojson(data: bytes) -> bytes | None:
+    """The GeoJSON with only its geometry: every Feature's properties emptied, names, ids and other keys dropped."""
+    doc = json.loads(data)
+    if not isinstance(doc, dict) or not isinstance(doc.get("type"), str):
+        return None
+
+    def clean(node):
+        if isinstance(node, dict):
+            out = {key: clean(value) for key, value in node.items() if key in _GEO_KEYS}
+            if node.get("type") == "Feature":
+                out["properties"] = {}
+            return out
+        return [clean(value) for value in node] if isinstance(node, list) else node
+
+    return json.dumps(clean(doc), separators=(",", ":")).encode("ascii")
+
+
+_XML_NAMED = re.compile(rb"<((?:\w+:)?(?:name|description|desc|cmt|keywords|author|metadata|ExtendedData|Snippet|"
+                        rb"copyright|link|address|phoneNumber))\b[^>]*?(?:/>|>.*?</\1\s*>)", re.S | re.I)
+
+
+def _strip_xml(data: bytes) -> bytes | None:
+    """A KML or GPX file without its comments and its name, description, metadata and link elements."""
+    if not re.search(rb"<(?:\w+:)?(?:kml|gpx)\b", data[:4096]):
+        return None
+    return _XML_NAMED.sub(b"", re.sub(rb"<!--.*?-->", b"", data, flags=re.S))
+
+
+_FILE_STRIPPERS = {".obj": _strip_obj, ".off": _strip_off, ".ply": _strip_ply, ".stl": _strip_stl,
+                   ".mol": _strip_mol, ".sdf": _strip_sdf, ".smi": _strip_smi, ".geojson": _strip_geojson,
+                   ".kml": _strip_xml, ".gpx": _strip_xml}
 
 
 # ----------------------------------------------------------------------------- table files a web search names
@@ -2673,9 +2943,299 @@ def _zenodo_licence(data: bytes | None) -> str | None:
     return _short(licence, 120) or None if isinstance(licence, str) else None
 
 
+# ----------------------------------------------------------------------------- folder-labelled repositories
+# Folders that never name a label: splits, generic containers and the input's own kind.
+_GENERIC_FOLDERS = frozenset("""
+train training trainset train_set train_data test testing testset test_set test_data val valid validation validate
+valset val_set dev devset dev_set eval evaluation holdout heldout held_out trainval train_val train_test
+data dataset datasets files file raw all full split splits subset subsets sample samples example examples
+images image imgs img pictures photos videos video clips clip audio audios sounds sound wav wavs meshes mesh models
+model shapes objects obj off ply stl glb gltf molecules mol sdf geojson kml gpx frames recordings media assets
+content contents resources downloads download extracted unzipped original originals processed source sources src
+output outputs input inputs public main master default
+""".split())
+_GENERIC_NUMBERED = re.compile(r"(?:train|training|test|testing|val|valid|validation|dev|eval|fold|part|split|batch|"
+                               r"chunk|shard|subset|set|seq|session|run|version|v)[\W_]*\d+[a-z]?")
+_NUMBERED_ITEM = re.compile(r"(?:class|label|category|cls|id|item|sample|group|subject|speaker|user)[\W_]*\d+")
+
+
+def _generic_folder(name: str) -> bool:
+    key = re.sub(r"[\s\-]+", "_", name.strip().lower())
+    return key in _GENERIC_FOLDERS or key.isdigit() or bool(_GENERIC_NUMBERED.fullmatch(key))
+
+
+def _id_like(name: str) -> bool:
+    """A folder name that is an id, not a label: mostly digits (n01440764, 2019), a hash or UUID, or a numbered
+    item (chair_0001, sample-07, class3)."""
+    key = name.strip().lower()
+    alnum = re.sub(r"[^a-z0-9]", "", key)
+    digits = sum(c.isdigit() for c in alnum)
+    return (not alnum or 2 * digits >= len(alnum)
+            or (len(alnum) >= 8 and digits > 0 and re.fullmatch(r"[0-9a-f]+", alnum) is not None)
+            or re.search(r"(?:[\W_]\d{2,}|\d{3,})$", key) is not None or _NUMBERED_ITEM.fullmatch(key) is not None)
+
+
+def _folder_label(parts: list[str], ids: Counter) -> tuple[int, str] | None:
+    """(depth, name) of the nearest folder above a file (parts: its path's parts) that can name a label: not a
+    split or generic name and not an id (counted in ids); None when there is none."""
+    for depth in range(len(parts) - 2, -1, -1):
+        name = parts[depth]
+        if _generic_folder(name):
+            continue
+        if _id_like(name):
+            ids[name] += 1
+            continue
+        return depth, name
+    return None
+
+
+def _bad_path(path: str) -> bool:
+    parts = path.split("/")
+    return "\\" in path or any(p in ("", ".", "..", "__MACOSX") or p.startswith(".") for p in parts)
+
+
+@dataclass
+class _Layout:
+    matching: list[tuple[str, int]]  # the files of the input's kind, as (path, size), sorted by path
+    found: dict[int, tuple[int, str]]  # index in matching -> (depth, folder name) of the files with a label folder
+    skipped: Counter
+    ids: Counter  # id-like folder names passed over -> files
+
+
+def _folder_labels(files: list[tuple[str, int]], exts: tuple[str, ...]) -> _Layout:
+    matching = [(p, s) for p, s in files if PurePosixPath(p).suffix.lower() in exts]
+    layout = _Layout(matching, {}, Counter(), Counter())
+    for idx, (path, _) in enumerate(matching):
+        if _bad_path(path):
+            layout.skipped["bad_path"] += 1
+            continue
+        hit = _folder_label(path.split("/"), layout.ids)
+        if hit is None:
+            layout.skipped["no_label_folder"] += 1
+        else:
+            layout.found[idx] = hit
+    return layout
+
+
+def _folder_depth(name: str, layout: _Layout, exts: tuple[str, ...], min_files: int) -> tuple[int, Counter]:
+    """The folder depth that labels the repository's files, and its folder names' file counts: the depth most of
+    the files' nearest label folders share (a tie goes to the deeper), whose names give at least 2 labels with
+    min_files files each; else ProbesUnavailable saying why."""
+    kinds = "/".join(exts)
+    if not layout.matching:
+        raise ProbesUnavailable(f"{name} holds no {kinds} files")
+    if not layout.found:
+        raise ProbesUnavailable(
+            f"none of {name}'s {len(layout.matching):,} {kinds} files sits in a folder that can name a label"
+            + (f": the folder names look like ids (e.g. {', '.join(n for n, _ in layout.ids.most_common(4))})"
+               if layout.ids else " (they sit in the top folder or in split or generic folders only)"))
+    depths = Counter(depth for depth, _ in layout.found.values())
+    depth, count = max(depths.items(), key=lambda item: (item[1], item[0]))
+    if 2 * count <= len(layout.found):
+        raise ProbesUnavailable(f"{name}'s files sit at no one folder depth: files per depth "
+                                f"{dict(sorted(depths.items()))}, so its folders do not label them consistently")
+    names = Counter(folder for d, folder in layout.found.values() if d == depth)
+    if sum(1 for n in names.values() if n >= min_files) < 2:
+        top = ", ".join(f"{folder} ({n})" for folder, n in names.most_common(6))
+        raise ProbesUnavailable(f"fewer than 2 of {name}'s label folders hold {min_files} {kinds} files (files "
+                                f"per folder at depth {depth}: {top})")
+    return depth, names
+
+
+def _resolve_url(hub_id: str, revision: str, path: str) -> str:
+    return (f"https://huggingface.co/datasets/{hub_id}/resolve/{urllib.parse.quote(revision, safe='')}/"
+            f"{urllib.parse.quote(path, safe='/')}")
+
+
+_LINK_NEXT = re.compile(r'<([^>]*)>[^,<]*;\s*rel="?next"?', re.I)
+
+
+def _next_link(header: str | None) -> str | None:
+    """The rel="next" URL of a Link header, or None."""
+    match = _LINK_NEXT.search(header) if isinstance(header, str) else None
+    return match.group(1).strip() if match else None
+
+
+def _tree_page(url: str, *, what: str, deadline: float) -> tuple[object, str | None]:
+    def request(seconds):
+        body, link = _http_get_page(url, timeout=seconds, max_bytes=JSON_MAX_BYTES)
+        return json.loads(body), _next_link(link)
+
+    return _attempts(request, what=what, timeout=TIMEOUT_S, deadline=deadline, retry=True)
+
+
+def _list_folder(folder: FolderCandidate, deadline: float | None) -> tuple[list[tuple[str, int]], list[str]]:
+    """The repository's files as (path, size), sorted by path, and notes: from the Hub tree API at its revision
+    (pinned to a commit first when the candidate has none), paged through the Link header; at most
+    TREE_MAX_PAGES pages within TREE_BUDGET_S. Listed once per candidate."""
+    if folder._files is not None:
+        return folder._files
+    stop = _now() + TREE_BUDGET_S if deadline is None else min(deadline, _now() + TREE_BUDGET_S)
+    notes: list[str] = []
+    if not folder.revision:
+        folder.revision = _pin_revision(folder.hub_id, stop)
+        if folder.revision == "main":
+            notes.append(f"{folder.hub_id}'s commit could not be read, so its files were listed and downloaded at "
+                         "the main branch")
+    url = f"{HUB_SEARCH}/{folder.hub_id}/tree/{urllib.parse.quote(folder.revision, safe='')}?recursive=true"
+    path = urllib.parse.urlsplit(url).path
+    what = f"the Hub's file list of {folder.hub_id}"
+    files: list[tuple[str, int]] = []
+    pages = 0
+    while url:
+        if pages >= TREE_MAX_PAGES or (pages and stop - _now() < 2):
+            notes.append(f"listed only the first {pages} pages ({len(files):,} files) of {folder.hub_id}'s file list "
+                         f"({'the page cap' if pages >= TREE_MAX_PAGES else 'the time budget'}), so its labels and "
+                         "counts come from those")
+            break
+        try:
+            answer, link = _tree_page(url, what=what, deadline=stop)
+        except ProbesUnavailable as exc:
+            if not pages:
+                raise
+            notes.append(f"the file list stopped after {pages} pages ({len(files):,} files): {exc}")
+            break
+        if not isinstance(answer, list):
+            raise ProbesUnavailable(f"{what} did not answer a list")
+        pages += 1
+        for entry in answer:
+            if isinstance(entry, dict) and entry.get("type") == "file" and isinstance(entry.get("path"), str):
+                lfs = entry.get("lfs") if isinstance(entry.get("lfs"), dict) else {}
+                files.append((entry["path"], _int(lfs.get("size")) or _int(entry.get("size"))))
+        url = urllib.parse.urljoin(url, link) if link else None
+        if url and (urllib.parse.urlsplit(url).hostname != "huggingface.co" or not _allowed_url(url)
+                    or urllib.parse.urlsplit(url).path != path):
+            notes.append(f"the file list's next page pointed elsewhere ({_host(url)}), so listing stopped after "
+                         f"{pages} pages")
+            break
+    files.sort()
+    folder._files = (files, notes)
+    return folder._files
+
+
+def _pin_revision(hub_id: str, deadline: float) -> str:
+    """The repository's current commit from its Hub record, else "main"."""
+    try:
+        record = _get_json(f"{HUB_SEARCH}/{hub_id}", {}, what=f"the Hub record of {hub_id}", deadline=deadline,
+                           retry=False)
+    except ProbesUnavailable:
+        return "main"
+    sha = record.get("sha") if isinstance(record, dict) else None
+    return sha if isinstance(sha, str) and _SHA.fullmatch(sha) else "main"
+
+
+def _choose_folder(folder: FolderCandidate, goal: str, modality: str, wanted: list[str], deadline: float | None,
+                   min_per_label: int) -> Mapping:
+    """The folder kind's Mapping: the folder depth that labels the repository's files of the input's kind, trusted
+    only when the repository's id or title names the goal's topic (as for a generic label column) or the folder
+    names name the goal's words or the wanted labels."""
+    profile = _profile(modality)
+    kind = profile.folder if profile else None
+    if kind is None:
+        raise ProbesUnavailable(f"no file types are known for {modality!r}, so a folder-labelled repository cannot "
+                                "be read for it")
+    files, _ = _list_folder(folder, deadline)
+    exts = _FOLDER_EXT[kind]
+    layout = _folder_labels(files, exts)
+    depth, names = _folder_depth(folder.hub_id, layout, exts, min_per_label)
+    labels = [name for name, _ in names.most_common()]
+    topic = _topic_words(goal, modality, profile)
+    goal_words = [w for w in _topic_weights(goal, modality, profile) if w in _content_words(goal)]
+    if not (_names_topic(_Named(folder.hub_id, folder.title), topic)
+            or _values_name_goal(_Column("folders", "classlabel", names=labels), [], goal_words, wanted)):
+        raise ProbesUnavailable(
+            f"{folder.hub_id}'s {kind} files sit in folders named {', '.join(labels[:6])}"
+            f"{', ...' if len(labels) > 6 else ''}, but its name does not mention the goal's topic "
+            f"({'/'.join(sorted(topic)[:8]) or 'the goal'}), so its folder names are not trusted as labels")
+    at_depth = [layout.matching[i][0] for i, (d, _) in sorted(layout.found.items()) if d == depth]
+    ext = Counter(PurePosixPath(p).suffix.lower() for p in at_depth).most_common(1)[0][0]
+    reason = (f"rule: {len(at_depth):,} {'/'.join(sorted({PurePosixPath(p).suffix.lower() for p in at_depth}))} "
+              f"files labelled by the name of folder {depth + 1} of their path (e.g. {at_depth[0][:120]}), "
+              f"{len(labels)} labels")
+    return Mapping(folder.revision or "main", "", [], "media", "", ext, "", "folder", labels, None, kind, "rule",
+                   reason, depth)
+
+
+def _fetch_folder(folder: FolderCandidate, mapping: Mapping, dest: Path, limits: _Limits,
+                  deadline: float) -> FetchReport:
+    """The files at the mapping's folder depth, downloaded through the repository's resolve URLs at its revision
+    into dest/<label>/<n><extension>, through the same label choice, caps, metadata stripping and leak scan as a
+    viewer dataset's media."""
+    name = folder.hub_id
+    if mapping.label_kind != "folder" or mapping.folder_depth is None or mapping.media_type not in _FOLDER_EXT:
+        raise ProbesUnavailable(f"the mapping does not fit the folder-labelled repository {name}")
+    files, list_notes = _list_folder(folder, deadline)
+    revision = folder.revision or "main"
+    layout = _folder_labels(files, _FOLDER_EXT[mapping.media_type])
+    skipped: Counter = Counter()
+    seen: dict[int, tuple[str, list[str]]] = {}
+    for idx, (depth, label) in layout.found.items():
+        path, size = layout.matching[idx]
+        if depth != mapping.folder_depth:
+            skipped["other_folder_depth"] += 1
+        elif size > FILE_MAX_BYTES:  # the file list gives each file's size: no request for one over the cap
+            skipped["too_large"] += 1
+        else:
+            seen[idx] = (_resolve_url(name, revision, path), [label])
+    skipped.update(layout.skipped)
+    notes = list(list_notes) + [
+        f"labels are the names of the folders the files sit in (folder {mapping.folder_depth + 1} of each path), "
+        f"read from {name}'s file list at revision {revision}; files are written as <n><extension>, never under "
+        "their own names"]
+    notes += _card_notes(folder, revision, deadline)
+    report = _write_probes(name, mapping, dest, seen, len(layout.matching), skipped, notes, limits, deadline,
+                           seed=f"{name}@{revision}")
+    report.licence, report.hub_id = folder.licence, name
+    report.source_url = f"https://huggingface.co/datasets/{name}/tree/{urllib.parse.quote(revision, safe='')}"
+    report.licence_source = "the Hub dataset card" if folder.licence else None
+    return report
+
+
+_TERMS = re.compile(r"licen[cs]|terms of use|terms and conditions|academic|non-?commercial|research (?:use|purpose|"
+                    r"only)|copyright|all rights reserved", re.I)
+_LINK = re.compile(r"https?://([A-Za-z0-9.-]+)")
+
+
+def _card_notes(folder: FolderCandidate, revision: str, deadline: float) -> list[str]:
+    """What the dataset card says about the files' terms, quoted, never invented: the licence it states (or that it
+    states none), other sites it links to (a re-hosted dataset's own source, whose terms the card's licence may not
+    cover) and up to 3 of its lines that mention a licence, terms, academic or non-commercial use or copyright."""
+    if folder.licence:
+        note = f"licence {folder.licence!r} is what the Hub dataset card or its licence tag states for this repository"
+    else:
+        note = "the Hub dataset card states no licence, so the files' terms are unknown"
+    left = min(LICENCE_TIMEOUT_S, deadline - _now())
+    try:
+        text = _decode(_http_get(_resolve_url(folder.hub_id, revision, "README.md"), timeout=left,
+                                 max_bytes=LICENCE_MAX_BYTES)) if left >= 0.5 else None
+    except _HttpError:
+        text = None
+    if text is None:
+        return [note + "; the card's text could not be read"]
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    body = re.sub(r"\A\s*---\n.*?\n---[ \t]*(?:\n|\Z)", "", text, count=1, flags=re.S)  # the YAML front matter
+    hosts = list(dict.fromkeys(h.lower().rstrip(".") for h in _LINK.findall(body)
+                               if not re.search(r"(?:^|\.)(?:huggingface\.co|hf\.co)$", h.lower().rstrip("."))))
+    if hosts:
+        note += (f"; the card links to other sites ({', '.join(hosts[:3])}): if the files come from there, that "
+                 "source's own terms may apply, which this licence may not cover")
+    lines = body.splitlines()
+    quoted = []
+    for i, line in enumerate(lines):
+        if len(quoted) < 3 and _TERMS.search(line):
+            if line.lstrip().startswith("#"):  # a heading such as "## License": quote its section's first line
+                text = next((s.strip() for s in lines[i + 1:i + 6] if s.strip()), "")
+                if not text or text.startswith("#"):
+                    continue
+                line = f"{line.strip().lstrip('#').strip()}: {text}"
+            quoted.append(" ".join(line.split())[:200])
+    return [note] + [f"the dataset card says: {line!r}" for line in quoted]
+
+
 # ----------------------------------------------------------------------------- the whole step
 class _Exclusions:
-    """exclude_sources: Hub ids, dataset pages, file URLs (GitHub blob or raw alike), folders or repositories. A
+    """exclude_sources: Hub ids (also as owner/name@revision), dataset pages, file URLs (GitHub blob or raw alike),
+    folders or repositories. A
     candidate is excluded when its id or URL is one of them, when it is a file in the same folder as an excluded file
     (another file of the same dataset), or when its URL lies under an excluded URL (a repository or folder)."""
 
@@ -2686,7 +3246,8 @@ class _Exclusions:
                 continue
             value = value.strip().rstrip("/")
             self.keys.add(value.lower())
-            hub_id = _hub_id_of(value)
+            pinned = re.fullmatch(r"([\w.-]+/[\w.-]+)@[\w./-]+", value)  # owner/name@revision
+            hub_id = _hub_id_of(pinned.group(1) if pinned else value)
             if hub_id:
                 self.keys.add(hub_id.lower())
             url, _ = _file_url(value)
@@ -2714,6 +3275,12 @@ class _Exclusions:
                 return "under an excluded URL"
             return None
         return "in exclude_sources" if {candidate.hub_id.lower(), candidate.url.lower()} & self.keys else None
+
+
+def _as_folder(candidate: HubCandidate, modality: str) -> FolderCandidate | None:
+    """The candidate as a folder-labelled repository, when files of the modality's kind are known."""
+    profile = _profile(modality)
+    return FolderCandidate.of(candidate) if profile and profile.folder else None
 
 
 def _from_web(candidate) -> bool:
@@ -2838,6 +3405,7 @@ def find_probes(goal: str, modality: str, dest_root: Path, *, wanted_labels: lis
         raise ProbesUnavailable(f"the Hub search found no open dataset for queries {queries}" + _web_note(web)
                                 + (f"; {len(excluded)} sources were in exclude_sources" if excluded else ""))
     tried, fetched, out_of_time = [], 0, False
+    min_files = fetch_kwargs.get("min_per_label", 6)
     for candidate in window:
         if fetched >= max_candidates:
             break
@@ -2852,38 +3420,59 @@ def find_probes(goal: str, modality: str, dest_root: Path, *, wanted_labels: lis
         say({"action": "candidate", "status": "start"} | tag | about
             | {"licence": candidate.licence, "url": candidate.url})
         say({"action": "inspect", "status": "start"} | tag)
+        target, viewer = candidate, ""  # what is fetched (the candidate, or its folder kind), why the viewer failed
         try:
             try:
                 mapping = (_choose_table if is_table else _choose)(candidate, goal, modality, wanted, deadline)
             except ProbesUnavailable as exc:
-                tried.append(_tried(candidate, f"inspect: {exc}"))
                 say({"action": "inspect", "status": "fail"} | tag | {"reason": str(exc)})
-                say({"action": "candidate", "status": "fail"} | tag | {"reason": str(exc)})
-                continue
+                # A Hub dataset whose viewer fails or shows no input column may still keep its files in one folder
+                # per label: tried in the same candidate's turn (a viewer dataset without a label column is not).
+                folder = None if is_table or isinstance(exc, _NoLabel) else _as_folder(candidate, modality)
+                if folder is None or deadline - _now() < 5:
+                    tried.append(_tried(candidate, f"inspect: {exc}"))
+                    say({"action": "candidate", "status": "fail"} | tag | {"reason": str(exc)})
+                    continue
+                target, viewer, tag = folder, str(exc), tag | {"kind": "folder"}
+                say({"action": "inspect", "status": "start"} | tag)
+                try:
+                    mapping = _choose_folder(folder, goal, modality, wanted, deadline, min_files)
+                except ProbesUnavailable as exc2:
+                    reason = f"inspect: {exc}; folder: {exc2}"
+                    tried.append(_tried(candidate, reason))
+                    say({"action": "inspect", "status": "fail"} | tag | {"reason": str(exc2)})
+                    say({"action": "candidate", "status": "fail"} | tag | {"reason": reason})
+                    continue
             say({"action": "inspect", "status": "ok"} | tag | {"mapping": mapping.to_dict()})
             fetched += 1
-            dest = dest_root / _folder_for(candidate)
+            dest = dest_root / _folder_for(target)
             say({"action": "fetch", "status": "start"} | tag | {"folder": str(dest)})
             try:
-                report = fetch_probes(candidate, mapping, dest, wanted_labels=wanted_labels, disjoint_from=disjoint,
+                report = fetch_probes(target, mapping, dest, wanted_labels=wanted_labels, disjoint_from=disjoint,
                                       budget_s=min(fetch_budget, max(0.0, deadline - _now())), **fetch_kwargs)
             except ProbesUnavailable as exc:
-                tried.append(_tried(candidate, f"fetch: {exc}"))
+                reason = f"inspect: {viewer}; folder fetch: {exc}" if viewer else f"fetch: {exc}"
+                tried.append(_tried(candidate, reason))
                 say({"action": "fetch", "status": "fail"} | tag | {"reason": str(exc)})
-                say({"action": "candidate", "status": "fail"} | tag | {"reason": str(exc)})
+                say({"action": "candidate", "status": "fail"} | tag | {"reason": reason})
                 continue
         finally:
             if is_table:
                 candidate._loaded = None  # the parsed rows are not needed again
+            if isinstance(target, FolderCandidate):
+                target._files = None  # nor the file list
         say({"action": "fetch", "status": "ok"} | tag | {"counts": dict(report.counts), "rows_seen": report.rows_seen,
                                                          "skipped": dict(report.skipped), "bytes": report.bytes})
         say({"action": "candidate", "status": "ok"} | tag | {"labels": list(report.labels),
                                                              "licence": report.licence})
+        notes = ([f"the dataset viewer could not be used ({viewer}), so the files were read from the repository's "
+                  "folders"] if viewer else []) + [mapping.reason] + list(report.notes)
         info = {"hub_id": tag["hub_id"], "url": candidate.url, "title": candidate.title, "licence": report.licence,
                 "labels": list(report.labels), "label_values": dict(report.label_values),
                 "counts": dict(report.counts), "mapping": mapping.to_dict(), "rows_seen": report.rows_seen,
                 "skipped": dict(report.skipped), "queries": queries, "query_origin": origin, "tried": tried,
-                "notes": [mapping.reason] + list(report.notes), "kind": tag["kind"], "source": source,
+                "notes": notes, "kind": tag["kind"], "source": source,
+                "revision": target.revision if isinstance(target, FolderCandidate) else None,
                 "licence_source": report.licence_source, "web": web_info, "excluded": excluded,
                 "disjoint_from": list(disjoint)}
         return report.folder, info
