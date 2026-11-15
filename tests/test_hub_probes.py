@@ -1698,3 +1698,31 @@ def test_table_files_are_not_candidates_for_media_inputs(hub, tmp_path, monkeypa
     with pytest.raises(ProbesUnavailable, match="the web search named no usable source"):
         find_probes("Make it recognise music genres", "audio", tmp_path)
     assert not hub.fetched(RAW)
+
+
+def _tiny_gazetteer(path):
+    places = [("CN", "China", "Shanghai"), ("US", "United States of America", "Phoenix"), ("DE", "Germany", "Berlin")]
+    features = [{"type": "Feature", "geometry": {"type": "Point", "coordinates": [0, 0]},
+                 "properties": {"name": city, "adm0name": name, "iso_a2": code}} for code, name, city in places]
+    path.write_text(json.dumps({"type": "FeatureCollection", "features": features}))
+    return path
+
+
+def test_disjoint_labels_match_a_country_code_with_its_name(tmp_path, monkeypatch):
+    """One source labels countries by ISO code, another by name: the second set must not repeat a country."""
+    monkeypatch.setenv("SENSE_GAZETTEER", str(_tiny_gazetteer(tmp_path / "places.geojson")))
+    monkeypatch.setattr(hub_probes, "_country_alias_cache", None)
+    keys = hub_probes._loose_keys(["CN", "US"])
+    assert hub_probes._loose_hit("China", keys) and hub_probes._loose_hit("united_states", keys)
+    assert hub_probes._loose_hit("United States of America", keys)
+    assert not hub_probes._loose_hit("Germany", keys) and not hub_probes._loose_hit("Japan", keys)
+    names = hub_probes._loose_keys(["germany"])
+    assert hub_probes._loose_hit("DE", names) and not hub_probes._loose_hit("CN", names)
+
+
+def test_without_a_gazetteer_disjoint_labels_match_as_before(tmp_path, monkeypatch):
+    monkeypatch.setenv("SENSE_GAZETTEER", str(tmp_path / "missing.geojson"))
+    monkeypatch.setattr(hub_probes, "_country_alias_cache", None)
+    keys = hub_probes._loose_keys(["CN", "Hip-Hop"])
+    assert hub_probes._loose_hit("hip_hops", keys) and hub_probes._loose_hit("cn", keys)
+    assert not hub_probes._loose_hit("China", keys)

@@ -1446,18 +1446,51 @@ def _disjoint(values, wanted) -> tuple[str, ...]:
 
 
 def _loose_keys(labels) -> set[str]:
-    """Label keys with case, separators and a plural ending ignored ("Hip-Hop", "hip_hop" and "hiphops" alike)."""
+    """Label keys with case, separators and a plural ending ignored ("Hip-Hop", "hip_hop" and "hiphops" alike),
+    plus the other names of a country (see _country_aliases), so "CN" and "China" count as one label."""
     keys = set()
     for label in labels:
         key = re.sub(r"[\W_]+", "", str(label).lower())
         if key:
-            keys |= {key, _singular(key)}
+            keys |= {key, _singular(key)} | _country_aliases().get(key, set())
     return keys
 
 
 def _loose_hit(label: str, keys: set[str]) -> bool:
     key = re.sub(r"[\W_]+", "", str(label).lower())
-    return bool(key) and (key in keys or _singular(key) in keys)
+    return bool(key) and (key in keys or _singular(key) in keys or bool(_country_aliases().get(key, set()) & keys))
+
+
+_country_alias_cache: dict[str, set[str]] | None = None
+
+
+def _country_aliases() -> dict[str, set[str]]:
+    """Loose key -> loose keys of the same country: its ISO 3166 alpha-2 code and Natural Earth's country name (with
+    and without "of America" and "The"), read once from the gazetteer sense.adapter_kit uses (SENSE_GAZETTEER, else
+    ~/.cache/sense-harness/gazetteer/ne_10m_populated_places_simple.geojson); {} when it is missing or unreadable.
+    Used only to keep a second probe set's categories disjoint from the first one's, where one source labels
+    countries by code and the other by name. A mistaken alias can only drop more labels, never let one through."""
+    global _country_alias_cache
+    if _country_alias_cache is None:
+        path = os.environ.get("SENSE_GAZETTEER") or os.path.expanduser(
+            "~/.cache/sense-harness/gazetteer/ne_10m_populated_places_simple.geojson")
+        groups: dict[str, set[str]] = {}
+        try:
+            with open(path, encoding="utf-8") as handle:
+                features = json.load(handle).get("features") or []
+        except (OSError, ValueError, AttributeError):
+            features = []
+        for feature in features:
+            props = (feature or {}).get("properties") or {}
+            code, name = str(props.get("iso_a2") or ""), str(props.get("adm0name") or "")
+            if len(code) != 2 or not code.isalpha() or not name:
+                continue
+            short = re.sub(r"\b(of america|the)\b", "", name, flags=re.IGNORECASE)
+            keys = {re.sub(r"[\W_]+", "", text.lower()) for text in (code, name, short)} - {""}
+            for key in keys:
+                groups.setdefault(key, set()).update(keys)
+        _country_alias_cache = groups
+    return _country_alias_cache
 
 
 def _fetch(candidate, mapping, dest, limits: _Limits, start, deadline):
