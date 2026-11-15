@@ -70,10 +70,10 @@ run_adapter. Anything else (another return value, an exception, a non-zero exit,
 or memory) raises AdapterError with the reason and the tail of the traceback, so the agent can show it to the LLM
 and ask for a repair.
 
-The adapter's path. The runner puts <tmp>/lib at sys.path[0], holding a copy of sense/adapter_kit.py, so an
-adapter can `import adapter_kit`; when the toolbox exists (agent.installer.toolbox_dir(), the packages a user
-approved, under config.home()) it is added right after with sys.path.insert, never site.addsitedir, so no .pth
-file in it runs.
+The adapter's path. The runner puts <tmp>/lib at sys.path[0], holding a copy of sense/adapter_kit.py (and nothing
+else), so an adapter can `import adapter_kit`; when the toolbox exists (agent.installer.toolbox_dir(), the packages
+a user approved, under config.home()) it goes at the end of sys.path (sys.path.append, never site.addsitedir, so
+no .pth file in it runs), so a module in it never shadows the standard library or the main site-packages.
 
 matplotlib. Its first font scan takes over 10 s, and every run has a fresh HOME. So the harness builds the font
 cache once (matplotlib_cache(), when the code imports matplotlib or adapter_kit and there is none yet; this is
@@ -140,9 +140,13 @@ than half of the scored files, verify_files raises AdapterError (cause "verify")
 Adapter bridges are prepared in up to PREPARE_WORKERS processes at once.
 Two more controls, on request:
   native=True   each scored question is asked again with the raw file as a text SenseInput (its UTF-8 text, at
-                most MAX_TEXT_CHARS characters, a note saying when it was cut): controls["native"], at the card's
-                chance. Does the adapter add anything to what the model reads in the file as it is? When any scored
-                file is not text, native is not measured and card.reason says so.
+                most MAX_TEXT_CHARS characters, a note saying when it was cut; a few bytes that are not UTF-8, at
+                most 2 or 2% of the characters, read as U+FFFD): controls["native"], at the card's chance. Does the
+                adapter add anything to what the model reads in the file as it is? It is measured file by file: a
+                scored file that is not text (it does not decode, holds NUL, is blank or is more than 2% control
+                characters) is asked with no input, since the model cannot read it as it is, and card.reason counts
+                them. Only when more than half of the scored files are not text is native not measured, and
+                card.reason says so.
   unseen=<ProbeSet>  a second, independent probe set whose categories the adapter was never built around. Its
                 labels that equal a label of `probes` (case-insensitively, separators ignored) are dropped with their
                 files; with fewer than 2 labels or 4 files left, card.reason says "Unseen categories not measured:
@@ -432,8 +436,8 @@ import base64, io, json, os, sys, traceback
 MAX_TEXT, MAX_IMAGES, MAX_SIDE, FSIZE = int(sys.argv[3]), int(sys.argv[4]), int(sys.argv[5]), int(sys.argv[6])
 LIB, TOOLBOX = sys.argv[7], sys.argv[8]
 sys.path.insert(0, LIB)  # adapter_kit
-if TOOLBOX:  # the approved packages, after the kit; never site.addsitedir, so no .pth file runs
-    sys.path.insert(1, TOOLBOX)
+if TOOLBOX:  # the approved packages, last: they never shadow the standard library or the main site-packages;
+    sys.path.append(TOOLBOX)  # never site.addsitedir, so no .pth file runs
 try:  # no file this process or its children write grows past FSIZE (Python ignores SIGXFSZ: writes fail instead)
     import resource
     resource.setrlimit(resource.RLIMIT_FSIZE, (FSIZE, FSIZE))
@@ -1615,20 +1619,29 @@ def verify_files(
             f"no failed file serves as a swapped input. {shown}{more}."
         )
     if native:
+        # File by file: one file that is not text must not switch the control off for a whole set of text files.
         files = [Path(probes.items[int(i)][0]) for i in test]
         texts = [_native_text(p) for p in files]
         not_text = [p for p, text in zip(files, texts) if text is None]
-        if not_text:
+        if len(not_text) * 2 > len(files):
             reasons.append(
-                f"Native not measured: {len(not_text)} of the {len(files)} scored files are not UTF-8 text (first: "
-                f"{not_text[0].name}), so the model cannot be given them as they are."
+                f"Native not measured: {len(not_text)} of the {len(files)} scored files are not text (first: "
+                f"{not_text[0].name}), so the model cannot be given most of them as they are."
             )
         else:
             controls["native"] = ask([
-                SenseInput(kind="text", modality=bridge.modality, source=p.name, text=text,
-                           detail="the file as it is, given as text")
+                None if text is None else SenseInput(
+                    kind="text", modality=bridge.modality, source=p.name, text=text,
+                    detail="the file as it is, given as text",
+                )
                 for p, text in zip(files, texts)
             ])
+            if not_text:
+                reasons.append(
+                    f"Native: {len(not_text)} of the {len(files)} scored files are not text (first: "
+                    f"{not_text[0].name}); the model, which cannot read those as they are, was asked them with no "
+                    "input."
+                )
     if unseen is not None:
         score, chance_unseen, note = _unseen_categories(
             model, bridge, unseen, probes.labels, max_items if unseen_max_items is None else unseen_max_items, seed,
@@ -1684,18 +1697,24 @@ def _ask(
 
 
 def _native_text(path: Path) -> str | None:
-    """The file as it is, for the native control: its UTF-8 text (a byte-order mark dropped), at most
-    MAX_TEXT_CHARS characters with a note when cut; None when it is not text (it does not decode, holds NUL or is
-    more than 2% control characters, or is blank)."""
+    """The file as it is, for the native control: its UTF-8 text (a byte-order mark dropped; a few bytes that do
+    not decode read as U+FFFD, so one Latin-1 letter does not make a note binary: at most 2 of them or 2% of the
+    characters, whichever is more, and never more than 10%), at most MAX_TEXT_CHARS characters with a note when
+    cut; None when it is not text (more does not decode, it holds NUL or is more than 2% control characters, or
+    is blank)."""
     import codecs
 
     with open(path, "rb") as f:
         raw = f.read(MAX_TEXT_CHARS * 4 + 4)
         more = bool(f.read(1))
+    body = raw.removeprefix(codecs.BOM_UTF8)
     try:
-        text = codecs.getincrementaldecoder("utf-8")().decode(raw.removeprefix(codecs.BOM_UTF8), final=not more)
+        text = codecs.getincrementaldecoder("utf-8")().decode(body, final=not more)
     except UnicodeDecodeError:
-        return None
+        text = codecs.getincrementaldecoder("utf-8")(errors="replace").decode(body, final=not more)
+        bad = text.count("\ufffd")
+        if bad > max(2, 0.02 * len(text)) or bad > 0.1 * len(text):
+            return None
     control = sum(1 for ch in text if ord(ch) < 32 and ch not in "\n\r\t\f")
     if not text.strip() or "\x00" in text or control > 0.02 * len(text):
         return None

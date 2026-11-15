@@ -170,13 +170,18 @@ def adapt(path):
         ledger = "denied"
     return {{"text": json.dumps({{
         "kit": os.path.basename(adapter_kit.__file__), "has_views": hasattr(adapter_kit, "mesh_views"),
-        "lib_first": sys.path[0] == os.path.dirname(adapter_kit.__file__), "toolbox_second": sys.path[1],
+        "lib_first": sys.path[0] == os.path.dirname(adapter_kit.__file__), "toolbox_last": sys.path[-1],
         "value": meshkit.VALUE, "pth": hasattr(builtins, "PTH_RAN"), "ledger": ledger,
+        "statistics": statistics.__file__, "stdlib_mean": hasattr(statistics, "mean"),
     }})}}
 '''
+    # A wheel in the toolbox with a module of a standard-library name must not replace that module for adapters.
+    (site_dir / "statistics.py").write_text("SHADOWED = True\n")
+    code = code.replace("import meshkit", "import meshkit\nimport statistics")
     seen = json.loads(run_adapter(code, a_file)["text"])
     assert seen["kit"] == "adapter_kit.py" and seen["has_views"] and seen["lib_first"]
-    assert seen["toolbox_second"] == str(site_dir.resolve()) and seen["value"] == 42
+    assert seen["toolbox_last"] == str(site_dir.resolve()) and seen["value"] == 42
+    assert seen["stdlib_mean"] and not seen["statistics"].startswith(str(site_dir.resolve()))
     assert seen["pth"] is False  # sys.path.insert, never site.addsitedir
     if SANDBOXED:  # exactly the toolbox folder is readable, not the rest of config.home()
         assert seen["ledger"] == "denied"
@@ -1041,7 +1046,38 @@ def test_verify_files_skips_native_for_files_that_are_not_text(tmp_path):
     bridge = AdapterBridge(kind="text", modality="colour file", model_name="fake", code=FIRST_LINE)
     card = verify_files(_fake_model(), bridge, probes, FitRequest(model="fake", dataset=probes.name), native=True)
     assert "native" not in card.controls
-    assert f"Native not measured: {card.n} of the {card.n} scored files are not UTF-8 text" in card.reason
+    assert f"Native not measured: {card.n} of the {card.n} scored files are not text" in card.reason
+
+
+ECHO = '''
+def adapt(path):
+    with open(path, "rb") as f:
+        return {"text": f.read().decode("utf-8", "replace")}
+'''
+
+
+def test_one_odd_file_does_not_switch_the_native_control_off(tmp_path):
+    # An adapter that only echoes the file adds nothing to the model reading it as it is. One Latin-1 byte, or one
+    # binary file, among many text notes must not drop the native control and let the echo pass the text bars.
+    from agent.planner import RulePlanner
+
+    root = _probe_tree(tmp_path / "notes", ["red", "green", "blue", "yellow"], 8)
+    latin1 = root / "red" / "red_00.thing"
+    latin1.write_bytes(latin1.read_bytes() + b" caf\xe9\n")
+    binary = root / "green" / "green_00.thing"
+    binary.write_bytes(b"colour: green\n" + bytes([0, 255, 7]) * 40)
+    probes = probe_folder(root, question="Which colour?", modality="colour file")
+    bridge = AdapterBridge(kind="text", modality="colour file", model_name="fake", code=ECHO)
+    request = FitRequest(model="fake", dataset=probes.name)
+    every = np.arange(len(probes.items))
+    card = verify_files(_fake_model(), bridge, probes, request, idx=every, native=True)
+
+    assert adapters._native_text(latin1).endswith("caf\ufffd\n")  # a few bad bytes still read as text
+    assert adapters._native_text(binary) is None
+    assert card.controls["native"] >= 0.9  # measured: the binary file alone was asked with no input
+    assert "Native: 1 of the 32 scored files are not text" in card.reason and "with no input" in card.reason
+    ok, sentence = RulePlanner().assess(request, card)
+    assert not ok and "the model already reads this file as it is" in sentence
 
 
 def test_verify_files_unseen_categories_control(tmp_path):
