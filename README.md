@@ -1,4 +1,18 @@
-# Sense harness
+# Sensorium
+
+<p align="center">
+  <img src=".github/docs/banner.svg" width="100%" alt="Sensorium, sense harness: give a model a sense it lacks">
+</p>
+
+<p align="center">
+  <strong>An agent that gives a model a sense it doesn't have, proves the sense works, and installs it. If the proof fails, it refuses.</strong>
+</p>
+
+_This project was built at Imperial AI Hack 2026 for the Autonomous Agents track. For the submission, see [docs/devpost.md](docs/devpost.md)._
+
+---
+
+## Overview
 
 An agent that gives a frozen base model (local Qwen3.5, which reads text and images, or an API model) an input sense it lacks: hearing. The agent builds candidate bridges from a frozen audio encoder (CLAP) into the model, scores each one on held-out clips against controls, and installs the best bridge that passes or installs nothing and says why, with the numbers. You then chat with the model about an audio file, and each reply shows which bridge carried the file to the model.
 
