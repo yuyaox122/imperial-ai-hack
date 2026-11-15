@@ -19,7 +19,7 @@ REPO = Path(__file__).resolve().parents[1]
 ARTIFACTS = REPO / "socket_pilot" / "artifacts"
 README = REPO / "README.md"
 REFERENCE = REPO / "docs" / "reference.md"  # the README's detail: settings, results, limits, layout
-DOCS = [README, REFERENCE, REPO / "docs" / "devpost.md", REPO / "docs" / "pitch.md", REPO / "demo" / "script.md",
+DOCS = [README, REFERENCE, REPO / "docs" / "devpost.md", REPO / "docs" / "pitch.md", REPO / "demo" / "script.md", REPO / "demo" / "reproduce.md",
         REPO / "socket_pilot" / "README.md"]
 CODE_DIRS = ["sense", "agent", "server", "integrations", "scripts", "eval"]
 # Every environment variable the code reads is written as one of these quoted names.
