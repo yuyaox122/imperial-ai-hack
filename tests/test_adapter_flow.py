@@ -45,17 +45,24 @@ def adapt(path):
                 faces += 1
     if vertices == 0:
         raise ValueError("no vertices in this file")
-    surface = "flat faces meeting at sharp corners, like a box" if vertices <= 24 else "a smoothly curved surface, like a ball"
+    if vertices <= 24:
+        surface = "flat faces meeting at sharp corners, like a box"
+    elif vertices <= 36:
+        surface = "a pointed tip on a round base, like a cone"
+    else:
+        surface = "a smoothly curved surface, like a ball"
     return {"text": f"The mesh has {vertices} vertices and {faces} faces, with {surface}."}
 '''
 
 
 def mesh(label: str, k: int) -> bytes:
-    """An OBJ file made with trimesh: a box or an icosphere ("ball"), its size varied by k."""
+    """An OBJ file made with trimesh: a box, a cone or an icosphere ("ball"), its size varied by k."""
     import trimesh
 
     if label == "box":
         shape = trimesh.creation.box(extents=[1 + 0.11 * k, 1 + 0.07 * k, 0.5 + 0.05 * k])
+    elif label == "cone":
+        shape = trimesh.creation.cone(radius=0.4 + 0.05 * k, height=1 + 0.1 * k)
     else:
         shape = trimesh.creation.icosphere(subdivisions=1, radius=0.5 + 0.09 * k)
     return shape.export(file_type="obj").encode()
@@ -66,7 +73,7 @@ def shape_design(**changes) -> dict:
         "modality": "3d-model", "format": "obj", "route": "text",
         "description": "Counts the mesh's vertices and faces and says how its surface curves.",
         "libraries": [], "question": "What shape is this 3D model?", "label_hint": "simple solid shapes",
-        "labels": ["box", "ball"], "probe_plan": "dataset",
+        "labels": ["box", "ball", "cone"], "probe_plan": "dataset",
         "probe_reason": "Public mesh datasets label simple shapes.", "install": [],
     }
     return answer | changes
@@ -210,7 +217,7 @@ def chat(client, model: str, files: list[tuple[str, bytes]]) -> dict:
 
 # ----------------------------------------------------------------------------- end to end over HTTP
 def test_a_mesh_gets_an_adapter_sense_from_web_probes_and_chat_uses_it(client, hub, monkeypatch):
-    hub.add_meshes("shapes/solids", ["box", "ball"], 40)
+    hub.add_meshes("shapes/solids", ["box", "ball", "cone"], 40)
     fake = FakeLLM(shape_design())
     monkeypatch.setattr(llm, "ask_json", fake)
     job_id = post_auto(client, "my box.obj", mesh("box", 3))
@@ -230,7 +237,7 @@ def test_a_mesh_gets_an_adapter_sense_from_web_probes_and_chat_uses_it(client, h
     assert ("probes", "candidate", "ok") in sub
     # the step's own summary has no action; the sub-steps of the unseen search come after it
     data = next(e for e in reversed(events) if e["step"] == "data" and e["status"] == "ok" and "action" not in e["data"])
-    assert data["data"]["provenance"] == "dataset" and data["data"]["labels"] == ["ball", "box"]
+    assert data["data"]["provenance"] == "dataset" and data["data"]["labels"] == ["ball", "box", "cone"]
     assert data["data"]["fetched"]["hub_id"] == "shapes/solids" and data["data"]["licence"] == "cc-by-4.0"
     # the only other dataset is the same source with the same labels, so unseen categories cannot be measured
     assert ("unseen", "search", "start") in sub
@@ -360,7 +367,7 @@ def run_auto(file: Path, goal: str = GOAL, **kwargs):
 
 def test_no_probes_anywhere_asks_the_user_for_examples(hub, monkeypatch, tmp_path):
     # The Hub has nothing, and the design cannot build its labels into generated files.
-    monkeypatch.setattr(llm, "ask_json", FakeLLM(shape_design(probe_plan="user")))
+    monkeypatch.setattr(llm, "ask_json", FakeLLM(shape_design(probe_plan="user", labels=["box", "ball"])))
     user_file = tmp_path / "box.obj"
     user_file.write_bytes(mesh("box", 1))
     cards, installed, events = run_auto(user_file)
@@ -409,7 +416,7 @@ def generate(out_dir, labels, n):
                 count = 8 if label == "box" else 42
                 f.write("".join(f"v {k + i} {i} {k}\\n" for i in range(count)) + "f 1 2 3\\n")
 '''
-    fake = FakeLLM(shape_design(probe_plan="generate"))
+    fake = FakeLLM(shape_design(probe_plan="generate", labels=["box", "ball"]))
     original = fake.__call__
 
     def answer(instruction, data, schema, *, max_tokens=400):
@@ -685,7 +692,7 @@ def test_a_still_gif_needs_a_sense_even_for_a_model_that_takes_images(client, mo
 def test_cli_saves_a_run_record_that_sense_runs_imports(hub, monkeypatch, tmp_path, capsys):
     from agent.__main__ import main
 
-    hub.add_meshes("shapes/solids", ["box", "ball"], 40)
+    hub.add_meshes("shapes/solids", ["box", "ball", "cone"], 40)
     monkeypatch.setattr(llm, "ask_json", FakeLLM(shape_design()))
     user_file = tmp_path / "box.obj"
     user_file.write_bytes(mesh("box", 4))

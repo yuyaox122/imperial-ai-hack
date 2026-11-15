@@ -360,6 +360,9 @@ def test_code_checks_before_running():
     assert "network" in synth._static_problem("import urllib.request\ndef adapt(p):\n    pass\n", box, "adapt")
     assert "foreign calls" in synth._static_problem("import ctypes\ndef adapt(p):\n    pass\n", box, "adapt")
     assert "no top-level function adapt" in synth._static_problem("def adapt2(p):\n    pass\n", box, "adapt")
+    three_d = "from mpl_toolkits.mplot3d.art3d import Poly3DCollection\ndef adapt(p):\n    pass\n"
+    assert synth._static_problem(three_d, ["matplotlib"], "adapt") is None  # it ships inside matplotlib
+    assert "mpl_toolkits, which is neither" in synth._static_problem(three_d, ["numpy"], "adapt")
     assert "no top-level function generate" in synth._static_problem(READS_CONTENT, box, "generate")
     assert synth._code_from({"code": "```py\ndef adapt(p):\n    return 1\n```"}) == "def adapt(p):\n    return 1\n"
     assert synth._code_from({"code": "  "}) is None and synth._code_from(None) is None
