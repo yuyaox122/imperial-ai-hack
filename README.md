@@ -70,6 +70,7 @@ Settings can also go in `.env` or `.env.local` (`KEY=VALUE` lines) in the reposi
 | `SENSE_API_VERIFY_ITEMS` | held-out questions scored for an API base model; each costs three paid requests (up to seven through the tool bridge) | 50 (at least 10) |
 | `SENSE_API_CACHE` | `0` turns off the cache of an API model's multiple-choice answers under `<SENSE_HOME>/api_cache` | on |
 | `LINKUP_API_KEY` | enables live web search (Linkup) in the research and data steps of an autonomous run; never used in fake mode | none |
+| `SENSE_GAZETTEER` | the Natural Earth populated-places GeoJSON that `sense.adapter_kit.nearest_places` reads (public domain; `scripts/fetch_gazetteer.py` downloads it). It must not be the source of a coordinate probe set's labels, or every probe would match itself | `~/.cache/sense-harness/gazetteer/ne_10m_populated_places_simple.geojson` |
 | `SENSE_DBX_CATALOG`, `SENSE_DBX_SCHEMA`, `SENSE_DBX_WAREHOUSE`, `SENSE_DBX_EXPERIMENT` | where the [Databricks](#databricks) writer puts runs | `workspace`, `sensorium`, the first SQL warehouse, `/Users/<you>/sensorium` |
 | `DATABRICKS_HOST`, `DATABRICKS_TOKEN`, `DATABRICKS_CONFIG_PROFILE` | Databricks auth, read by the Databricks SDK (or `~/.databrickscfg`) | none |
 
