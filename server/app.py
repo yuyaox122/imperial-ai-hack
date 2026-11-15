@@ -29,6 +29,21 @@ All JSON. Errors: {"detail": "<what went wrong and what to do>"} with a 4xx or 5
                                                     under <SENSE_HOME>/runs for replay
                                                     a fit or replay started just after a run ends first waits
                                                     until that run is recorded (409 if that takes over 10 s)
+  POST /api/auto                                    multipart form: model, goal (what the model should do with the
+                                                    file), file (one upload), examples (optional: a folder on the
+                                                    server with one sub-folder of files per label)
+       -> {"job_id": str}                           an agent run from one file and a goal (agent.jobs.start_auto): it
+                                                    detects the file's modality, researches a specialist and
+                                                    labelled data (or uses examples), then fits, verifies and
+                                                    installs or refuses. Poll GET /api/jobs/<job_id>; events come in
+                                                    the order detect, research, data, inspect, plan, fit, verify,
+                                                    claims, decide, install, done, and a native file or one that
+                                                    needs the user ends earlier. job.request.dataset is "" until the
+                                                    data step picks a set. The upload is kept under
+                                                    <SENSE_HOME>/uploads, because the run reads it after this
+                                                    returns. 400 for an unknown model, an empty goal, no file or a
+                                                    missing examples folder; 409 while an agent run or a replay is
+                                                    in progress. A finished run is recorded for replay as with fit
   GET  /api/jobs/<job_id>
        -> JobState dict                             id, request, status, events[], cards[], installed, error
                                                     a replayed job (id "replay-...") also has
@@ -291,6 +306,60 @@ def api_fit(body: FitBody) -> dict:
         except RuntimeError as exc:
             text = str(exc)
             raise HTTPException(status_code=409, detail=f"{text[:1].upper()}{text[1:]}. Wait for it to finish, then start again.")
+        _record_when_finished(job_id)
+    return {"job_id": job_id}
+
+
+UPLOADS = "uploads"  # under SENSE_HOME: files handed to POST /api/auto, kept for the run that reads them
+
+
+def _keep_upload(upload: UploadFile) -> Path:
+    """Save an upload under <SENSE_HOME>/uploads/<12 hex>/<its file name, made safe> and return the path. Unlike
+    chat uploads it is kept: the agent run reads it from its own thread after the request has returned."""
+    name = "".join(c if c.isalnum() or c in "._- " else "_" for c in Path(upload.filename or "").name).strip(" .")
+    folder = config.home() / UPLOADS / os.urandom(6).hex()
+    folder.mkdir(parents=True, exist_ok=True)
+    path = folder / (name or "upload")
+    with open(path, "wb") as handle:
+        handle.write(upload.file.read())
+    return path
+
+
+@app.post("/api/auto")
+def api_auto(
+    model: str = Form(...),
+    goal: str = Form(""),
+    file: UploadFile | None = File(default=None),
+    examples: str = Form(""),
+) -> dict:
+    _check_model(model)
+    if not goal.strip():
+        raise _bad_request("The goal is empty. Say what the model should do with the file, such as 'recognise music genres'.")
+    if file is None or not file.filename:
+        raise _bad_request("No file was attached. Attach the file the model should learn to read.")
+    folder = None
+    if examples.strip():
+        folder = Path(examples.strip()).expanduser()
+        if not folder.is_dir():
+            raise _bad_request(
+                f"The examples folder '{examples.strip()}' does not exist on the server. Give a folder with one "
+                "sub-folder of files per label, or leave examples out."
+            )
+    path = _keep_upload(file)
+    with _start_lock:
+        try:
+            if replay.running():
+                raise HTTPException(status_code=409, detail="A replay is in progress. Wait for it to finish, then start again.")
+            _await_recording()
+            try:
+                job_id = jobs.start_auto(model, path, goal.strip(), examples=folder)
+            except RuntimeError as exc:
+                text = str(exc)
+                raise HTTPException(status_code=409, detail=f"{text[:1].upper()}{text[1:]}. Wait for it to finish, then start again.")
+        except HTTPException:
+            _delete([path])
+            path.parent.rmdir()
+            raise
         _record_when_finished(job_id)
     return {"job_id": job_id}
 
