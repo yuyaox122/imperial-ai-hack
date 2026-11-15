@@ -1,0 +1,1498 @@
+{
+  "id": "894ea8213a0f",
+  "origin": "server",
+  "recorded": "2026-11-15T02:05:25+00:00",
+  "request": {
+    "model": "qwen3.5-0.8b",
+    "dataset": "gtzan",
+    "modality": "audio",
+    "scope": "closed"
+  },
+  "status": "done",
+  "events": [
+    {
+      "step": "detect",
+      "status": "start",
+      "message": "Detecting the contents of mystery clip.wav.",
+      "data": {},
+      "t": 0.0
+    },
+    {
+      "step": "detect",
+      "status": "ok",
+      "message": "mystery clip.wav starts with the bytes of a WAV file, so it is audio.",
+      "data": {
+        "file": "mystery clip.wav",
+        "goal": "Make it recognise music genres",
+        "modality": "audio",
+        "format": "wav",
+        "how": "magic bytes",
+        "detail": "mystery clip.wav starts with the bytes of a WAV file, so it is audio."
+      },
+      "t": 0.001
+    },
+    {
+      "step": "research",
+      "status": "start",
+      "message": "Researching a specialist for audio: Make it recognise music genres",
+      "data": {},
+      "t": 0.001
+    },
+    {
+      "step": "research",
+      "status": "ok",
+      "message": "Research named 2 candidate models, none verified on the Hub and loadable here, so the pre-wired specialist laion/clap-htsat-unfused is used.",
+      "data": {
+        "claims": [
+          {
+            "subject": "msaligs/ast_fine_tuned_music_genre_10",
+            "kind": "specialist",
+            "statement": "Purpose-built for classifying music into 10 genres. The page reports an F1 result on the Messy Mashup Dataset, but gives it only as \u201c0.XX,\u201d so no numeric benchmark can be confirmed.",
+            "source_url": "https://huggingface.co/msaligs/ast_fine_tuned_music_genre_10",
+            "source_name": "Hugging Face model page",
+            "metric": "F1 on Messy Mashup Dataset (self-reported; value shown as 0.XX)",
+            "value": null,
+            "status": "unverified",
+            "evidence": "",
+            "assertions": {},
+            "observed": {}
+          },
+          {
+            "subject": "dima806/music_genres_classification",
+            "kind": "specialist",
+            "statement": "A music-genres audio-classification model; the available page information gives its parameter count but no benchmark result.",
+            "source_url": "https://huggingface.co/dima806/music_genres_classification",
+            "source_name": "Hugging Face model page",
+            "metric": null,
+            "value": null,
+            "status": "unverified",
+            "evidence": "",
+            "assertions": {},
+            "observed": {}
+          }
+        ],
+        "chosen": null,
+        "fallback": true,
+        "origin": "live",
+        "note": "Research named 2 candidate models, none verified on the Hub and loadable here, so the pre-wired specialist laion/clap-htsat-unfused is used."
+      },
+      "t": 4.029
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Deciding which labelled examples the goal needs: Make it recognise music genres",
+      "data": {
+        "action": "need"
+      },
+      "t": 4.029
+    },
+    {
+      "step": "data",
+      "status": "ok",
+      "message": "The goal is to classify audio by music genre but does not name any specific genres.",
+      "data": {
+        "action": "need",
+        "need": {
+          "kind": "labelled",
+          "scope": "closed",
+          "labels": [],
+          "reason": "The goal is to classify audio by music genre but does not name any specific genres.",
+          "answered_by": "openai/gpt-6.1-terra"
+        }
+      },
+      "t": 6.426
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Searching for labelled datasets.",
+      "data": {
+        "action": "search"
+      },
+      "t": 6.426
+    },
+    {
+      "step": "data",
+      "status": "ok",
+      "message": "Found 6 dataset candidates.",
+      "data": {
+        "action": "search",
+        "origin": "live",
+        "claims": [
+          {
+            "subject": "confit/gtzan-parquet",
+            "kind": "dataset",
+            "statement": "930 examples; labels blues, classical, country, disco, hiphop, jazz, metal, pop, reggae, rock",
+            "source_url": "https://huggingface.co/datasets/confit/gtzan-parquet",
+            "source_name": "confit/gtzan-parquet \u00b7 Datasets at Hugging Face",
+            "metric": null,
+            "value": null,
+            "status": "unverified",
+            "evidence": "The Hub has this dataset, with licence not stated.",
+            "assertions": {
+              "n_examples": 930,
+              "labels": [
+                "blues",
+                "classical",
+                "country",
+                "disco",
+                "hiphop",
+                "jazz",
+                "metal",
+                "pop",
+                "reggae",
+                "rock"
+              ]
+            },
+            "observed": {
+              "hub_exists": true,
+              "licence": null
+            }
+          },
+          {
+            "subject": "rpmon/fma-genre-classification",
+            "kind": "dataset",
+            "statement": "8000 examples",
+            "source_url": "https://huggingface.co/datasets/rpmon/fma-genre-classification",
+            "source_name": "rpmon/fma-genre-classification \u00b7 Datasets at Hugging Face",
+            "metric": null,
+            "value": null,
+            "status": "unverified",
+            "evidence": "The Hub has this dataset, with licence not stated.",
+            "assertions": {
+              "n_examples": 8000
+            },
+            "observed": {
+              "hub_exists": true,
+              "licence": null
+            }
+          },
+          {
+            "subject": "DynamicSuperb/MARBLEGenreClassification_MTG-Genre-Fold1",
+            "kind": "dataset",
+            "statement": "200 examples; labels downtempo, electronic, house, chillout, popfolk",
+            "source_url": "https://huggingface.co/datasets/DynamicSuperb/MARBLEGenreClassification_MTG-Genre-Fold1",
+            "source_name": "DynamicSuperb/MARBLEGenreClassification_MTG-Genre-Fold1 \u00b7 Datasets at Hugging Face",
+            "metric": null,
+            "value": null,
+            "status": "unverified",
+            "evidence": "The Hub has this dataset, with licence not stated.",
+            "assertions": {
+              "n_examples": 200,
+              "labels": [
+                "downtempo",
+                "electronic",
+                "house",
+                "chillout",
+                "popfolk"
+              ]
+            },
+            "observed": {
+              "hub_exists": true,
+              "licence": null
+            }
+          },
+          {
+            "subject": "DynamicSuperb/MARBLEGenreClassification_MTG-Genre-Fold3",
+            "kind": "dataset",
+            "statement": "200 examples; labels soundtrack, club",
+            "source_url": "https://huggingface.co/datasets/DynamicSuperb/MARBLEGenreClassification_MTG-Genre-Fold3",
+            "source_name": "DynamicSuperb/MARBLEGenreClassification_MTG-Genre-Fold3 \u00b7 Datasets at Hugging Face",
+            "metric": null,
+            "value": null,
+            "status": "unverified",
+            "evidence": "The Hub has this dataset, with licence not stated.",
+            "assertions": {
+              "n_examples": 200,
+              "labels": [
+                "soundtrack",
+                "club"
+              ]
+            },
+            "observed": {
+              "hub_exists": true,
+              "licence": null
+            }
+          },
+          {
+            "subject": "lanw1/clear-musictags",
+            "kind": "dataset",
+            "statement": "licence CC BY-NC-SA 4.0 (tag annotations; audio is not redistributed); labels electronic, rock, indie, alternativerock, alternative, techno, trance, ambient, downtempo, chillout and 4 more",
+            "source_url": "https://huggingface.co/datasets/lanw1/clear-musictags?duplicate=true",
+            "source_name": "lanw1/clear-musictags \u00b7 Datasets at Hugging Face",
+            "metric": null,
+            "value": null,
+            "status": "refuted",
+            "evidence": "The Hub has this dataset; source licence CC BY-NC-SA 4.0 (tag annotations; audio is not redistributed); Hub licence cc-by-nc-sa-4.0; source labels ['electronic', 'rock', 'indie', 'alternativerock', 'alternative', 'techno', 'trance', 'ambient', 'downtempo', 'chillout', 'classical', 'house', 'minimal', 'soundtrack'] is not independently established for the whole dataset.",
+            "assertions": {
+              "licence": "CC BY-NC-SA 4.0 (tag annotations; audio is not redistributed)",
+              "labels": [
+                "electronic",
+                "rock",
+                "indie",
+                "alternativerock",
+                "alternative",
+                "techno",
+                "trance",
+                "ambient",
+                "downtempo",
+                "chillout",
+                "classical",
+                "house",
+                "minimal",
+                "soundtrack"
+              ]
+            },
+            "observed": {
+              "hub_exists": true,
+              "licence": "cc-by-nc-sa-4.0"
+            }
+          },
+          {
+            "subject": "ccmusic-database/music_genre",
+            "kind": "dataset",
+            "statement": "1700 examples",
+            "source_url": "https://huggingface.co/datasets/ccmusic-database/music_genre",
+            "source_name": "ccmusic-database/music_genre \u00b7 Datasets at Hugging Face",
+            "metric": null,
+            "value": null,
+            "status": "unverified",
+            "evidence": "The Hub has this dataset, with licence cc-by-nc-nd-4.0.",
+            "assertions": {
+              "n_examples": 1700
+            },
+            "observed": {
+              "hub_exists": true,
+              "licence": "cc-by-nc-nd-4.0"
+            }
+          }
+        ]
+      },
+      "t": 15.951
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Fetching labelled examples from confit/gtzan-parquet.",
+      "data": {
+        "action": "fetch",
+        "candidate": {
+          "hub_id": "confit/gtzan-parquet",
+          "title": "GTZAN Music Genre Classification",
+          "source_url": "https://huggingface.co/datasets/confit/gtzan-parquet",
+          "licence": null,
+          "n_examples": 930,
+          "labels": [
+            "blues",
+            "classical",
+            "country",
+            "disco",
+            "hiphop",
+            "jazz",
+            "metal",
+            "pop",
+            "reggae",
+            "rock"
+          ],
+          "observed": {
+            "hub_exists": true,
+            "licence": null
+          }
+        }
+      },
+      "t": 15.951
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "Could not use confit/gtzan-parquet: datasets-server.huggingface.co answered HTTP 502",
+      "data": {
+        "action": "candidate",
+        "reason": "datasets-server.huggingface.co answered HTTP 502",
+        "claims": [
+          {
+            "subject": "msaligs/ast_fine_tuned_music_genre_10",
+            "kind": "specialist",
+            "statement": "Purpose-built for classifying music into 10 genres. The page reports an F1 result on the Messy Mashup Dataset, but gives it only as \u201c0.XX,\u201d so no numeric benchmark can be confirmed.",
+            "source_url": "https://huggingface.co/msaligs/ast_fine_tuned_music_genre_10",
+            "source_name": "Hugging Face model page",
+            "metric": "F1 on Messy Mashup Dataset (self-reported; value shown as 0.XX)",
+            "value": null,
+            "status": "unverified",
+            "evidence": "",
+            "assertions": {},
+            "observed": {}
+          },
+          {
+            "subject": "dima806/music_genres_classification",
+            "kind": "specialist",
+            "statement": "A music-genres audio-classification model; the available page information gives its parameter count but no benchmark result.",
+            "source_url": "https://huggingface.co/dima806/music_genres_classification",
+            "source_name": "Hugging Face model page",
+            "metric": null,
+            "value": null,
+            "status": "unverified",
+            "evidence": "",
+            "assertions": {},
+            "observed": {}
+          },
+          {
+            "subject": "confit/gtzan-parquet",
+            "kind": "dataset",
+            "statement": "930 examples; labels blues, classical, country, disco, hiphop, jazz, metal, pop, reggae, rock",
+            "source_url": "https://huggingface.co/datasets/confit/gtzan-parquet",
+            "source_name": "confit/gtzan-parquet \u00b7 Datasets at Hugging Face",
+            "metric": null,
+            "value": null,
+            "status": "not_testable",
+            "evidence": "datasets-server.huggingface.co answered HTTP 502",
+            "assertions": {
+              "n_examples": 930,
+              "labels": [
+                "blues",
+                "classical",
+                "country",
+                "disco",
+                "hiphop",
+                "jazz",
+                "metal",
+                "pop",
+                "reggae",
+                "rock"
+              ]
+            },
+            "observed": {
+              "hub_exists": true,
+              "licence": null
+            }
+          },
+          {
+            "subject": "rpmon/fma-genre-classification",
+            "kind": "dataset",
+            "statement": "8000 examples",
+            "source_url": "https://huggingface.co/datasets/rpmon/fma-genre-classification",
+            "source_name": "rpmon/fma-genre-classification \u00b7 Datasets at Hugging Face",
+            "metric": null,
+            "value": null,
+            "status": "unverified",
+            "evidence": "The Hub has this dataset, with licence not stated.",
+            "assertions": {
+              "n_examples": 8000
+            },
+            "observed": {
+              "hub_exists": true,
+              "licence": null
+            }
+          },
+          {
+            "subject": "DynamicSuperb/MARBLEGenreClassification_MTG-Genre-Fold1",
+            "kind": "dataset",
+            "statement": "200 examples; labels downtempo, electronic, house, chillout, popfolk",
+            "source_url": "https://huggingface.co/datasets/DynamicSuperb/MARBLEGenreClassification_MTG-Genre-Fold1",
+            "source_name": "DynamicSuperb/MARBLEGenreClassification_MTG-Genre-Fold1 \u00b7 Datasets at Hugging Face",
+            "metric": null,
+            "value": null,
+            "status": "unverified",
+            "evidence": "The Hub has this dataset, with licence not stated.",
+            "assertions": {
+              "n_examples": 200,
+              "labels": [
+                "downtempo",
+                "electronic",
+                "house",
+                "chillout",
+                "popfolk"
+              ]
+            },
+            "observed": {
+              "hub_exists": true,
+              "licence": null
+            }
+          },
+          {
+            "subject": "DynamicSuperb/MARBLEGenreClassification_MTG-Genre-Fold3",
+            "kind": "dataset",
+            "statement": "200 examples; labels soundtrack, club",
+            "source_url": "https://huggingface.co/datasets/DynamicSuperb/MARBLEGenreClassification_MTG-Genre-Fold3",
+            "source_name": "DynamicSuperb/MARBLEGenreClassification_MTG-Genre-Fold3 \u00b7 Datasets at Hugging Face",
+            "metric": null,
+            "value": null,
+            "status": "unverified",
+            "evidence": "The Hub has this dataset, with licence not stated.",
+            "assertions": {
+              "n_examples": 200,
+              "labels": [
+                "soundtrack",
+                "club"
+              ]
+            },
+            "observed": {
+              "hub_exists": true,
+              "licence": null
+            }
+          },
+          {
+            "subject": "lanw1/clear-musictags",
+            "kind": "dataset",
+            "statement": "licence CC BY-NC-SA 4.0 (tag annotations; audio is not redistributed); labels electronic, rock, indie, alternativerock, alternative, techno, trance, ambient, downtempo, chillout and 4 more",
+            "source_url": "https://huggingface.co/datasets/lanw1/clear-musictags?duplicate=true",
+            "source_name": "lanw1/clear-musictags \u00b7 Datasets at Hugging Face",
+            "metric": null,
+            "value": null,
+            "status": "refuted",
+            "evidence": "The Hub has this dataset; source licence CC BY-NC-SA 4.0 (tag annotations; audio is not redistributed); Hub licence cc-by-nc-sa-4.0; source labels ['electronic', 'rock', 'indie', 'alternativerock', 'alternative', 'techno', 'trance', 'ambient', 'downtempo', 'chillout', 'classical', 'house', 'minimal', 'soundtrack'] is not independently established for the whole dataset.",
+            "assertions": {
+              "licence": "CC BY-NC-SA 4.0 (tag annotations; audio is not redistributed)",
+              "labels": [
+                "electronic",
+                "rock",
+                "indie",
+                "alternativerock",
+                "alternative",
+                "techno",
+                "trance",
+                "ambient",
+                "downtempo",
+                "chillout",
+                "classical",
+                "house",
+                "minimal",
+                "soundtrack"
+              ]
+            },
+            "observed": {
+              "hub_exists": true,
+              "licence": "cc-by-nc-sa-4.0"
+            }
+          },
+          {
+            "subject": "ccmusic-database/music_genre",
+            "kind": "dataset",
+            "statement": "1700 examples",
+            "source_url": "https://huggingface.co/datasets/ccmusic-database/music_genre",
+            "source_name": "ccmusic-database/music_genre \u00b7 Datasets at Hugging Face",
+            "metric": null,
+            "value": null,
+            "status": "unverified",
+            "evidence": "The Hub has this dataset, with licence cc-by-nc-nd-4.0.",
+            "assertions": {
+              "n_examples": 1700
+            },
+            "observed": {
+              "hub_exists": true,
+              "licence": "cc-by-nc-nd-4.0"
+            }
+          }
+        ]
+      },
+      "t": 52.695
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Fetching labelled examples from rpmon/fma-genre-classification.",
+      "data": {
+        "action": "fetch",
+        "candidate": {
+          "hub_id": "rpmon/fma-genre-classification",
+          "title": "FMA Genre Classification Dataset",
+          "source_url": "https://huggingface.co/datasets/rpmon/fma-genre-classification",
+          "licence": null,
+          "n_examples": 8000,
+          "labels": [],
+          "observed": {
+            "hub_exists": true,
+            "licence": null
+          }
+        }
+      },
+      "t": 52.695
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "Could not use rpmon/fma-genre-classification: datasets-server.huggingface.co answered HTTP 502",
+      "data": {
+        "action": "candidate",
+        "reason": "datasets-server.huggingface.co answered HTTP 502",
+        "claims": [
+          {
+            "subject": "msaligs/ast_fine_tuned_music_genre_10",
+            "kind": "specialist",
+            "statement": "Purpose-built for classifying music into 10 genres. The page reports an F1 result on the Messy Mashup Dataset, but gives it only as \u201c0.XX,\u201d so no numeric benchmark can be confirmed.",
+            "source_url": "https://huggingface.co/msaligs/ast_fine_tuned_music_genre_10",
+            "source_name": "Hugging Face model page",
+            "metric": "F1 on Messy Mashup Dataset (self-reported; value shown as 0.XX)",
+            "value": null,
+            "status": "unverified",
+            "evidence": "",
+            "assertions": {},
+            "observed": {}
+          },
+          {
+            "subject": "dima806/music_genres_classification",
+            "kind": "specialist",
+            "statement": "A music-genres audio-classification model; the available page information gives its parameter count but no benchmark result.",
+            "source_url": "https://huggingface.co/dima806/music_genres_classification",
+            "source_name": "Hugging Face model page",
+            "metric": null,
+            "value": null,
+            "status": "unverified",
+            "evidence": "",
+            "assertions": {},
+            "observed": {}
+          },
+          {
+            "subject": "confit/gtzan-parquet",
+            "kind": "dataset",
+            "statement": "930 examples; labels blues, classical, country, disco, hiphop, jazz, metal, pop, reggae, rock",
+            "source_url": "https://huggingface.co/datasets/confit/gtzan-parquet",
+            "source_name": "confit/gtzan-parquet \u00b7 Datasets at Hugging Face",
+            "metric": null,
+            "value": null,
+            "status": "not_testable",
+            "evidence": "datasets-server.huggingface.co answered HTTP 502",
+            "assertions": {
+              "n_examples": 930,
+              "labels": [
+                "blues",
+                "classical",
+                "country",
+                "disco",
+                "hiphop",
+                "jazz",
+                "metal",
+                "pop",
+                "reggae",
+                "rock"
+              ]
+            },
+            "observed": {
+              "hub_exists": true,
+              "licence": null
+            }
+          },
+          {
+            "subject": "rpmon/fma-genre-classification",
+            "kind": "dataset",
+            "statement": "8000 examples",
+            "source_url": "https://huggingface.co/datasets/rpmon/fma-genre-classification",
+            "source_name": "rpmon/fma-genre-classification \u00b7 Datasets at Hugging Face",
+            "metric": null,
+            "value": null,
+            "status": "not_testable",
+            "evidence": "datasets-server.huggingface.co answered HTTP 502",
+            "assertions": {
+              "n_examples": 8000
+            },
+            "observed": {
+              "hub_exists": true,
+              "licence": null
+            }
+          },
+          {
+            "subject": "DynamicSuperb/MARBLEGenreClassification_MTG-Genre-Fold1",
+            "kind": "dataset",
+            "statement": "200 examples; labels downtempo, electronic, house, chillout, popfolk",
+            "source_url": "https://huggingface.co/datasets/DynamicSuperb/MARBLEGenreClassification_MTG-Genre-Fold1",
+            "source_name": "DynamicSuperb/MARBLEGenreClassification_MTG-Genre-Fold1 \u00b7 Datasets at Hugging Face",
+            "metric": null,
+            "value": null,
+            "status": "unverified",
+            "evidence": "The Hub has this dataset, with licence not stated.",
+            "assertions": {
+              "n_examples": 200,
+              "labels": [
+                "downtempo",
+                "electronic",
+                "house",
+                "chillout",
+                "popfolk"
+              ]
+            },
+            "observed": {
+              "hub_exists": true,
+              "licence": null
+            }
+          },
+          {
+            "subject": "DynamicSuperb/MARBLEGenreClassification_MTG-Genre-Fold3",
+            "kind": "dataset",
+            "statement": "200 examples; labels soundtrack, club",
+            "source_url": "https://huggingface.co/datasets/DynamicSuperb/MARBLEGenreClassification_MTG-Genre-Fold3",
+            "source_name": "DynamicSuperb/MARBLEGenreClassification_MTG-Genre-Fold3 \u00b7 Datasets at Hugging Face",
+            "metric": null,
+            "value": null,
+            "status": "unverified",
+            "evidence": "The Hub has this dataset, with licence not stated.",
+            "assertions": {
+              "n_examples": 200,
+              "labels": [
+                "soundtrack",
+                "club"
+              ]
+            },
+            "observed": {
+              "hub_exists": true,
+              "licence": null
+            }
+          },
+          {
+            "subject": "lanw1/clear-musictags",
+            "kind": "dataset",
+            "statement": "licence CC BY-NC-SA 4.0 (tag annotations; audio is not redistributed); labels electronic, rock, indie, alternativerock, alternative, techno, trance, ambient, downtempo, chillout and 4 more",
+            "source_url": "https://huggingface.co/datasets/lanw1/clear-musictags?duplicate=true",
+            "source_name": "lanw1/clear-musictags \u00b7 Datasets at Hugging Face",
+            "metric": null,
+            "value": null,
+            "status": "refuted",
+            "evidence": "The Hub has this dataset; source licence CC BY-NC-SA 4.0 (tag annotations; audio is not redistributed); Hub licence cc-by-nc-sa-4.0; source labels ['electronic', 'rock', 'indie', 'alternativerock', 'alternative', 'techno', 'trance', 'ambient', 'downtempo', 'chillout', 'classical', 'house', 'minimal', 'soundtrack'] is not independently established for the whole dataset.",
+            "assertions": {
+              "licence": "CC BY-NC-SA 4.0 (tag annotations; audio is not redistributed)",
+              "labels": [
+                "electronic",
+                "rock",
+                "indie",
+                "alternativerock",
+                "alternative",
+                "techno",
+                "trance",
+                "ambient",
+                "downtempo",
+                "chillout",
+                "classical",
+                "house",
+                "minimal",
+                "soundtrack"
+              ]
+            },
+            "observed": {
+              "hub_exists": true,
+              "licence": "cc-by-nc-sa-4.0"
+            }
+          },
+          {
+            "subject": "ccmusic-database/music_genre",
+            "kind": "dataset",
+            "statement": "1700 examples",
+            "source_url": "https://huggingface.co/datasets/ccmusic-database/music_genre",
+            "source_name": "ccmusic-database/music_genre \u00b7 Datasets at Hugging Face",
+            "metric": null,
+            "value": null,
+            "status": "unverified",
+            "evidence": "The Hub has this dataset, with licence cc-by-nc-nd-4.0.",
+            "assertions": {
+              "n_examples": 1700
+            },
+            "observed": {
+              "hub_exists": true,
+              "licence": "cc-by-nc-nd-4.0"
+            }
+          }
+        ]
+      },
+      "t": 53.067
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Looking for a prewired set matching the goal.",
+      "data": {
+        "action": "fallback"
+      },
+      "t": 53.067
+    },
+    {
+      "step": "data",
+      "status": "ok",
+      "message": "Using gtzan (prewired) to verify the goal.",
+      "data": {
+        "dataset": "gtzan",
+        "origin": "prewired",
+        "source": "",
+        "licence": "",
+        "labels": [
+          "blues",
+          "classical",
+          "country",
+          "disco",
+          "hip hop",
+          "jazz",
+          "metal",
+          "pop",
+          "reggae",
+          "rock"
+        ],
+        "n_files": 999,
+        "need": {
+          "kind": "labelled",
+          "scope": "closed",
+          "labels": [],
+          "reason": "The goal is to classify audio by music genre but does not name any specific genres.",
+          "answered_by": "openai/gpt-6.1-terra"
+        },
+        "claims": [
+          {
+            "subject": "msaligs/ast_fine_tuned_music_genre_10",
+            "kind": "specialist",
+            "statement": "Purpose-built for classifying music into 10 genres. The page reports an F1 result on the Messy Mashup Dataset, but gives it only as \u201c0.XX,\u201d so no numeric benchmark can be confirmed.",
+            "source_url": "https://huggingface.co/msaligs/ast_fine_tuned_music_genre_10",
+            "source_name": "Hugging Face model page",
+            "metric": "F1 on Messy Mashup Dataset (self-reported; value shown as 0.XX)",
+            "value": null,
+            "status": "unverified",
+            "evidence": "",
+            "assertions": {},
+            "observed": {}
+          },
+          {
+            "subject": "dima806/music_genres_classification",
+            "kind": "specialist",
+            "statement": "A music-genres audio-classification model; the available page information gives its parameter count but no benchmark result.",
+            "source_url": "https://huggingface.co/dima806/music_genres_classification",
+            "source_name": "Hugging Face model page",
+            "metric": null,
+            "value": null,
+            "status": "unverified",
+            "evidence": "",
+            "assertions": {},
+            "observed": {}
+          },
+          {
+            "subject": "confit/gtzan-parquet",
+            "kind": "dataset",
+            "statement": "930 examples; labels blues, classical, country, disco, hiphop, jazz, metal, pop, reggae, rock",
+            "source_url": "https://huggingface.co/datasets/confit/gtzan-parquet",
+            "source_name": "confit/gtzan-parquet \u00b7 Datasets at Hugging Face",
+            "metric": null,
+            "value": null,
+            "status": "not_testable",
+            "evidence": "datasets-server.huggingface.co answered HTTP 502",
+            "assertions": {
+              "n_examples": 930,
+              "labels": [
+                "blues",
+                "classical",
+                "country",
+                "disco",
+                "hiphop",
+                "jazz",
+                "metal",
+                "pop",
+                "reggae",
+                "rock"
+              ]
+            },
+            "observed": {
+              "hub_exists": true,
+              "licence": null
+            }
+          },
+          {
+            "subject": "rpmon/fma-genre-classification",
+            "kind": "dataset",
+            "statement": "8000 examples",
+            "source_url": "https://huggingface.co/datasets/rpmon/fma-genre-classification",
+            "source_name": "rpmon/fma-genre-classification \u00b7 Datasets at Hugging Face",
+            "metric": null,
+            "value": null,
+            "status": "not_testable",
+            "evidence": "datasets-server.huggingface.co answered HTTP 502",
+            "assertions": {
+              "n_examples": 8000
+            },
+            "observed": {
+              "hub_exists": true,
+              "licence": null
+            }
+          },
+          {
+            "subject": "DynamicSuperb/MARBLEGenreClassification_MTG-Genre-Fold1",
+            "kind": "dataset",
+            "statement": "200 examples; labels downtempo, electronic, house, chillout, popfolk",
+            "source_url": "https://huggingface.co/datasets/DynamicSuperb/MARBLEGenreClassification_MTG-Genre-Fold1",
+            "source_name": "DynamicSuperb/MARBLEGenreClassification_MTG-Genre-Fold1 \u00b7 Datasets at Hugging Face",
+            "metric": null,
+            "value": null,
+            "status": "not_testable",
+            "evidence": "Not sampled: an earlier set succeeded or the two-candidate limit was reached.",
+            "assertions": {
+              "n_examples": 200,
+              "labels": [
+                "downtempo",
+                "electronic",
+                "house",
+                "chillout",
+                "popfolk"
+              ]
+            },
+            "observed": {
+              "hub_exists": true,
+              "licence": null
+            }
+          },
+          {
+            "subject": "DynamicSuperb/MARBLEGenreClassification_MTG-Genre-Fold3",
+            "kind": "dataset",
+            "statement": "200 examples; labels soundtrack, club",
+            "source_url": "https://huggingface.co/datasets/DynamicSuperb/MARBLEGenreClassification_MTG-Genre-Fold3",
+            "source_name": "DynamicSuperb/MARBLEGenreClassification_MTG-Genre-Fold3 \u00b7 Datasets at Hugging Face",
+            "metric": null,
+            "value": null,
+            "status": "not_testable",
+            "evidence": "Not sampled: an earlier set succeeded or the two-candidate limit was reached.",
+            "assertions": {
+              "n_examples": 200,
+              "labels": [
+                "soundtrack",
+                "club"
+              ]
+            },
+            "observed": {
+              "hub_exists": true,
+              "licence": null
+            }
+          },
+          {
+            "subject": "lanw1/clear-musictags",
+            "kind": "dataset",
+            "statement": "licence CC BY-NC-SA 4.0 (tag annotations; audio is not redistributed); labels electronic, rock, indie, alternativerock, alternative, techno, trance, ambient, downtempo, chillout and 4 more",
+            "source_url": "https://huggingface.co/datasets/lanw1/clear-musictags?duplicate=true",
+            "source_name": "lanw1/clear-musictags \u00b7 Datasets at Hugging Face",
+            "metric": null,
+            "value": null,
+            "status": "refuted",
+            "evidence": "The Hub has this dataset; source licence CC BY-NC-SA 4.0 (tag annotations; audio is not redistributed); Hub licence cc-by-nc-sa-4.0; source labels ['electronic', 'rock', 'indie', 'alternativerock', 'alternative', 'techno', 'trance', 'ambient', 'downtempo', 'chillout', 'classical', 'house', 'minimal', 'soundtrack'] is not independently established for the whole dataset.",
+            "assertions": {
+              "licence": "CC BY-NC-SA 4.0 (tag annotations; audio is not redistributed)",
+              "labels": [
+                "electronic",
+                "rock",
+                "indie",
+                "alternativerock",
+                "alternative",
+                "techno",
+                "trance",
+                "ambient",
+                "downtempo",
+                "chillout",
+                "classical",
+                "house",
+                "minimal",
+                "soundtrack"
+              ]
+            },
+            "observed": {
+              "hub_exists": true,
+              "licence": "cc-by-nc-sa-4.0"
+            }
+          },
+          {
+            "subject": "ccmusic-database/music_genre",
+            "kind": "dataset",
+            "statement": "1700 examples",
+            "source_url": "https://huggingface.co/datasets/ccmusic-database/music_genre",
+            "source_name": "ccmusic-database/music_genre \u00b7 Datasets at Hugging Face",
+            "metric": null,
+            "value": null,
+            "status": "not_testable",
+            "evidence": "Not sampled: an earlier set succeeded or the two-candidate limit was reached.",
+            "assertions": {
+              "n_examples": 1700
+            },
+            "observed": {
+              "hub_exists": true,
+              "licence": "cc-by-nc-nd-4.0"
+            }
+          }
+        ],
+        "meta": {
+          "duplicate_groups_kept_in_one_split": 13,
+          "left_out": [
+            "metal.00058.wav",
+            "rock.00016.wav"
+          ]
+        }
+      },
+      "t": 53.224
+    },
+    {
+      "step": "inspect",
+      "status": "start",
+      "message": "Loading the base model qwen3.5-0.8b and the labelled set gtzan.",
+      "data": {},
+      "t": 53.224
+    },
+    {
+      "step": "inspect",
+      "status": "ok",
+      "message": "Qwen3.5 0.8B (local) reads text and image natively, but not audio; it is open-weight. Music genres (GTZAN): 10 labels, 597 examples to fit on, 200 held out.",
+      "data": {
+        "model": {
+          "name": "qwen3.5-0.8b",
+          "label": "Qwen3.5 0.8B (local)",
+          "native": [
+            "text",
+            "image"
+          ],
+          "open_weights": true,
+          "available": true,
+          "note": "",
+          "tools": false
+        },
+        "dataset": {
+          "name": "gtzan",
+          "title": "Music genres (GTZAN)",
+          "labels": [
+            "blues",
+            "classical",
+            "country",
+            "disco",
+            "hip hop",
+            "jazz",
+            "metal",
+            "pop",
+            "reggae",
+            "rock"
+          ],
+          "n_fit": 597,
+          "n_dev": 200,
+          "n_test": 200
+        }
+      },
+      "t": 57.162
+    },
+    {
+      "step": "plan",
+      "status": "start",
+      "message": "Asking the llm planner which bridges to try for closed-scope audio.",
+      "data": {},
+      "t": 57.162
+    },
+    {
+      "step": "plan",
+      "status": "ok",
+      "message": "Bridges to try, in order: vector, text.",
+      "data": {
+        "planner": "llm",
+        "kinds": [
+          "vector",
+          "text"
+        ],
+        "answered_by": "openai/gpt-6.1-terra",
+        "unavailable": [
+          {
+            "kind": "native",
+            "why": "Qwen3.5 0.8B (local) does not read audio natively"
+          },
+          {
+            "kind": "tool",
+            "why": "Qwen3.5 0.8B (local) cannot call tools; tool calls are wired for API models only"
+          },
+          {
+            "kind": "image",
+            "why": "the image bridge, which would show the input as a picture such as a spectrogram, is not built yet"
+          }
+        ]
+      },
+      "t": 58.428
+    },
+    {
+      "step": "fit",
+      "status": "start",
+      "message": "Fitting the vector bridge on 597 labelled examples of Music genres (GTZAN).",
+      "data": {
+        "kind": "vector"
+      },
+      "t": 58.428
+    },
+    {
+      "step": "fit",
+      "status": "ok",
+      "message": "Built vector:gtzan in 22.9 s. It writes after block 0, chosen on dev questions (block 0: 79.5%, block 1: 79.5%, block 2: 77.5%, block 3: 57.0%, block 4: 50.5%).",
+      "data": {
+        "kind": "vector",
+        "bridge": "vector:gtzan",
+        "seconds": 22.95,
+        "layer": 0,
+        "dev_accuracy": {
+          "0": 0.795,
+          "1": 0.795,
+          "2": 0.775,
+          "3": 0.57,
+          "4": 0.505
+        },
+        "specialist": {
+          "name": "laion/clap-htsat-unfused",
+          "label": "CLAP",
+          "modality": "audio",
+          "dim": 512,
+          "embed_seconds_per_file": null,
+          "loaded": false
+        }
+      },
+      "t": 81.373
+    },
+    {
+      "step": "fit",
+      "status": "start",
+      "message": "Building the text bridge, which names the closest of the 10 labels.",
+      "data": {
+        "kind": "text"
+      },
+      "t": 81.373
+    },
+    {
+      "step": "fit",
+      "status": "ok",
+      "message": "Built text:gtzan in 0.0 s.",
+      "data": {
+        "kind": "text",
+        "bridge": "text:gtzan",
+        "seconds": 0.0,
+        "layer": null,
+        "dev_accuracy": null,
+        "specialist": {
+          "name": "laion/clap-htsat-unfused",
+          "label": "CLAP",
+          "modality": "audio",
+          "dim": 512,
+          "embed_seconds_per_file": null,
+          "loaded": false
+        }
+      },
+      "t": 81.373
+    },
+    {
+      "step": "verify",
+      "status": "start",
+      "message": "Scoring vector:gtzan on held-out Music genres (GTZAN) examples against controls, including text:gtzan.",
+      "data": {
+        "bridge": "vector:gtzan"
+      },
+      "t": 81.373
+    },
+    {
+      "step": "verify",
+      "status": "ok",
+      "message": "vector:gtzan scored 79.5% on 200 held-out questions (chance 20.0%); controls: swapped input 12.5%, no input 22.0%, nearest-example lookup 84.5%, specialist alone 53.5%, text bridge 47.5%.",
+      "data": {
+        "card": {
+          "model": "qwen3.5-0.8b",
+          "modality": "audio",
+          "dataset": "gtzan",
+          "scope": "closed",
+          "bridge": "vector:gtzan",
+          "kind": "vector",
+          "n": 200,
+          "chance": 0.2,
+          "accuracy": 0.795,
+          "controls": {
+            "swapped": 0.125,
+            "no_input": 0.22,
+            "lookup": 0.845,
+            "specialist_alone": 0.535,
+            "text_bridge": 0.475
+          },
+          "verdict": "candidate",
+          "reason": "",
+          "created": "2026-11-15T02:05:11+00:00",
+          "interval": [
+            0.7337,
+            0.8451
+          ]
+        },
+        "seconds": 15.52
+      },
+      "t": 96.895
+    },
+    {
+      "step": "verify",
+      "status": "start",
+      "message": "Scoring text:gtzan on held-out Music genres (GTZAN) examples against controls.",
+      "data": {
+        "bridge": "text:gtzan"
+      },
+      "t": 96.895
+    },
+    {
+      "step": "verify",
+      "status": "ok",
+      "message": "text:gtzan scored 47.5% on 200 held-out questions (chance 20.0%); controls: swapped input 20.0%, no input 22.0%, nearest-example lookup 84.5%, specialist alone 53.5%.",
+      "data": {
+        "card": {
+          "model": "qwen3.5-0.8b",
+          "modality": "audio",
+          "dataset": "gtzan",
+          "scope": "closed",
+          "bridge": "text:gtzan",
+          "kind": "text",
+          "n": 200,
+          "chance": 0.2,
+          "accuracy": 0.475,
+          "controls": {
+            "swapped": 0.2,
+            "no_input": 0.22,
+            "lookup": 0.845,
+            "specialist_alone": 0.535
+          },
+          "verdict": "candidate",
+          "reason": "",
+          "created": "2026-11-15T02:05:23+00:00",
+          "interval": [
+            0.4069,
+            0.544
+          ]
+        },
+        "seconds": 11.56
+      },
+      "t": 108.452
+    },
+    {
+      "step": "claims",
+      "status": "start",
+      "message": "Checking research claims against the specialist-alone control.",
+      "data": {},
+      "t": 108.452
+    },
+    {
+      "step": "claims",
+      "status": "ok",
+      "message": "Claims: 0 confirmed, 1 refuted, 7 not testable.",
+      "data": {
+        "claims": [
+          {
+            "subject": "msaligs/ast_fine_tuned_music_genre_10",
+            "kind": "specialist",
+            "statement": "Purpose-built for classifying music into 10 genres. The page reports an F1 result on the Messy Mashup Dataset, but gives it only as \u201c0.XX,\u201d so no numeric benchmark can be confirmed.",
+            "source_url": "https://huggingface.co/msaligs/ast_fine_tuned_music_genre_10",
+            "source_name": "Hugging Face model page",
+            "metric": "F1 on Messy Mashup Dataset (self-reported; value shown as 0.XX)",
+            "value": null,
+            "status": "not_testable",
+            "evidence": "our set's embeddings do not record which Hub specialist made them, so this claim was not tested on our data",
+            "assertions": {},
+            "observed": {}
+          },
+          {
+            "subject": "dima806/music_genres_classification",
+            "kind": "specialist",
+            "statement": "A music-genres audio-classification model; the available page information gives its parameter count but no benchmark result.",
+            "source_url": "https://huggingface.co/dima806/music_genres_classification",
+            "source_name": "Hugging Face model page",
+            "metric": null,
+            "value": null,
+            "status": "not_testable",
+            "evidence": "our set's embeddings do not record which Hub specialist made them, so this claim was not tested on our data",
+            "assertions": {},
+            "observed": {}
+          },
+          {
+            "subject": "confit/gtzan-parquet",
+            "kind": "dataset",
+            "statement": "930 examples; labels blues, classical, country, disco, hiphop, jazz, metal, pop, reggae, rock",
+            "source_url": "https://huggingface.co/datasets/confit/gtzan-parquet",
+            "source_name": "confit/gtzan-parquet \u00b7 Datasets at Hugging Face",
+            "metric": null,
+            "value": null,
+            "status": "not_testable",
+            "evidence": "datasets-server.huggingface.co answered HTTP 502",
+            "assertions": {
+              "n_examples": 930,
+              "labels": [
+                "blues",
+                "classical",
+                "country",
+                "disco",
+                "hiphop",
+                "jazz",
+                "metal",
+                "pop",
+                "reggae",
+                "rock"
+              ]
+            },
+            "observed": {
+              "hub_exists": true,
+              "licence": null
+            }
+          },
+          {
+            "subject": "rpmon/fma-genre-classification",
+            "kind": "dataset",
+            "statement": "8000 examples",
+            "source_url": "https://huggingface.co/datasets/rpmon/fma-genre-classification",
+            "source_name": "rpmon/fma-genre-classification \u00b7 Datasets at Hugging Face",
+            "metric": null,
+            "value": null,
+            "status": "not_testable",
+            "evidence": "datasets-server.huggingface.co answered HTTP 502",
+            "assertions": {
+              "n_examples": 8000
+            },
+            "observed": {
+              "hub_exists": true,
+              "licence": null
+            }
+          },
+          {
+            "subject": "DynamicSuperb/MARBLEGenreClassification_MTG-Genre-Fold1",
+            "kind": "dataset",
+            "statement": "200 examples; labels downtempo, electronic, house, chillout, popfolk",
+            "source_url": "https://huggingface.co/datasets/DynamicSuperb/MARBLEGenreClassification_MTG-Genre-Fold1",
+            "source_name": "DynamicSuperb/MARBLEGenreClassification_MTG-Genre-Fold1 \u00b7 Datasets at Hugging Face",
+            "metric": null,
+            "value": null,
+            "status": "not_testable",
+            "evidence": "Not sampled: an earlier set succeeded or the two-candidate limit was reached.",
+            "assertions": {
+              "n_examples": 200,
+              "labels": [
+                "downtempo",
+                "electronic",
+                "house",
+                "chillout",
+                "popfolk"
+              ]
+            },
+            "observed": {
+              "hub_exists": true,
+              "licence": null
+            }
+          },
+          {
+            "subject": "DynamicSuperb/MARBLEGenreClassification_MTG-Genre-Fold3",
+            "kind": "dataset",
+            "statement": "200 examples; labels soundtrack, club",
+            "source_url": "https://huggingface.co/datasets/DynamicSuperb/MARBLEGenreClassification_MTG-Genre-Fold3",
+            "source_name": "DynamicSuperb/MARBLEGenreClassification_MTG-Genre-Fold3 \u00b7 Datasets at Hugging Face",
+            "metric": null,
+            "value": null,
+            "status": "not_testable",
+            "evidence": "Not sampled: an earlier set succeeded or the two-candidate limit was reached.",
+            "assertions": {
+              "n_examples": 200,
+              "labels": [
+                "soundtrack",
+                "club"
+              ]
+            },
+            "observed": {
+              "hub_exists": true,
+              "licence": null
+            }
+          },
+          {
+            "subject": "lanw1/clear-musictags",
+            "kind": "dataset",
+            "statement": "licence CC BY-NC-SA 4.0 (tag annotations; audio is not redistributed); labels electronic, rock, indie, alternativerock, alternative, techno, trance, ambient, downtempo, chillout and 4 more",
+            "source_url": "https://huggingface.co/datasets/lanw1/clear-musictags?duplicate=true",
+            "source_name": "lanw1/clear-musictags \u00b7 Datasets at Hugging Face",
+            "metric": null,
+            "value": null,
+            "status": "refuted",
+            "evidence": "The Hub has this dataset; source licence CC BY-NC-SA 4.0 (tag annotations; audio is not redistributed); Hub licence cc-by-nc-sa-4.0; source labels ['electronic', 'rock', 'indie', 'alternativerock', 'alternative', 'techno', 'trance', 'ambient', 'downtempo', 'chillout', 'classical', 'house', 'minimal', 'soundtrack'] is not independently established for the whole dataset.",
+            "assertions": {
+              "licence": "CC BY-NC-SA 4.0 (tag annotations; audio is not redistributed)",
+              "labels": [
+                "electronic",
+                "rock",
+                "indie",
+                "alternativerock",
+                "alternative",
+                "techno",
+                "trance",
+                "ambient",
+                "downtempo",
+                "chillout",
+                "classical",
+                "house",
+                "minimal",
+                "soundtrack"
+              ]
+            },
+            "observed": {
+              "hub_exists": true,
+              "licence": "cc-by-nc-sa-4.0"
+            }
+          },
+          {
+            "subject": "ccmusic-database/music_genre",
+            "kind": "dataset",
+            "statement": "1700 examples",
+            "source_url": "https://huggingface.co/datasets/ccmusic-database/music_genre",
+            "source_name": "ccmusic-database/music_genre \u00b7 Datasets at Hugging Face",
+            "metric": null,
+            "value": null,
+            "status": "not_testable",
+            "evidence": "Not sampled: an earlier set succeeded or the two-candidate limit was reached.",
+            "assertions": {
+              "n_examples": 1700
+            },
+            "observed": {
+              "hub_exists": true,
+              "licence": "cc-by-nc-nd-4.0"
+            }
+          }
+        ],
+        "synthetic": false,
+        "measured_specialist": null
+      },
+      "t": 108.452
+    },
+    {
+      "step": "decide",
+      "status": "start",
+      "message": "Asking the llm planner to choose among 2 verified candidates.",
+      "data": {},
+      "t": 108.452
+    },
+    {
+      "step": "decide",
+      "status": "ok",
+      "message": "Installed vector:gtzan. vector:gtzan passed: it scored 79.5% against 20.0% chance and 12.5% with swapped input.",
+      "data": {
+        "install": "vector:gtzan",
+        "answered_by": "openai/gpt-6.1-terra",
+        "cards": [
+          {
+            "model": "qwen3.5-0.8b",
+            "modality": "audio",
+            "dataset": "gtzan",
+            "scope": "closed",
+            "bridge": "vector:gtzan",
+            "kind": "vector",
+            "n": 200,
+            "chance": 0.2,
+            "accuracy": 0.795,
+            "controls": {
+              "swapped": 0.125,
+              "no_input": 0.22,
+              "lookup": 0.845,
+              "specialist_alone": 0.535,
+              "text_bridge": 0.475
+            },
+            "verdict": "installed",
+            "reason": "Installed vector:gtzan. vector:gtzan passed: it scored 79.5% against 20.0% chance and 12.5% with swapped input.",
+            "created": "2026-11-15T02:05:11+00:00",
+            "interval": [
+              0.7337,
+              0.8451
+            ]
+          },
+          {
+            "model": "qwen3.5-0.8b",
+            "modality": "audio",
+            "dataset": "gtzan",
+            "scope": "closed",
+            "bridge": "text:gtzan",
+            "kind": "text",
+            "n": 200,
+            "chance": 0.2,
+            "accuracy": 0.475,
+            "controls": {
+              "swapped": 0.2,
+              "no_input": 0.22,
+              "lookup": 0.845,
+              "specialist_alone": 0.535
+            },
+            "verdict": "rejected",
+            "reason": "text:gtzan passed: it scored 47.5% against 20.0% chance, meets the 35.0% bar for a text bridge. Swapped input scored 20.0%, requiring at least 30.0% accuracy. It was not installed because vector:gtzan was chosen instead.",
+            "created": "2026-11-15T02:05:23+00:00",
+            "interval": [
+              0.4069,
+              0.544
+            ]
+          }
+        ]
+      },
+      "t": 110.361
+    },
+    {
+      "step": "install",
+      "status": "start",
+      "message": "Installing vector:gtzan for Qwen3.5 0.8B (local), replacing the earlier vector:gtzan sense (79.5% on gtzan, closed scope).",
+      "data": {
+        "bridge": "vector:gtzan",
+        "replaced": "vector:gtzan"
+      },
+      "t": 110.362
+    },
+    {
+      "step": "install",
+      "status": "ok",
+      "message": "Installed vector:gtzan; Qwen3.5 0.8B (local) can now take audio input in chat.",
+      "data": {
+        "bridge": "vector:gtzan",
+        "replaced": "vector:gtzan"
+      },
+      "t": 110.367
+    },
+    {
+      "step": "done",
+      "status": "ok",
+      "message": "Qwen3.5 0.8B (local) can now take audio input through vector:gtzan: it scored 79.5% on 200 held-out questions, against 20.0% chance. This sense covers the 10 categories of Music genres (GTZAN) only; a clip outside them will be given the nearest of those labels. It replaced the earlier vector:gtzan sense (79.5% on gtzan, closed scope).",
+      "data": {
+        "installed": "vector:gtzan",
+        "replaced": "vector:gtzan"
+      },
+      "t": 110.367
+    }
+  ],
+  "cards": [
+    {
+      "model": "qwen3.5-0.8b",
+      "modality": "audio",
+      "dataset": "gtzan",
+      "scope": "closed",
+      "bridge": "vector:gtzan",
+      "kind": "vector",
+      "n": 200,
+      "chance": 0.2,
+      "accuracy": 0.795,
+      "controls": {
+        "swapped": 0.125,
+        "no_input": 0.22,
+        "lookup": 0.845,
+        "specialist_alone": 0.535,
+        "text_bridge": 0.475
+      },
+      "verdict": "installed",
+      "reason": "Installed vector:gtzan. vector:gtzan passed: it scored 79.5% against 20.0% chance and 12.5% with swapped input.",
+      "created": "2026-11-15T02:05:11+00:00",
+      "interval": [
+        0.7337,
+        0.8451
+      ]
+    },
+    {
+      "model": "qwen3.5-0.8b",
+      "modality": "audio",
+      "dataset": "gtzan",
+      "scope": "closed",
+      "bridge": "text:gtzan",
+      "kind": "text",
+      "n": 200,
+      "chance": 0.2,
+      "accuracy": 0.475,
+      "controls": {
+        "swapped": 0.2,
+        "no_input": 0.22,
+        "lookup": 0.845,
+        "specialist_alone": 0.535
+      },
+      "verdict": "rejected",
+      "reason": "text:gtzan passed: it scored 47.5% against 20.0% chance, meets the 35.0% bar for a text bridge. Swapped input scored 20.0%, requiring at least 30.0% accuracy. It was not installed because vector:gtzan was chosen instead.",
+      "created": "2026-11-15T02:05:23+00:00",
+      "interval": [
+        0.4069,
+        0.544
+      ]
+    }
+  ],
+  "installed": "vector:gtzan",
+  "error": null,
+  "seconds": 110.367,
+  "format": 1
+}
