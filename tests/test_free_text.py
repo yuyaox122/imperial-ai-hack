@@ -283,6 +283,39 @@ def test_demo_cli_save_records_a_failed_run(monkeypatch, tmp_path, capsys):
     assert record["events"][-1]["step"] == "error" and all("t" in e for e in record["events"])
 
 
+def test_demo_cli_ask_sends_the_file_through_the_new_sense(monkeypatch, tmp_path, capsys):
+    from sense.specialists import FAKE_CONCEPTS, FakeSpecialist
+
+    clip = tmp_path / "clip.wav"
+    FakeSpecialist.write_sample(FAKE_CONCEPTS.index("rock"), clip, seed=1)
+    assert run_demo_cli(monkeypatch, "--model", "fake", "--dataset", "gtzan", "--ask", str(clip), "Which genre?") == 0
+    assert "clip.wav reached the model through vector:gtzan" in capsys.readouterr().out
+
+
+def test_demo_cli_ask_refuses_a_file_that_is_not_audio_before_the_run(monkeypatch, tmp_path, capsys):
+    notes = tmp_path / "notes.txt"
+    notes.write_text("not audio")
+    with pytest.raises(SystemExit) as stop:
+        run_demo_cli(monkeypatch, "--model", "fake", "--dataset", "gtzan", "--ask", str(notes), "What is this?")
+    captured = capsys.readouterr()
+    assert stop.value.code == 2 and "could not read notes.txt as audio" in captured.err
+    assert "Agent run" not in captured.out  # refused before minutes of real-mode work
+    with pytest.raises(SystemExit) as stop:
+        run_demo_cli(monkeypatch, "--model", "fake", "--dataset", "gtzan", "--ask", str(tmp_path / "gone.wav"), "Hm?")
+    assert stop.value.code == 2 and "does not exist" in capsys.readouterr().err
+
+
+def test_demo_cli_ask_reports_a_file_the_sense_cannot_take(monkeypatch, tmp_path, capsys):
+    script = load_script("demo_cli")
+    monkeypatch.setattr(script, "audio_problem", lambda path: None)  # say the check passed, then the file is bad
+    bad = tmp_path / "bad.wav"
+    bad.write_bytes(b"RIFF....not a wave")
+    monkeypatch.setattr(sys, "argv", ["demo_cli.py", "--model", "fake", "--dataset", "gtzan", "--ask", str(bad), "Hm?"])
+    assert script.main() == 1
+    captured = capsys.readouterr()
+    assert "Installed: vector:gtzan" in captured.out and f"Could not use {bad}" in captured.err
+
+
 def test_demo_cli_save_to_an_unwritable_path_fails_clearly(monkeypatch, tmp_path, capsys):
     blocker = tmp_path / "a-file"
     blocker.write_text("")

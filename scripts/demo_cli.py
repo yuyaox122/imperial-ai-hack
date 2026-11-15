@@ -20,7 +20,9 @@ With --save PATH, the run is also written to PATH as JSON when it ends, whether 
 "machine" ({"platform", "python", "machine"}). The file is written before --ask is answered.
 Exit status: 0 when the run finished (installed or refused), 1 when it failed, --save could not write its file,
 the folder could not make a set, or the set cannot carry this run (sense.datasets.fit_problem, checked before the
-run starts: for example scope open on a set with fewer than 3 labels).
+run starts: for example scope open on a set with fewer than 3 labels), or the sense could not take the --ask file.
+The --ask file is checked before the run starts (it must exist and read as audio); if it does not, the exit
+status is 2 and nothing runs.
 """
 
 from __future__ import annotations
@@ -85,6 +87,21 @@ def folder_summary(ds: LabelledSet) -> str:
     )
 
 
+def audio_problem(path: Path) -> str | None:
+    """Why `path` cannot be read as audio (checked before the run, so a bad --ask file fails at once), or None."""
+    if not path.is_file():
+        return f"{path} does not exist. Give the path of an audio file."
+    try:
+        import soundfile
+
+        info = soundfile.info(str(path))
+    except Exception as exc:  # soundfile raises its own error type for files it cannot read
+        return f"could not read {path.name} as audio ({exc}). Use a WAV, FLAC, OGG, MP3 or AIFF file."
+    if not info.frames:
+        return f"{path.name} contains no audio samples."
+    return None
+
+
 def ask(model_name: str, path: Path, question: str) -> int:
     """Send one file and a question through the model's installed sense; print what reached the model and the reply."""
     model = models.load_model(model_name)
@@ -94,7 +111,11 @@ def ask(model_name: str, path: Path, question: str) -> int:
     if "audio" in bridges:
         bridge = bridges["audio"]
         started = time.monotonic()
-        item = bridge.prepare(path)
+        try:
+            item = bridge.prepare(path)
+        except (ValueError, OSError) as exc:  # unreadable, empty, or gone since the run started
+            print(f"Could not use {path}: {exc}", file=sys.stderr)
+            return 1
         item.source = path.name
         inputs.append(item)
         print(f"  {path.name} reached the model through {bridge.name} ({bridge.kind} bridge) "
@@ -150,8 +171,10 @@ def main() -> int:
     ap.add_argument("--save", metavar="PATH", type=Path,
                     help="when the run ends, write it (request, timed trace events, report cards) to PATH as JSON")
     args = ap.parse_args()
-    if args.ask and not Path(args.ask[0]).expanduser().is_file():
-        ap.error(f"--ask: {args.ask[0]} does not exist. Give the path of an audio file.")
+    if args.ask:
+        problem = audio_problem(Path(args.ask[0]).expanduser())
+        if problem:
+            ap.error(f"--ask: {problem}")
     if (args.name or args.question) and not args.folder:
         ap.error("--name and --question go with --folder; a set given with --dataset already has both.")
 
