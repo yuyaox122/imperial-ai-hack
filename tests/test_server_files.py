@@ -116,6 +116,17 @@ def test_a_text_file_is_given_to_the_model_with_the_message_and_needs_no_sense(d
     assert state["bridge_calls"] == 0  # a broken sense must not stop a chat that needs none
 
 
+def test_text_files_agent_detect_reads_as_molecules_places_or_meshes_are_still_given_as_text(doubles):
+    client, state = doubles
+    files = [("vanillin.smi", b"COc1cc(C=O)ccc1O\n"), ("place.txt", b"51.3608, 7.4717\n"),
+             ("tri.obj", b"v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n")]
+    used = chat(client, "/api/chat", "plain", files)
+    assert [u["kind"] for u in used] == ["native", "native", "native"], used
+    message, inputs = state["models"]["plain"].calls[-1]
+    assert "COc1cc(C=O)ccc1O" in message and "51.3608, 7.4717" in message and "f 1 2 3" in message
+    assert inputs == [] and state["bridge_calls"] == 0
+
+
 def test_a_long_text_file_is_cut_and_utf16_is_read(doubles):
     client, state = doubles
     long = "x" * (server_app.TEXT_FILE_CHARS + 50)
