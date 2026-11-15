@@ -199,7 +199,7 @@ ul, ol { margin: 0; padding: 0; list-style: none; }
   background: var(--red-subtle); color: var(--red-strong); font-size: 12px; line-height: 1.45;
 }
 .error .link-button { color: var(--mcs-red-200); font-size: 12px; text-decoration: underline; }
-.graph-error { position: absolute; z-index: 3; top: 10px; left: 12px; right: 12px; }
+.pane-error { flex: none; }
 
 /* ================================================================ buttons */
 
@@ -294,6 +294,7 @@ ul, ol { margin: 0; padding: 0; list-style: none; }
 .run-progress > span { display: block; width: 0; height: 1px; background: var(--mcs-blue-500); transition: width 0.3s; }
 .run-progress > span[data-state="done"] { background: var(--mcs-green-500); }
 .run-progress > span[data-state="failed"] { background: var(--mcs-red-500); }
+.run-progress > span[data-state="stopped"] { background: var(--mcs-orange-500); }
 
 /* Status line: the band's footer, every value from the API. */
 .statusline {
@@ -562,9 +563,10 @@ button.node:hover { border-color: var(--app-widget-hover-stroke); }
 .steps { display: grid; grid-template-columns: repeat(var(--steps, 6), minmax(0, 1fr)); }
 .step { position: relative; display: flex; flex-direction: column; gap: 3px; min-width: 0; padding: 9px 10px 10px; border-right: var(--rule) solid var(--rule-light); }
 .step:last-child { border-right: 0; }
-.step--running::before, .step--refused::before { content: ""; position: absolute; top: 0; left: 0; right: 0; height: 3px; }
+.step--running::before, .step--refused::before, .step--stopped::before { content: ""; position: absolute; top: 0; left: 0; right: 0; height: 3px; }
 .step--running::before { background: var(--mcs-blue-500); }
 .step--refused::before { background: var(--mcs-red-500); }
+.step--stopped::before { background: var(--mcs-orange-500); }
 .step-head { display: flex; align-items: center; gap: 8px; font: 10.5px/1.3 var(--font-mono); }
 .step-idx { color: var(--text-faint); }
 .step-state { display: flex; align-items: center; gap: 5px; color: var(--text-faint); font: 700 10px/1 var(--font-sans); letter-spacing: 0.08em; text-transform: uppercase; }
@@ -573,6 +575,7 @@ button.node:hover { border-color: var(--app-widget-hover-stroke); }
 .step--running .step-state { color: var(--mcs-blue-300); }
 .step--running .step-state .led { animation: blink 1.2s steps(2, jump-none) infinite; }
 .step--refused .step-state { color: var(--app-error); }
+.step--stopped .step-state { color: var(--mcs-orange-300); }
 .step-time { min-width: 0; margin-left: auto; overflow: hidden; color: var(--text-secondary); white-space: nowrap; text-overflow: ellipsis; }
 .step-title { margin-top: 3px; color: var(--heading); font-weight: 600; font-size: 12.5px; line-height: 1.3; }
 .step--pending .step-title { color: var(--text-secondary); }
@@ -581,7 +584,7 @@ button.node:hover { border-color: var(--app-widget-hover-stroke); }
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
 }
 .step-code { margin-top: auto; padding-top: 3px; color: var(--text-faint); font: 11px/1.3 var(--font-mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.step--done .step-code, .step--running .step-code, .step--refused .step-code { color: var(--text-secondary); }
+.step--done .step-code, .step--running .step-code, .step--refused .step-code, .step--stopped .step-code { color: var(--text-secondary); }
 
 #trace-outcome:not(:empty), #trace-error:not([hidden]) { margin: 0 14px 10px; }
 
@@ -661,6 +664,9 @@ button.sense-text:hover .sense-title { color: var(--accent-ink-hover); }
 }
 .popover { max-height: calc(100vh - 100px); overflow-y: auto; }
 .goal-input { width: 100%; resize: vertical; padding: 8px; background: var(--app-widget); border: 1px solid var(--app-widget-stroke); }
+.text-input { width: 100%; height: 26px; padding: 0 8px; background: var(--app-widget); border: var(--rule) solid var(--app-widget-stroke); color: var(--app-text); font: 12px/1 var(--font-mono); }
+.text-input:hover { border-color: var(--app-widget-hover-stroke); }
+#fit-examples-hint { margin-top: 0; }
 .fit-drop { display: grid; gap: 8px; padding: 12px; border: 1px dashed var(--rule-dark); cursor: pointer; }
 .fit-drop.is-dropping { border-color: var(--accent); background: var(--accent-tint); }
 .fit-drop input { max-width: 100%; font-size: 12px; }
