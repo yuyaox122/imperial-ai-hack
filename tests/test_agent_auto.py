@@ -6,7 +6,7 @@ import time
 
 import pytest
 
-from agent import data, jobs, llm, loop, research
+from agent import data, jobs, llm, loop, research, synth
 from agent.auto import run_auto
 from agent.claims import Claim
 from sense import datasets, models
@@ -80,19 +80,40 @@ def last(w, step, status=None):
     return next(e for e in reversed(w.events) if e.step == step and (status is None or e.status == status))
 
 
-def test_native_modality(world, tmp_path):
+def test_native_modality(world, tmp_path, monkeypatch):
+    # An image needs no sense only for a model chat can show images to (an API model); text, for any model.
+    monkeypatch.setattr(models, 'available_models',
+                        lambda: [ModelInfo('fake', 'Fake model', ['text', 'image'], False)])
     png = tmp_path / 'image'; png.write_bytes(b'\x89PNG\r\n\x1a\n')
     assert run(world, png) == ([], None)
     assert steps(world) == ['detect', 'done'] and not world.fit_calls
+    assert last(world, 'detect', 'ok').data['flow'] == 'native' and last(world, 'done').data['native'] is True
 
 
-def test_unknown_format_refuses_with_citations(world, tmp_path):
+def test_a_local_model_gets_an_adapter_for_an_image(world, tmp_path, monkeypatch):
+    # A local model's ModelInfo.native lists "image", but chat cannot show it one: the adapter flow describes it.
+    calls = []
+    monkeypatch.setattr(synth, 'run_synth', lambda *args, **kwargs: calls.append((args, kwargs)) or ([], None))
+    png = tmp_path / 'image'; png.write_bytes(b'\x89PNG\r\n\x1a\n')
+    assert run(world, png) == ([], None)
+    detected = last(world, 'detect', 'ok')
+    assert detected.data['flow'] == 'adapter' and 'cannot be shown image files in chat' in detected.message
+    ((args, kwargs),) = calls
+    assert args[:3] == ('fake', png, 'recognise sounds') and kwargs['web'] is True
+    assert kwargs['detection']['modality'] == 'image' and kwargs['t0'] > 0
+    assert not world.fit_calls and 'research' not in steps(world)
+
+
+def test_unknown_format_goes_to_the_adapter_flow(world, tmp_path):
+    # A FASTA file is "other": no specialist flow, so the agent designs an adapter. In fake mode the LLM gives no
+    # design, so the run ends there, with run_synth's own steps on this run's clock.
     fasta = tmp_path / 'sequence'; fasta.write_text('>sequence\nACTG')
     assert run(world, fasta) == ([], None)
-    done = last(world, 'done')
-    assert done.data['needs_user'] and 'labelled examples' in done.message
-    assert done.data['claims'][0]['source_url'].startswith('http')
-    assert steps(world) == ['detect', 'research', 'done']
+    assert steps(world) == ['detect', 'design', 'done']
+    assert last(world, 'detect', 'ok').data['flow'] == 'adapter'
+    assert last(world, 'design').status == 'fail' and last(world, 'done').data['installed'] is None
+    assert [e.t for e in world.events] == sorted(e.t for e in world.events)
+    assert not world.fit_calls
 
 
 def test_user_folder_wins(world, tmp_path):
@@ -278,8 +299,10 @@ def test_cli_refusal_and_failure_exit_codes(world, tmp_path, capsys):
     from agent.__main__ import main
     fasta = tmp_path / 'sequence'; fasta.write_text('>sequence\nACTG')
     args = ['--model', 'fake', '--goal', 'recognise sounds', '--file']
-    assert main(args + [str(fasta)]) == 0
-    assert 'Claim [unverified]' in capsys.readouterr().out
+    assert main(args + [str(fasta)]) == 0  # a refusal (no adapter design) is a finished run
+    assert '[done] ok' in capsys.readouterr().out
+    assert main(args + [str(world.wav)]) == 0  # the audio flow prints the research claims it settled
+    assert 'Claim [' in capsys.readouterr().out
     assert main(args + [str(tmp_path / 'missing')]) == 1
     output = capsys.readouterr().out
     assert '[error] fail' in output and output.count('[error]') == 1

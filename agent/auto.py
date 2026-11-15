@@ -1,10 +1,34 @@
-"""Detect an input, research a specialist and labelled data, then verify a bridge.
+"""Detect an input, then give the model a sense for it: research a specialist and labelled data and verify a
+bridge (audio), or have the agent write, verify and install an adapter (every other input the model cannot take).
 
 Public surface: run_auto(model, file, goal, emit, planner=None, *, examples=None,
                          on_request=None) -> (cards, installed).
 
-Trace contract for the interface (all times use the same monotonic start):
-  [detect]   start, ok: file, goal, modality, format, how, detail.
+Three flows, chosen after [detect] and the model check by the detected modality:
+  native      the model takes the file as it is in chat (sense.models.takes_as_is): text for any model that
+              reads text, an image only for a model that takes images in chat (an API model; a local open-weight
+              model cannot be shown images yet, so its image goes to the adapter flow, where the adapter can
+              describe the image as text). Ends at once: [detect], then [done].
+  specialist  audio: today's CLAP flow, unchanged ([research] ... [done] below).
+  adapter     everything else (video, 3d, molecule, geo, other such as csv, fasta and unknown binaries, an image
+              for a local model): agent.synth.run_synth(model, file, goal, emit, examples=examples,
+              detection=<this detection>, web=True, on_request=on_request, t0=<this run's start>), whose trace
+              follows [detect] on the same clock (its docstring is the full contract): [design], [install_request]
+              and agent.jobs' [approval] when the design asks for packages, [build], [data] (the user's examples
+              folder; else labelled files from a public dataset found by agent.hub_probes.find_probes, its events
+              as data sub-steps with action search/candidate/inspect/fetch, purpose "probes" and provenance
+              "dataset"; else generated files when the design builds the label into the content, a consistency
+              check only; else done with needs_user=True naming the examples to provide; then a second search for
+              unseen categories, purpose "unseen", excluding the first source and its labels, or info "Unseen
+              categories not measured: <why>." which the card repeats), [verify] (the native control is on
+              whenever the user's file or most probe files read as text), [decide], [install], [done] (installed,
+              needs_user). on_request gets the FitRequest (dataset: the probe set's name, modality: the sense's,
+              scope "closed") before [verify]. No [research] or [claims] step.
+
+Trace contract for the interface (all times use the same monotonic start); after [detect], the steps below are the
+specialist flow's, and the adapter flow's are run_synth's:
+  [detect]   start, ok: file, goal, modality, format, how, detail, and flow ("native" | "specialist" |
+             "adapter"); for the adapter flow the message also says why the model needs an adapter.
   [research] start, ok: origin, chosen, fallback, note, claims.
   [data]     start then ok/fail/info for need, search, fetch, build and fallback;
              substep events carry action and relevant need/candidate/reason facts.
@@ -15,10 +39,11 @@ Trace contract for the interface (all times use the same monotonic start):
   [decide], [install], [done] delegate to run_fit after claims are settled.
              Early done ok: installed=None and native=True or needs_user=True;
              unsupported/no-data refusals also include the accumulated claims.
-  [error]    fail: step, error, preceded by a failure at that step; re-raises.
+  [error]    fail: step, error, preceded by a failure at that step; re-raises. Exactly one error event per run,
+             in every flow: a step that already emitted one (run_fit's, run_synth's) is not reported twice.
 
-on_request publishes the resolved FitRequest before fitting. A supplied folder is
-closed scope. Research and sample failures allow a goal-matching prewired fallback;
+on_request publishes the resolved FitRequest before fitting (or, in the adapter flow, before verifying). A supplied
+folder is closed scope. Research and sample failures allow a goal-matching prewired fallback;
 invalid user folders fail visibly instead of silently using unrelated examples.
 A model that is not available (available_models() says why) raises ValueError
 before any research, download or embedding. A user folder whose name is taken
@@ -36,7 +61,7 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
-from agent import data, discover, loop, research
+from agent import data, discover, loop, research, synth
 from agent.claims import Claim, citable, settle_dataset_claim, settle_specialist_claims
 from agent.detect import detect
 from sense import config, datasets
@@ -82,12 +107,28 @@ def run_auto(model: str, file: Path, goal: str, emit: Callable[[TraceEvent], Non
         if not info.available:
             # Refused before research, downloads and embedding, which would all be wasted on a model that cannot load.
             raise ValueError(f'{info.label} cannot be loaded. {info.note}'.strip())
-        say('ok', detected.detail, file=file.name, goal=goal, **detected.to_dict())
         modality = detected.modality
-        if modality in info.native:
+        flow = 'native' if models.takes_as_is(info, modality) else 'specialist' if modality == 'audio' else 'adapter'
+        detail = detected.detail
+        if flow == 'adapter':
+            if modality in info.native:  # listed, but chat cannot give it as it is (a local model and an image)
+                why = f'{info.label} cannot be shown {modality} files in chat'
+            elif modality in ('text', 'image'):
+                why = f'{info.label} does not read {modality} files'
+            else:
+                why = f'{info.label} does not read {modality} files and no specialist is wired for them'
+            detail = (f'{detail} Since {why}, the agent will write an adapter: code that turns the file into '
+                      f'something {info.label} reads.')
+        say('ok', detail, file=file.name, goal=goal, **detected.to_dict(), flow=flow)
+        if flow == 'native':
             step = 'done'
             say('ok', f'{info.label} reads {modality} natively, so no sense is needed.', installed=None, native=True)
             return [], None
+        if flow == 'adapter':
+            # run_synth traces its own steps (design ... done) on this run's clock and emits its own error pair
+            step = 'design'
+            return synth.run_synth(model, file, goal, forward, examples=examples, detection=detected.to_dict(),
+                                   web=True, on_request=on_request, t0=t0)
 
         step = 'research'
         say('start', f'Researching a specialist for {modality}: {goal}')
