@@ -1,87 +1,114 @@
 # Devpost submission (draft)
 
-Draft by the lead's Claude, 14 November 19:55; updated 15 November for the release. Submit by **Sun 11:30**
-(closes 12:00). Before submitting: make the repository public, attach the recorded run, and fill in the two
-**[TODO]** items under Links. Every number here must match a card in Databricks or a record in
-`socket_pilot/artifacts/`.
+Draft by the lead's Claude, 14 November 19:55. Rewritten by Michael's Claude on 15 November for the omnimodal release. Submit by **Sun 11:30** (closes 12:00). Before submitting: make the repository public, attach the demo video, and fill in the two **[TODO]** items under Links. Every number here matches a record in `socket_pilot/artifacts/`; [reference.md](reference.md) gives each one with its source.
 
 - **Name:** Sensorium
 - **Tagline:** An agent that gives a model a sense it doesn't have, proves the sense works, and installs it. If the proof fails, it refuses.
 - **Track:** Autonomous Agents. **Sponsor prizes:** Databricks, Figma, Linkup.
 - **Links:** GitHub `yuyaox122/imperial-ai-hack` (public by 10:30), demo video [TODO], Figma pitch page https://www.figma.com/design/9DxXU1h0aHjw8Mc8vUwl8O/Imperial-AI-Hackathon?node-id=70-76 [TODO: the owner (Michael) sets "anyone with the link can view" before submitting].
 
-## Inspiration
+## Elevator pitch (at most 200 characters)
 
-Most models can read text and images, and they can't hear. The usual fix is to retrain or swap models. We wanted an agent that takes the model you already use and a file it can't read, works out how to get that file in, and shows proof before it changes anything. A sense should come with a report card, not a promise.
+> Give a model a sense it lacks. Drop in a file it can't read: an agent writes the adapter, finds test data on the web, and installs the sense only if it beats the controls.
 
-## What it does
+(171 characters.)
 
-You pick a base model (local Qwen3.5-0.8B, or an API model), give it a file it can't read and say what you want, such as "recognise music genres" or "handle any sound". The agent then:
+## About the project
 
-1. **Detects** what the file is from its bytes, and stops at once if the model already reads it.
-2. **Researches** a specialist and labelled data: it asks Linkup's web search for pretrained encoders and labelled datasets, checks each one on the Hugging Face Hub, and fetches a small capped sample of a dataset that fits. If that fails it uses a pre-wired set that matches the goal, and if none does, it asks you for a folder of examples. You can also hand it a labelled set yourself.
-3. **Inspects** the model: what it reads natively, and whether its weights are open.
-4. **Plans** candidate *bridges*: a vector bridge that writes a frozen audio encoder's (CLAP) embedding straight into the model's early layers (open weights only); a text bridge that pastes the nearest caption or label; and a tool bridge that lets an API model call CLAP as a `listen` tool.
-5. **Fits** each candidate. The vector map has a closed-form fit: 0.5 to 1.3 s per layer, about 25 s with the layer search.
-6. **Verifies** each one on held-out questions (200 for a local model, 50 for a paid API model) against controls: swapped audio, no audio, nearest-example lookup, the specialist alone, and, for "any sound", a refit with a fifth of the sounds left out. It then checks what its web sources claimed against its own numbers, and marks each claim confirmed, refuted or not testable.
-7. **Decides and installs** the best bridge that passes the rules, or installs nothing and says why. Then you keep chatting with the same model, and each reply shows which bridge carried the audio.
+Paste everything below this line into Devpost's "About the project" field. It is Markdown, and the formulas use Devpost's `$$` LaTeX blocks.
 
-Measured on Qwen3.5-0.8B, with a labelled set chosen in the interface:
+---
 
-| Request | Candidate | Accuracy [95% CI] | Swapped audio | No audio | Verdict |
-|---|---|---|---|---|---|
-| Music genres (GTZAN) | `vector:gtzan` | 79.5% [73.4, 84.5] | 12.5% | 22.0% | installed |
-| Any sound (ESC-50) | `vector:esc50` | 96.5% [93.0, 98.3] | 18.0% | 21.0% | **rejected**: 41 of 80 (51.25%) on sounds left out of fitting |
-| Any sound (ESC-50) | `text:captions` | 80.5% [74.5, 85.4] | 17.5% | 21.0% | installed |
+### Inspiration
 
-Chance is 20% (five options). The agent turned down its highest score because that score doesn't hold on sounds it has never heard.
+A language model reads text and, if you are lucky, images. Hand it a 3D mesh, a video, a molecule or a MIDI file and it guesses or gives up. The usual fix is a different model or a fine-tune. We wanted an agent that keeps the model you already use, writes whatever it takes to get the file in, and proves the result before trusting it. A new sense should come with a report card, not a promise.
 
-For an API model (`gpt-5.4-mini`), which has no hidden states to write into, the agent tried the text and tool bridges on 50 ESC-50 questions and installed the tool bridge: `tool:esc50` scored 96.0% [86.5, 98.9] (swapped audio 22.0%, no audio 18.0%) over `text:esc50` at 92.0% [81.2, 96.9]. (The tool card's answers came from the cache of an earlier direct verify on the same questions.) It equals CLAP alone, as it should: the model decides when to listen and puts the result into words.
+### What it does
 
-**A task for a named user.** A forest-monitoring team wants chainsaw, hand saw and engine sounds flagged, so a ranger listens to fewer clips. ESC-50's held-out fold stands in for field recordings. Our first wording, framed around illegal logging, was run once on the test fold (fold 5) and failed its own control: the 0.8B answered "chainsaw" with no audio at all. We then picked among four wordings on a dev fold (fold 4) and ran the chosen one once on fold 5. On dev, all three multiple-choice wordings flagged every clip with no input; only an open question beat no input. On fold 5, with the 0.8B asked the open question through the caption sense, it flagged 26 of 400 clips and caught 13 of the 24 targets (54.2% recall, 50.0% precision); with no input it flagged none. The API model through its caption sense did a little better (14 of 24 caught, 60.9% precision). CLAP lookup alone flagged 24 and caught 23 (95.8% precision). So on this task the base model adds nothing, and we say so: a ranger should run the lookup. The no-input control is what caught the bad wording, the same control the report cards use.
+You pick a base model (local Qwen3.5-0.8B, GPT through the OpenAI API, or Claude Sonnet 5.5), drop in a file it cannot read, and say what you want to know. The agent then:
 
-## How we built it
+1. **Detects** the file from its bytes: audio, image, video, 3D, molecule, coordinates, text, or unknown. If the model already reads it, the run stops.
+2. **Builds a bridge.** For audio it fits a map from a frozen audio encoder (CLAP) into the model's early layers, or gives the model CLAP's output as text or as a tool. For anything else it **writes an adapter**: Python code, run in a sandbox, that turns the file into text or images the model reads. A package the adapter needs is vetted and installed only after you approve it.
+3. **Finds labelled probe data** on the Hugging Face Hub and the web (Linkup), plus a second source whose categories the adapter was not built around. If nothing usable exists, it asks you for examples.
+4. **Verifies** the bridge on held-out multiple-choice questions against controls: another file's input (swapped), no input, the model reading the raw file, and unseen categories.
+5. **Installs or refuses** by fixed rules. Then you keep chatting with the same model, and each reply names the sense that carried the file.
 
-- **Harness (`sense/`):** contracts for base models, specialists, bridges, report cards and installed senses. Qwen3.5 runs through Transformers, with forward hooks that write vectors into placeholder tokens. CLAP is the frozen audio and text encoder. Verification gives every card a Wilson interval. Labelled sets can be built from any folder, with a duplicate check across splits.
-- **Agent (`agent/`):** from one file and a goal, a detect, research, data, fit, verify, claims, decide, install loop with a visible trace. Research and data search go through Linkup's search API and the Hugging Face Hub (model and dataset records, and the dataset viewer for a capped sample), all in one module with an on-disk cache. A claims ledger records what each web source said about a model or dataset and whether our measurement confirmed it. An LLM planner proposes which bridges to try and which to install, and a rule planner holds the acceptance bars, so the model can't install a bridge that fails them. The autonomous flow is tested against canned and recorded answers; no real run of it is recorded yet, so every number above comes from runs on a chosen labelled set.
-- **Interface (`web/`, `server/`):** a chat harness with a model picker, file drop, streamed replies with history, sense graph, report-card inspector, run cancellation and replay of recorded runs, designed in Figma: a first pass in our own design system (variables with code syntax, 18 components, 10 variant sets), then the shipped Henad redesign, whose 131 variables carry the CSS names in `web/style.css` and whose parts were captured back from the running build as components; the graph node, callout, agent step, metric row and status badge each have a Refused variant.
-- **Databricks (`integrations/databricks/`):** every agent run, report card and trace event goes into Delta tables in Unity Catalog. Each run record is copied to a Volume, and each verified bridge is an MLflow run with its controls as metrics. A sense install is backed by a pass row in `report_cards`. Triage flags go to `triage_batches` and `triage_clips`. The writer runs as a listener on the agent's job stream, off the run's thread.
-- **Fake mode:** `SENSE_FAKE=1` swaps in a deterministic model, encoder, data and research answers, so about 850 tests and the whole interface run in seconds without weights or network. Browser smoke tests (Playwright) cover the interface.
+Measured, one run per row (five options, so chance is 20%; brackets are 95% Wilson intervals):
 
-## Challenges we ran into
+| File and goal | Base model | Score | The control that mattered | Outcome |
+|---|---|---|---|---|
+| music clip, "recognise music genres" | Qwen3.5-0.8B | 79.5% [73.4, 84.5] | swapped input 12.5% | installed |
+| any sound (ESC-50) | Qwen3.5-0.8B | 96.5% | 51.25% on sounds left out of fitting | refused; a caption bridge at 80.5% [74.5, 85.4] installed |
+| 3D mesh, "what object is this" | Claude Sonnet 5.5 | 100.0% [92.9, 100] | raw file 42%, unseen categories 64% | installed |
+| video, "what action" | Claude Sonnet 5.5 | 78.0% [64.8, 87.3] | no input 20%, unseen actions 92% | installed |
+| molecule, "what does it smell like" | Claude Sonnet 5.5 | 58.0% [44.2, 70.6] | raw SMILES 46% | installed |
+| coordinates, "which country" | Claude Sonnet 5.5 | 100.0% | raw coordinates 98% | refused: the model already reads coordinates |
+| MIDI, "what genre" (blind test) | Claude Sonnet 5.5 | 32.0% [20.8, 45.8] | no input 20% | refused: below the bar |
 
-- **Our own data leaked.** GTZAN holds 14 byte-identical recordings. Once copies were kept within one split, the pilot's 84.9% became 83.7%, and we re-measured the GTZAN agent run (now 79.5%) and the research run. The README marks the few older figures that were not re-run.
-- **A high score that doesn't generalise.** The vector bridge scores 96.5% on fitted sounds and 51.25% on sounds left out of fitting, so "any sound" needed its own control.
-- **An LLM planner that misstates arithmetic.** It once called a passing bridge "below threshold". The rules, not the LLM, decide installs, and we list the misstatement as a known issue.
-- **Question wording.** One phrase ("illegal logging") made the 0.8B answer "chainsaw" to silence, and we found it on the test fold. Since then we choose wording on a dev fold and run the choice once on the test fold.
+For the 3D, video, molecule and coordinate runs, the agent found every labelled set itself: ModelNet40 meshes, HMDB51 clips, an MIT-licensed odour dataset and a world-cities table. Two refusals matter as much as the installs. The ESC-50 bridge had the best score of its run but fell to 51.25% on sounds it was never fitted on. On coordinates, Claude already scored 98% on the raw numbers, so an adapter had nothing to add.
 
-## Accomplishments that we're proud of
+The **blind test** used a format our code never mentions: a MIDI file with no metadata. The agent asked to install `mido` (the installer rated the pinned plan ok), and the adapter it wrote ran on the first attempt. Its Hub search returned one MIDI genre set, in a layout it could not read, so it asked for examples. Given 60 piano MIDI files in five genres, the adapter scored 32.0%, below the 35% bar, and the agent installed nothing.
 
-- The agent refuses its own best number when a control says it's wrong.
-- Each card carries swapped-input, no-input, lookup and specialist-alone controls, so a claim is checked against simpler explanations.
-- Repeating the GTZAN run gave identical cards.
-- The agent checks what the web told it: each claim about a model or dataset is marked confirmed, refuted or not testable against our own measurement.
-- An install is a database row you can query, not a log line.
+### How we built it
 
-## What we learned
+**Verification is the core.** Every bridge answers held-out questions, and each card reports accuracy $\hat p$ on $n$ questions with a 95% Wilson interval:
 
-- A frozen specialist is often as good as the bridge on its own task. The value of the bridge is getting the sense into a model you can keep talking to, and the card should say what that costs.
-- Small models carry strong priors from the question; the no-input control catches it.
+$$\frac{\hat p + \frac{z^2}{2n}}{1 + \frac{z^2}{n}} \pm \frac{z}{1 + \frac{z^2}{n}} \sqrt{\frac{\hat p(1-\hat p)}{n} + \frac{z^2}{4n^2}}, \qquad z = 1.96$$
 
-## What's next
+A rule planner, not a language model, holds the bars. With accuracy $a$, chance $c$, swapped input $s$, the model on the raw file $r$, and unseen-category accuracy $u$ (chance $c_u$), a text or image bridge, adapters included, is installed only if
 
-- A recorded real run of the autonomous flow, from one file and a goal to an installed sense.
-- Senses beyond audio. The harness runs one specialist today (CLAP), so research can name an encoder for a new input but not run it. Next, the agent builds the adapter for the input the research finds (video, 3D, molecules) and finds its own labelled probe data on the web, so a run can start without a training set; verification against controls stays the gate.
-- The image bridge (audio rendered as a spectrogram for a vision model), and images in chat.
-- Qwen3.5-2B through the harness, and a second machine actually set up with `scripts/setup_machine.py`.
+$$a \ge c + 0.15, \qquad a \ge s + 0.10, \qquad a \ge r + 0.10, \qquad u \ge c_u + 0.15$$
+
+where the last two apply when those controls are measured. A vector bridge needs $a \ge \max(c, s) + 0.25$, and for open scope its accuracy on held-out classes must reach $c + 0.25$ and stay within 20 points of $a$. An LLM planner may propose which bridge to install, but its choice is checked against these rules.
+
+**The vector bridge** maps a CLAP embedding $x$ to the model's own representation $t$ of the label's text at an early block $\ell$, with a closed-form ridge fit
+
+$$W = (X^\top X + \lambda I)^{-1} X^\top (T - \bar t)$$
+
+where $\lambda$ is chosen by 5-fold cross-validated $R^2$. The mapped vector is written into placeholder tokens after block $\ell$, with $\ell \in \{0, \dots, 4\}$ picked on dev questions. One block fits in 0.5 to 1.3 s.
+
+**Adapters** are designed and written by `gpt-6.1-terra` from the user's file alone, before any labelled file exists, so every probe file is held out. The code runs under macOS `sandbox-exec` with no network, a scrubbed environment, and time, disk and memory limits. Each error goes back to the model for a repair, up to three attempts in all. A helper kit gives the adapter mesh renders (trimesh and matplotlib), video frames (ffmpeg), RDKit descriptors and a Natural Earth gazetteer. A package outside the toolbox goes through our installer, which allows only hash-pinned PyPI wheels, checks OSV for known vulnerabilities, release history and look-alike names, and installs into a separate toolbox after the user approves.
+
+**Probe search** combines the model's and our own Hub queries, the Hugging Face dataset viewer, folder-labelled repositories and Linkup web search for data tables. Found sets must be fair tests: one file type, at least three labels, no file-format words as labels, and an LLM check that the labels answer the goal. For an unknown binary format, probe files must start with the same bytes as the user's file.
+
+**Around it:**
+- A FastAPI server and a no-build web interface with a live trace, report cards, an install-approval card and replay, designed in Figma.
+- Every run, card and trace event goes to Databricks Delta tables, with one MLflow run per card.
+- A fake mode runs 1,640 tests in about 80 seconds with no weights or network, plus 29 Playwright browser tests.
+
+### Challenges we ran into
+
+- **Our own data leaked.** GTZAN holds 14 byte-identical recordings. Once copies were kept in one split, the research run's 84.9% became 83.7%, and we re-measured everything.
+- **The model already knew.** On coordinates Claude scored 98% with no adapter, so we added the raw-file control. Without it the 100% adapter would have been installed for nothing.
+- **Single runs move.** The molecule adapter cleared the raw-file bar by 12 points in one run and missed it by 2 in an earlier one on the same data. The adapter is rewritten each time, so we report each run as one run.
+- **The blind test broke three assumptions.** MP3 genre files reached the MIDI adapter as probes (it failed on all 50), so probes for an unknown format now have to match the file's first bytes. The word "music" mapped the format onto our audio profile, so unknown formats now get a temporary profile of their own. And "midi" and "genre" were searched apart, so the format word is now paired with the goal's words.
+- **Question wording.** In a forest-monitoring triage task, one phrase ("illegal logging") made the 0.8B answer "chainsaw" to silence. We caught it with the no-input control, and from then on chose wording on a dev fold and ran the choice once on the test fold.
+
+### What we learned
+
+- **The control that matters depends on the input.** On 3D, swapped input (12%) showed only that the model used the file; the raw-file control showed what the adapter added, 100% against 42%. On coordinates the same control showed it added nothing.
+- **Finding fair test data is harder than writing the adapter.** The MIDI adapter worked first time; usable labelled MIDI never turned up.
+- **A frozen specialist is often enough.** On ESC-50, CLAP alone scores 99.0%. The value of a bridge is a sense inside a model you can keep talking to, and the card should say what that costs.
+- **Small models carry priors.** Qwen3.5-0.8B could not use the coordinate adapter's text (24.4% against 23.8% on the raw file).
+
+### What's next
+
+- Read datasets packed as an archive plus a label index, which would have opened the MIDI set, while still flagging labels that a classifier produced.
+- Repeat each run over several seeds and report the spread instead of single runs.
+- Learned bridges beyond audio: today CLAP is the only specialist the harness runs.
+- Larger local models (Qwen3.5-2B), and a second machine set up with `scripts/setup_machine.py`.
+
+---
 
 ## Built with
 
-Python, PyTorch, Hugging Face Transformers, NumPy, SciPy, soundfile, Pillow, FastAPI, Uvicorn, Databricks (Unity Catalog, Delta tables, SQL warehouse, Volumes, MLflow), the OpenAI API, Linkup, the Hugging Face Hub, Playwright, Figma.
+Python, PyTorch, Hugging Face Transformers, NumPy, SciPy, soundfile, Pillow, trimesh, matplotlib, RDKit, ffmpeg, mido (installed by the agent during the blind test), FastAPI, Uvicorn, Databricks (Unity Catalog, Delta tables, SQL warehouse, Volumes, MLflow), the OpenAI API, the Anthropic API, Linkup, the Hugging Face Hub, Playwright, Figma.
 
-**Models:** Qwen/Qwen3.5-0.8B (frozen base model); Qwen/Qwen3.5-2B (listed, research runs only); laion/clap-htsat-unfused (frozen audio and text encoder); gpt-5.4-mini through the OpenAI API (LLM planner, need step and API base model).
-**Datasets:** GTZAN (music genres); ESC-50 (environmental sounds; also the stand-in for field recordings); AudioCaps (caption text only); at run time, a capped sample of a labelled audio dataset the agent finds on the Hugging Face Hub, named with its source and licence in the run's trace.
-**APIs:** OpenAI Chat Completions; Linkup Search API (`/v1/search`, structured output); Hugging Face Hub API (model and dataset records); Hugging Face dataset viewer (datasets-server: splits and rows); Databricks SDK and Statement Execution API; MLflow tracking.
+**Models:** Qwen/Qwen3.5-0.8B (frozen local base model); laion/clap-htsat-unfused (frozen audio and text encoder); `gpt-6.1-terra` through the OpenAI API (adapter design and code, LLM planner, need step, and the `openai-chat` base model); Claude Sonnet 5.5 through the Anthropic API (the `claude-sonnet` base model); `gpt-5.4-mini` behind `openai-chat` in the earlier ESC-50 runs.
+
+**Datasets:** GTZAN (music genres); ESC-50 (environmental sounds, also the stand-in for field recordings in the triage task); AudioCaps (caption text only). Found by the agent at run time: ModelNet40 meshes in a folder-labelled Hub repository, codepawl/scanned-objects-glb (CC BY 4.0), HMDB51, Hari5115/molecular-odor-dataset (MIT) and bamwor/world-cities. Supplied for the blind test and kept local: 60 files from ADL Piano MIDI.
+
+**APIs:** OpenAI Chat Completions; Anthropic Messages; Linkup Search API; Hugging Face Hub API and dataset viewer; PyPI JSON API and OSV (installer checks); Databricks SDK and Statement Execution API; MLflow tracking.
 
 All project code was written during the hackathon.
 
