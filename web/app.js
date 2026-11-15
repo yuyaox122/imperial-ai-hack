@@ -46,10 +46,11 @@ const KIND_WIRE = { vector: "embedding", text: "text", tool: "text", image: "ima
 const SCOPE_LABELS = { closed: "These categories only", open: "Any sound" };
 const SCOPE_HINTS = {
   closed: "The agent checks that the model tells these labels apart on held-out clips.",
-  open: "The agent also tests labels it never fitted on, and refuses a bridge that only knows the labels it was shown.",
+  open: "The agent also tests the vector bridge on labels it never fitted on, and refuses it if it only knows the labels it was shown.",
 };
+/* The rule agent/planner.py applies; the other controls are reported on the card, not used to decide. */
 const RULE_TEXT =
-  "The agent scores each candidate bridge on held-out clips against swapped audio, no audio, a nearest-example lookup and the text bridge. It installs the best bridge that beats those controls, or installs nothing and says why.";
+  "The agent scores each candidate bridge on held-out clips with controls: swapped audio, no audio, a nearest-example lookup and the specialist alone. It installs a bridge only if it clears chance and swapped audio by a fixed margin (for any sound, the vector bridge must also hold up on categories it was not fitted on), preferring the most accurate one; otherwise it installs nothing and says why.";
 const STATUS_WORDS = { start: "started", ok: "succeeded", fail: "failed", info: "note" };
 const JOB_WORDS = { running: "Running", done: "Finished", failed: "Failed", lost: "Disconnected" };
 
@@ -67,12 +68,13 @@ const STEPS = [
   { key: "install", title: "Install", idle: "Add it to the model's senses, ready for chat." },
 ];
 const STEP_INDEX = Object.fromEntries(STEPS.map((s) => [s.key, s]));
-const STEP_WORDS = { done: "Done", running: "Running", pending: "Pending", refused: "Refused", failed: "Failed" };
+const STEP_WORDS = { done: "Done", running: "Running", pending: "Pending", refused: "Refused", failed: "Failed", stopped: "Stopped" };
 
 const state = {
   models: [],
   model: "",
   datasets: [],
+  datasetsLoaded: false, // GET /api/datasets has answered once, so a set missing from the list is new
   dataset: "",
   samples: [],
   sampleRefs: new Map(), // sample id -> {item, play, attach}
@@ -288,18 +290,57 @@ const seconds = (t) => (toNumber(t) === null ? "" : `${t < 0.1 ? t.toFixed(2) : 
 const capitalise = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : "");
 const humanise = (key) => capitalise(String(key).replace(/_/g, " "));
 const kindLabel = (kind) => KIND_LABELS[kind] || capitalise(kind || "unknown");
-/** How a card is drawn. The API's verdict, except that a bridge the planner put after the one it
-    installed was not needed rather than refused: screen 02 draws it as a plain candidate. */
+/** How a card is drawn. The API's verdict, except that a rejected bridge that passed its checks and lost to
+    the installed one was not needed rather than refused: screen 02 draws it as a plain candidate. */
 function shownVerdict(card) {
   if (card.verdict === "installed") return "installed";
   if (card.verdict !== "rejected") return "candidate";
   const job = modelJob();
-  if (job && job.installed && job.cards.get(card.bridge) === card) {
-    const kinds = planKinds(job);
-    const installed = job.cards.get(job.installed);
-    if (installed && kinds.indexOf(card.kind) > kinds.indexOf(installed.kind)) return "not-needed";
-  }
+  if (job && job.installed && job.cards.get(card.bridge) === card && !cardFailed(card, job)) return "not-needed";
   return "refused";
+}
+
+/** Whether a rejected card failed the planner's checks, as the planner judged it. agent.loop writes
+    "<bridge> failed: ..." or "<bridge> passed: ..." into the card's reason; older records may say it only in
+    the decide step's reason, or not at all, and then the rule planner's bars decide (passesRules). */
+function cardFailed(card, job) {
+  const said = (text) => {
+    if (typeof text !== "string") return null;
+    const failed = text.indexOf(`${card.bridge} failed`);
+    const passed = text.indexOf(`${card.bridge} passed`);
+    if (failed < 0 && passed < 0) return null;
+    return passed < 0 || (failed >= 0 && failed < passed);
+  };
+  const decide = job ? job.steps.get("decide") : null;
+  const decided = decide ? decide.events.findLast((e) => e.status === "ok") : null;
+  for (const text of [card.reason, decided && decided.message]) {
+    const failed = said(text);
+    if (failed !== null) return failed;
+  }
+  const passes = passesRules(card);
+  return passes === null ? true : !passes;
+}
+
+/** The bars of agent/planner.py (RulePlanner._check), only for records whose reasons do not say whether a
+    card passed. null when they do not apply. */
+function passesRules(card) {
+  const EPS = 1e-9;
+  const acc = toNumber(card.accuracy);
+  const chance = toNumber(card.chance);
+  const swapped = toNumber((card.controls || {}).swapped);
+  const unseen = toNumber((card.controls || {}).unseen_classes);
+  if (acc === null || chance === null) return null;
+  if (card.kind === "vector") {
+    const bar = chance + 0.25;
+    if (acc + EPS < bar || swapped === null || acc + EPS < swapped + 0.25) return false;
+    if (card.scope === "open" && (unseen === null || unseen + EPS < bar || unseen + EPS < acc - 0.2)) return false;
+    return true;
+  }
+  if (card.kind === "text" || card.kind === "tool") {
+    if (swapped !== null && acc + EPS < swapped + 0.1) return false;
+    return acc + EPS >= chance + 0.15;
+  }
+  return null;
 }
 const SHOWN = {
   installed: { kind: "installed", tag: "installed", node: "installed" },
@@ -318,6 +359,10 @@ const datasetTitle = (name) => (state.datasets.find((d) => d.name === name) || {
 const jobRunning = () => Boolean(state.job && state.job.status === "running");
 /** The job to draw for the current model: the latest run, if it was for this model. */
 const modelJob = () => (state.job && (!state.job.request || state.job.request.model === state.model) ? state.job : null);
+/** The modality a job is about: its request's or, for an auto run before its data step, the detected one. */
+const jobModality = (job) => (job ? (job.request && job.request.modality) || job.detected || "" : "");
+/** Whether the band can switch to a model: it is listed and available. */
+const selectableModel = (name) => state.models.some((m) => m.name === name && m.available);
 
 // ---------------------------------------------------------------- API
 
@@ -430,10 +475,10 @@ function renderStatus() {
   if (!job) {
     $("status-job").replaceChildren("none");
   } else {
-    const tone = job.status === "running" ? "run" : job.status === "done" ? "ok" : "error";
+    const tone = job.status === "running" ? "run" : job.status === "done" ? "ok" : job.cancelled ? "idle" : "error";
     const parts = [
       String(job.id).slice(0, 8),
-      (JOB_WORDS[job.status] || job.status).toLowerCase(),
+      job.cancelled ? "stopped" : (JOB_WORDS[job.status] || job.status).toLowerCase(),
       `${job.seen} event${job.seen === 1 ? "" : "s"}`,
       job.elapsed !== null ? seconds(job.elapsed) : null,
     ];
@@ -455,6 +500,22 @@ function openFit(anchor) {
   $("add-sense-button").setAttribute("aria-expanded", "true");
   const target = $("fit-auto").checked ? $("fit-goal") : $("dataset-select");
   target.focus();
+}
+
+/** Show the fields of the chosen way to find examples: the agent finds them, or a labelled set. */
+function syncFitMode() {
+  $("auto-fields").hidden = !$("fit-auto").checked;
+  $("manual-fields").hidden = $("fit-auto").checked;
+  syncControls();
+}
+
+/** After a run that found no labelled examples: reopen New sense on the examples folder field. The goal and
+    file of that run are still filled in. */
+function openFitForExamples() {
+  $("fit-auto").checked = true;
+  syncFitMode();
+  openFit($("new-sense-button"));
+  $("fit-examples").focus();
 }
 
 function closeFit(returnFocus) {
@@ -591,7 +652,10 @@ function renderBrain() {
   const refused = refusedRun();
   if (refused) add(refused.modality, { level: "refused", title: capitalise(refused.modality), sub: `Refused for ${datasetTitle(refused.dataset)}` });
   const job = modelJob();
-  if (job && job.status === "running" && job.request && job.request.modality) add(job.request.modality, { level: "running", title: capitalise(job.request.modality), sub: "Agent run in progress" });
+  const target = jobModality(job);
+  if (job && job.status === "running" && target && !(model ? model.native || [] : []).includes(target)) {
+    add(target, { level: "running", title: capitalise(target), sub: "Agent run in progress" });
+  }
   brainRegions = regions;
   const levels = {};
   for (const g in regions) levels[g] = regions[g].level;
@@ -620,13 +684,14 @@ function showBrainTip(g, e) {
   if (!g || !e) { tip.hidden = true; return; }
   const region = SenseBrain.REGIONS[g];
   const senses = (brainRegions[g] || {}).senses || [];
-  tip.replaceChildren(
+  // Native replaceChildren would print a null child as the text "null", so leave it out.
+  tip.replaceChildren(...[
     h("div", { class: "brain-tip-head", text: region.role }),
     ...(senses.length
       ? senses.map((s) => h("div", { class: `brain-tip-row brain-tip-row--${s.level}` }, h("span", { text: s.title }), h("span", { text: s.sub })))
       : [h("div", { class: "brain-tip-row", text: "No sense here yet" })]),
     senses.some((s) => s.bridge) ? h("div", { class: "brain-tip-hint", text: "Click to open its report card" }) : null,
-  );
+  ].filter(Boolean));
   tip.hidden = false;
   const stage = tip.parentElement.getBoundingClientRect();
   tip.style.left = `${Math.min(e.clientX - stage.left + 12, stage.width - tip.offsetWidth - 4)}px`;
@@ -656,8 +721,8 @@ function renderChips() {
     chips.push(chip("", sense.modality, meta, fresh ? tag("New", "new") : null, `${capitalise(sense.modality)}: ${sense.bridge}`));
   }
   const job = modelJob();
-  const target = job && job.request ? job.request.modality : null;
-  if (job && job.status === "running" && target && !state.senses.some((s) => s.modality === target)) {
+  const target = jobModality(job) || null;
+  if (job && job.status === "running" && target && !(model.native || []).includes(target) && !state.senses.some((s) => s.modality === target)) {
     chips.push(chip("chip--checking", target, "checking", null, `The agent is giving ${modelLabel(state.model)} a ${target} sense`));
   }
   const refused = refusedRun();
@@ -730,13 +795,13 @@ function refusedRun() {
   return { modality: job.request.modality || (best && best.modality) || "audio", dataset: job.request.dataset, best };
 }
 
-/** The first bridge the planner asked for, when the run refused it and installed another one instead. */
+/** A bridge the run refused (it failed its checks) while it installed another one instead: the most
+    accurate such bridge, whatever order the planner tried them in. */
 function fallbackRun(job) {
   if (!job || job.status !== "done" || !job.installed) return null;
-  const kinds = planKinds(job);
-  const first = [...job.cards.values()].find((c) => c.kind === kinds[0]);
-  if (!first || first.bridge === job.installed || first.verdict !== "rejected") return null;
-  return { refused: first, installed: job.cards.get(job.installed) || null };
+  const refused = [...job.cards.values()].filter((c) => c.bridge !== job.installed && c.verdict === "rejected" && cardFailed(c, job));
+  if (!refused.length) return null;
+  return { refused: bestCard(refused), installed: job.cards.get(job.installed) || null };
 }
 
 /** A modality icon in its data colour, for rows and tiles. */
@@ -869,7 +934,11 @@ function renderReport() {
       el.replaceChildren(
         h("p", {
           class: "report-sub",
-          text: [`${capitalise(job.request ? job.request.modality : "")} → ${modelLabel(state.model)}`, kinds.length ? `candidates: ${kinds.map((k) => `${k} bridge`).join(", ")}` : null]
+          text: [
+            jobModality(job) ? `${capitalise(jobModality(job))} → ${modelLabel(state.model)}` : modelLabel(state.model),
+            job.goal || null,
+            kinds.length ? `candidates: ${kinds.map((k) => `${k} bridge`).join(", ")}` : null,
+          ]
             .filter(Boolean)
             .join(" · "),
         }),
@@ -922,13 +991,15 @@ function renderReport() {
     card.scope === "closed"
       ? `Scope: ${nLabels ? `the ${nLabels} categories it was fitted on` : "the categories it was fitted on"}.`
       : card.scope === "open"
-        ? "Scope: any sound, also tested on categories it was not fitted on."
+        ? toNumber((card.controls || {}).unseen_classes) !== null
+          ? "Scope: any sound, also tested on categories it was not fitted on."
+          : "Scope: any sound. This bridge was not tested on categories it was not fitted on; the agent runs that test for the vector bridge."
         : "";
 
   const controls = Object.entries(card.controls || {}).sort(
     ([a], [b]) => (CONTROL_ORDER.indexOf(a) + 1 || 99) - (CONTROL_ORDER.indexOf(b) + 1 || 99),
   );
-  el.replaceChildren(
+  el.replaceChildren(...[
     h("p", { class: "report-sub", text: context.join(" · "), title: card.bridge }),
     h("div", { class: "readout brackets" },
       h("div", { class: "display" },
@@ -947,7 +1018,7 @@ function renderReport() {
       kind === "refused" ? "Why it was refused" : kind === "installed" ? "Why it was installed" : "Agent's reason",
       [scope, card.reason].filter(Boolean).join(" ") || "The agent gave no reason for this card.",
     ),
-  );
+  ].filter(Boolean)); // native replaceChildren would print a null child as the text "null"
 }
 
 /** Metric row: label and badge, value, a bar, and the chance tick. */
@@ -1062,7 +1133,7 @@ function renderGraph() {
   const job = modelJob();
   const datasetName = job && job.request ? job.request.dataset : state.dataset;
   const dataset = state.datasets.find((d) => d.name === datasetName) || null;
-  const modality = (job && job.request && job.request.modality) || (dataset && dataset.modality) || "audio";
+  const modality = jobModality(job) || (dataset && dataset.modality) || "audio";
   $("graph-sub").textContent = model ? `${capitalise(modality)} → ${model.label}` : "";
   if (!model) {
     canvas.replaceChildren(h("p", { class: "graph-empty", text: "Choose a base model to see how a sense reaches it." }));
@@ -1090,7 +1161,12 @@ function renderGraph() {
         status: scope === "open" ? "any sound" : "these labels only",
         statusTone: "var(--mcs-gray-600)",
       })
-    : h("p", { class: "graph-empty", text: "No labelled set is chosen." });
+    : h("p", {
+        class: "graph-empty",
+        text: job && job.request && !datasetName
+          ? job.status === "running" ? "The agent has not chosen a labelled set yet." : "This run chose no labelled set."
+          : "No labelled set is chosen.",
+      });
 
   // Column 2: the candidate bridges and the held-out check, inside the bridge group.
   const group = h("div", { class: "bridge-group" }, h("div", { class: "group-head" }, icon("plug", 13), h("span", { text: "Candidate bridges" })));
@@ -1166,16 +1242,17 @@ function renderGraph() {
   // Column 3: the base model, with what it reads natively and the sense being added.
   const sense = state.senses.find((s) => s.modality === modality) || null;
   const refused = refusedRun();
+  const natives = model.native || [];
   let targetState = "no sense";
-  if (sense) targetState = state.usedBridges.has(sense.bridge) ? "installed" : "new";
+  if (natives.includes(modality)) targetState = "native"; // an auto run on a file the model reads as is
+  else if (sense) targetState = state.usedBridges.has(sense.bridge) ? "installed" : "new";
   else if (job && job.status === "running") targetState = "pending";
   else if (refused && refused.modality === modality) targetState = "refused";
-  const natives = model.native || [];
   const modelPorts = [
     portRow(`${modality} · ${targetState}`, "reply", { in: "model-in-target", out: "model-out" },
       { in: modalityColour(modality), out: wireColour("text") },
       `port-row--target port-row--${targetState.replace(/\s+/g, "-")}`),
-    ...natives.map((m) => portRow(`${m} · native`, "", { in: `model-in-${m}` }, { in: modalityColour(m) })),
+    ...natives.filter((m) => m !== modality).map((m) => portRow(`${m} · native`, "", { in: `model-in-${m}` }, { in: modalityColour(m) })),
   ];
   const modelNode = graphNode({
     nodeState: "model",
@@ -1258,6 +1335,7 @@ async function loadDatasets() {
   try {
     const datasets = await api("/api/datasets");
     state.datasets = Array.isArray(datasets) ? datasets : [];
+    state.datasetsLoaded = true;
   } catch (err) {
     state.datasets = [];
     select.replaceChildren(h("option", { value: "", text: "Labelled sets could not be loaded" }));
@@ -1274,15 +1352,18 @@ async function loadDatasets() {
     ...state.datasets.map((d) => h("option", { value: d.name, text: `${d.title} (${(d.labels || []).length} labels)` })),
   );
   select.disabled = false;
+  // Reloading (a run built a new set) keeps the user's choice and its samples.
   const saved = store.get("localStorage", "sense.dataset");
-  const pick = state.datasets.find((d) => d.name === saved) || state.datasets[0];
+  const pick = state.datasets.find((d) => d.name === state.dataset) || state.datasets.find((d) => d.name === saved) || state.datasets[0];
   select.value = pick.name;
-  setDataset(pick.name);
+  setDataset(pick.name, pick.name !== state.dataset);
   if (state.job) renderTraceHead();
   renderReport(); // dataset titles and label counts may now be known
+  renderRuns();
+  if (state.model && state.senses.length) renderSenses(state.senses);
 }
 
-function setDataset(name) {
+function setDataset(name, reloadSamples = true) {
   state.dataset = name;
   if (name) store.set("localStorage", "sense.dataset", name);
   const dataset = currentDataset();
@@ -1298,7 +1379,7 @@ function setDataset(name) {
   $("samples-source").textContent = dataset ? dataset.title : "";
   syncControls();
   renderGraph();
-  loadSamples();
+  if (reloadSamples) loadSamples();
 }
 
 async function loadSamples() {
@@ -1586,8 +1667,10 @@ async function streamReply(form, turn, signal) {
           reply += data.text || "";
           text.textContent = reply;
           if (turn.root.isConnected && nearEnd($("thread"))) scrollToEnd($("thread"));
-        } else if (eventType === "done") result = { reply: data.reply ?? reply, used };
-        else if (eventType === "error") throw new Error(data.detail || "The model failed to answer.");
+        } else if (eventType === "done") {
+          // done.used is final: a tool input's detail now says whether the model called the tool.
+          result = { reply: data.reply ?? reply, used: Array.isArray(data.used) ? data.used : used };
+        } else if (eventType === "error") throw new Error(data.detail || "The model failed to answer.");
       }
       eventType = "";
       dataLines = [];
@@ -1713,12 +1796,18 @@ function appendTurn(model, message, files, samples) {
   return { root, reply, tags };
 }
 
+/** A tool input the model could have called but did not (server/app.py: "the model could call <tool> but did not"). */
+const toolNotCalled = (u) => u.kind === "tool" && /\bcould call \S+ but did not\b/.test(u.detail || "");
+
 function fillReply(turn, result) {
   const used = Array.isArray(result.used) ? result.used : [];
-  const kinds = [...new Set(used.filter((u) => u.kind !== "none").map((u) => u.kind))];
+  const heard = used.filter((u) => u.kind !== "none" && !toolNotCalled(u));
+  const kinds = [...new Set(heard.map((u) => u.kind))];
   const missing = used.some((u) => u.kind === "none");
+  const uncalled = used.some(toolNotCalled);
   turn.tags.replaceChildren(
     ...kinds.map((k) => tag(`Heard via ${kindLabel(k).toLowerCase()} bridge`, "info")),
+    ...(uncalled ? [tag("Tool not called", "warning")] : []),
     ...(missing ? [tag("File not received", "danger")] : []),
   );
   const replyText = result.reply || "The model returned an empty reply.";
@@ -1730,8 +1819,8 @@ function fillReply(turn, result) {
   if (used.length) parts.push(h("ul", { class: "used-list", "aria-label": "How each file reached the model" }, used.map(usedItem)));
   turn.reply.replaceChildren(...parts);
   let changed = false;
-  for (const u of used) {
-    if (u.kind !== "none" && u.bridge && !state.usedBridges.has(u.bridge)) {
+  for (const u of heard) {
+    if (u.bridge && !state.usedBridges.has(u.bridge)) {
       state.usedBridges.add(u.bridge);
       changed = true;
     }
@@ -1760,29 +1849,46 @@ function usedItem(used) {
 /** The agent's verdict in the chat when a run ends, as a callout. */
 function postAgentResult(job, data) {
   const cards = [...job.cards.values()];
-  const modality = capitalise((job.request && job.request.modality) || (cards[0] && cards[0].modality) || "sense");
+  const modality = capitalise(jobModality(job) || (cards[0] && cards[0].modality) || "sense");
   const installedCard = cards.find((c) => c.bridge === data.installed) || null;
   const fallback = fallbackRun(job);
+  const done = job.doneData || {};
   let result;
-  if (job.status === "failed") {
-    result = resultCard("refused", "The run failed", "", data.error || "The server gave no error text. Check the server log, then run the agent again.", null, null);
+  if (job.cancelled) {
+    result = callout("warning", `You stopped the ${job.replay ? "replay" : "run"}`, null, { iconName: "stop" });
+  } else if (job.status === "failed") {
+    result = resultCard(job, "refused", "The run failed", "", data.error || "The server gave no error text. Check the server log, then run the agent again.", null, null);
   } else if (!cards.length && !data.installed) {
-    result = callout("info", "Agent finished", job.doneMessage || "No bridge was installed.");
+    // The done message, shown above, already says why; the callout only names the outcome.
+    if (done.needs_user) {
+      // A folder of examples helps once the agent got as far as looking for data (agent/auto.py).
+      result = callout("warning", "The agent needs labelled examples", null, {
+        iconName: "alert",
+        action: job.steps.has("data") && !job.replay
+          ? h("button", { type: "button", class: "link-button", text: "Run again with a folder of examples →", onclick: openFitForExamples })
+          : null,
+      });
+    } else if (done.native) {
+      result = callout("info", "No sense needed", null, { iconName: "check-circle" });
+    } else {
+      result = callout("info", "Agent finished", job.doneMessage ? null : "No bridge was installed.");
+    }
   } else if (fallback) {
-    // Screen 03: the first bridge was refused and the agent installed another one instead.
+    // Screen 03: a bridge failed its checks and the agent installed another one instead.
     const r = fallback.refused;
     const i = fallback.installed;
     const body = [r.reason, i ? `Installed the ${kindLabel(i.kind).toLowerCase()} bridge instead: ${pct(i.accuracy)}.` : null].filter(Boolean).join(" ");
-    result = resultCard("refused", `${kindLabel(r.kind)} bridge refused`, pct(r.accuracy), body, r.bridge, "See why →");
+    result = resultCard(job, "refused", `${kindLabel(r.kind)} bridge refused`, pct(r.accuracy), body, r.bridge, "See why →");
   } else if (data.installed) {
     const c = installedCard;
     const facts = c
       ? [`${kindLabel(c.kind)} bridge`, datasetTitle(c.dataset), toNumber(c.n) !== null ? `${c.n} held-out questions` : null, toNumber(c.chance) !== null ? `chance ${pct(c.chance)}` : null]
       : [data.installed];
-    result = resultCard("installed", `${modality} installed`, c && toNumber(c.accuracy) !== null ? pct(c.accuracy) : "", facts.filter(Boolean).join(" · "), data.installed, null);
+    result = resultCard(job, "installed", `${modality} installed`, c && toNumber(c.accuracy) !== null ? pct(c.accuracy) : "", facts.filter(Boolean).join(" · "), data.installed, null);
   } else {
     const best = bestCard(cards);
     result = resultCard(
+      job,
       "refused",
       `${modality} refused`,
       best && toNumber(best.accuracy) !== null ? pct(best.accuracy) : "",
@@ -1792,7 +1898,7 @@ function postAgentResult(job, data) {
     );
   }
   // The done event's message already names an earlier sense the run replaced or kept (done.data).
-  const text = job.doneMessage;
+  const text = job.cancelled ? "" : job.doneMessage;
   const msg = h(
     "article",
     { class: "turn msg msg--agent" },
@@ -1808,12 +1914,34 @@ function postAgentResult(job, data) {
   scrollToEnd($("thread"));
 }
 
-function resultCard(verdict, title, value, body, bridge, linkText) {
+/** The run's outcome as a callout. Its link opens the card, switching the band to the run's model first; a run
+    recorded for a model this server cannot load gets no link, since its card cannot be shown. */
+function resultCard(job, verdict, title, value, body, bridge, linkText) {
+  const model = job.request && job.request.model;
+  const unshowable = Boolean(bridge && model && model !== state.model && !selectableModel(model));
+  if (unshowable) {
+    body = [body, `This run was for ${modelLabel(model)}, which this server cannot load, so its report card cannot be shown here.`].filter(Boolean).join(" ");
+  }
   return callout(verdict === "installed" ? "success" : "danger", title, body, {
     value,
     iconName: verdict === "installed" ? "check-circle" : "ban",
-    action: bridge ? h("button", { type: "button", class: "link-button", text: linkText || "Open report card →", onclick: () => selectReport(bridge) }) : null,
+    action: bridge && !unshowable
+      ? h("button", { type: "button", class: "link-button", text: linkText || "Open report card →", onclick: () => openRunReport(job, bridge) })
+      : null,
   });
+}
+
+/** Open a run's report card. The report shows the selected model's runs, so select the run's model first. */
+function openRunReport(job, bridge) {
+  const model = job.request && job.request.model;
+  if (model && model !== state.model && selectableModel(model)) chooseModel(model);
+  selectReport(bridge);
+}
+
+/** Select a model in the band, as if the user had picked it. */
+function chooseModel(name) {
+  $("model-select").value = name;
+  setModel(name);
 }
 
 function updateThreadEmpty() {
@@ -1874,6 +2002,8 @@ async function runAgent(event) {
       form.append("model", request.model);
       form.append("goal", request.goal);
       form.append("file", state.fitFile, state.fitFile.name);
+      const examples = $("fit-examples").value.trim();
+      if (examples) form.append("examples", examples); // a folder on the server, one sub-folder per label
     }
     const result = await api(auto ? "/api/auto" : "/api/fit", auto ? { method: "POST", body: form } : {
       method: "POST",
@@ -1911,6 +2041,12 @@ function startJob(id, request, resumed) {
     cardJson: new Map(), // bridge name -> last card as JSON, to skip identical redraws
     installed: null,
     doneMessage: "",
+    doneData: {}, // the done event's data: installed, and native or needs_user when an auto run ended early
+    // The server's request for an auto run has no goal, and dataset and modality stay "" until the data step,
+    // so the goal and the detected modality are kept here (from the request, then the detect event).
+    goal: (request && typeof request.goal === "string" && request.goal) || "",
+    detected: "",
+    cancelled: false, // ended "failed" with error "Cancelled.": the user stopped it
   };
   state.reportBridge = null;
   store.set("sessionStorage", "sense.job", id);
@@ -1987,7 +2123,17 @@ function applyJob(job, data) {
   }
   job.seen = events.length;
   if (events.length) job.elapsed = toNumber(events[events.length - 1].t);
+  // agent.jobs and server.replay end a stopped run "failed" with error "Cancelled."; a replay's last event says so too.
+  const last = events[events.length - 1];
+  job.cancelled = job.status === "failed"
+    && (data.error === "Cancelled." || Boolean(last && last.step === "error" && last.data && last.data.cancelled === true));
   for (const card of Array.isArray(data.cards) ? data.cards : []) cardsChanged = upsertCard(job, card) || cardsChanged;
+  // A set the run built (a fetched set or an examples folder) is new to the list loaded at start.
+  const dataset = job.request && job.request.dataset;
+  if (dataset && state.datasetsLoaded && job.datasetsReloaded !== dataset && !state.datasets.some((d) => d.name === dataset)) {
+    job.datasetsReloaded = dataset;
+    loadDatasets();
+  }
   renderTraceHead();
   renderSteps();
   renderGraph();
@@ -2016,9 +2162,14 @@ function appendEvent(job, event) {
 
   if (step === "done") {
     job.doneMessage = event.message || "";
+    job.doneData = event.data && typeof event.data === "object" ? event.data : {};
     return;
   }
   if (step === "error") return;
+  if (step === "detect" && event.status === "ok" && event.data) {
+    if (typeof event.data.goal === "string" && event.data.goal) job.goal = event.data.goal;
+    if (typeof event.data.modality === "string") job.detected = event.data.modality;
+  }
   let s = job.steps.get(step);
   if (!s) {
     s = { events: [], open: 0 };
@@ -2054,7 +2205,10 @@ function finishJob(job, data) {
   store.set("sessionStorage", "sense.job", null);
   job.installed = data.installed || null;
   const outcome = $("trace-outcome");
-  if (job.status === "failed") {
+  if (job.cancelled) {
+    // The user pressed Stop: not a failure, so no alert.
+    outcome.replaceChildren(callout("warning", job.replay ? "Replay stopped" : "Run stopped", `You stopped the ${job.replay ? "replay" : "run"} before it finished.`, { iconName: "stop" }));
+  } else if (job.status === "failed") {
     const failed = callout("danger", "Run failed", data.error || "The server gave no error text. Check the server log, then run the agent again.", { iconName: "alert" });
     failed.setAttribute("role", "alert");
     outcome.replaceChildren(failed);
@@ -2078,13 +2232,20 @@ function finishJob(job, data) {
   if (!job.replay) setTimeout(loadRuns, 800); // the server records a finished run
 }
 
+/** A step's state from its own events. Only the step's last outcome counts: a sub-step it recovered from (a
+    dataset search that was unavailable, a candidate set that could not be used, then the prewired set) leaves
+    the step done. A step left unfinished, or whose last outcome is a failure, is where the run stopped, failed
+    or needed the user. */
 function stepStatus(key, s, job) {
   if (!s || !s.events.length) return "pending";
-  if (s.events.some((e) => e.status === "fail")) return "refused";
-  if (s.open > 0) {
-    if (job.status === "running") return "running";
-    if (job.status === "failed" || job.status === "lost") return "refused";
+  const outcome = s.events.findLast((e) => e.status === "ok" || e.status === "fail");
+  const failedLast = Boolean(outcome && outcome.status === "fail");
+  if (job.status === "running") {
+    // The newest step may still recover from its failed sub-step.
+    if (s.open > 0 || (failedLast && [...job.steps.keys()].at(-1) === key)) return "running";
+    return failedLast ? "refused" : "done";
   }
+  if (s.open > 0 || failedLast) return job.cancelled ? "stopped" : "refused";
   if (key === "decide" && job.status === "done" && (!job.installed || fallbackRun(job))) return "refused"; // the agent declined a bridge
   return "done";
 }
@@ -2123,7 +2284,7 @@ function stepCode(key, s) {
 }
 
 function visibleSteps(job = state.job) {
-  const auto = !job || Boolean(job.request?.goal) || STEPS.some((s) => s.auto && job.steps.has(s.key));
+  const auto = !job || Boolean(job.goal) || STEPS.some((s) => s.auto && job.steps.has(s.key));
   return STEPS.filter((s) => auto || !s.auto);
 }
 
@@ -2138,8 +2299,7 @@ function renderSteps() {
       const def = STEP_INDEX[key] || { title: humanise(key), idle: "" };
       const s = job ? job.steps.get(key) : null;
       const status = job ? stepStatus(key, s, job) : "pending";
-      const word = status === "refused" && job && (job.status === "failed" || job.status === "lost") ? STEP_WORDS.failed : STEP_WORDS[status];
-      const events = s ? s.events : [];
+      const word = status === "refused" && job && (job.status === "failed" || job.status === "lost") ? STEP_WORDS.failed : STEP_WORDS[status];      const events = s ? s.events : [];
       const last = events[events.length - 1];
       let desc = last && last.message ? last.message : def.idle;
       if (!events.length && job && job.status !== "running") desc = key === "install" && job.status === "done" ? "Nothing to install." : "Not reached.";
@@ -2170,9 +2330,9 @@ function renderProgress() {
     return;
   }
   const steps = visibleSteps(job);
-  const finished = steps.filter((s) => ["done", "refused"].includes(stepStatus(s.key, job.steps.get(s.key), job))).length;
+  const finished = steps.filter((s) => ["done", "refused", "stopped"].includes(stepStatus(s.key, job.steps.get(s.key), job))).length;
   bar.style.width = `${(job.status === "running" ? finished / steps.length : 1) * 100}%`;
-  bar.dataset.state = job.status === "running" ? "running" : job.status === "done" ? "done" : "failed";
+  bar.dataset.state = job.status === "running" ? "running" : job.status === "done" ? "done" : job.cancelled ? "stopped" : "failed";
 }
 
 function renderTraceHead() {
@@ -2190,26 +2350,36 @@ function renderTraceHead() {
   if (!job) {
     pill.hidden = true;
     $("trace-request").textContent = "Not run yet. Press New sense to start the agent.";
+    $("trace-request").removeAttribute("title");
     $("trace-elapsed").textContent = "";
     return;
   }
   if (job.status === "running") setTag(pill, "Running", "running");
+  else if (job.cancelled) setTag(pill, "Stopped", "warning");
   else if (job.status === "failed") setTag(pill, "Failed", "danger");
   else if (job.status === "lost") setTag(pill, JOB_WORDS.lost, "warning");
   else if (fallbackRun(job)) setTag(pill, "Refused · fallback installed", "warning");
   else if (job.installed) setTag(pill, "Sense installed", "success");
+  else if (job.status === "done" && !job.cards.size && job.doneData.needs_user) setTag(pill, "Needs examples", "warning");
+  else if (job.status === "done" && !job.cards.size && job.doneData.native) setTag(pill, "No sense needed", "neutral");
   else if (job.status === "done" && !job.cards.size) setTag(pill, "Finished", "neutral");
   else if (job.status === "done") setTag(pill, "Refused", "danger");
   else setTag(pill, JOB_WORDS[job.status] || job.status, "neutral");
   const req = job.request;
   const reached = [...job.steps.keys()].filter((k) => STEP_INDEX[k]).length;
-  $("trace-request").textContent = req
+  // An auto run's request has no labelled set (dataset "") until its data step, and so no scope yet either.
+  const text = req
     ? [
         job.replay ? "Recorded run" : null,
-        `${modelLabel(req.model)} · ${req.goal || datasetTitle(req.dataset)} · ${(SCOPE_LABELS[req.scope] || req.scope || "").toLowerCase()}`,
-        job.status === "running" ? `step ${Math.max(1, reached)} of ${visibleSteps(job).length}` : `${reached} steps`,
+        modelLabel(req.model),
+        job.goal || null,
+        req.dataset ? datasetTitle(req.dataset) : null,
+        req.dataset ? (SCOPE_LABELS[req.scope] || req.scope || "").toLowerCase() : null,
+        job.status === "running" ? `step ${Math.max(1, reached)} of ${visibleSteps(job).length}` : `${reached} step${reached === 1 ? "" : "s"}`,
       ].filter(Boolean).join(" · ")
     : "Resuming the last run…";
+  $("trace-request").textContent = text;
+  $("trace-request").title = text;
   $("trace-elapsed").textContent = job.elapsed !== null ? seconds(job.elapsed) : "";
 }
 
@@ -2305,17 +2475,18 @@ function renderRuns() {
     rows.push(h("li", { class: "run-item run-item--live" },
       h("span", { class: "run-item-main" },
         h("span", { class: "run-item-title" }, h("span", { class: "led led--run" }), " Live run"),
-        h("span", { class: "run-item-meta", text: job.request ? `${modelLabel(job.request.model)} · ${datasetTitle(job.request.dataset)}` : "" }))));
+        h("span", { class: "run-item-meta", text: job.request ? [modelLabel(job.request.model), job.goal, datasetTitle(job.request.dataset)].filter(Boolean).join(" · ") : "" }))));
   }
   for (const run of state.runs) {
     const r = run.request || {};
     const active = replayOf === run.id;
     const outcome = run.status === "failed" ? "failed" : run.installed ? `installed · ${run.installed}` : "nothing installed";
-    const meta = [modelLabel(r.model), (SCOPE_LABELS[r.scope] || r.scope || "").toLowerCase(), toNumber(run.seconds) !== null ? seconds(run.seconds) : "", clock(run.recorded), run.origin]
+    // An auto run that ended before its data step (a native file, one that needed the user, or a stop) has no set.
+    const meta = [modelLabel(r.model), r.dataset ? (SCOPE_LABELS[r.scope] || r.scope || "").toLowerCase() : "", toNumber(run.seconds) !== null ? seconds(run.seconds) : "", clock(run.recorded), run.origin]
       .filter(Boolean).join(" · ");
     rows.push(h("li", { class: `run-item${active ? " is-active" : ""}` },
       h("span", { class: "run-item-main" },
-        h("span", { class: "run-item-title", text: `${capitalise(r.modality || "sense")} · ${datasetTitle(r.dataset) || "?"}` }),
+        h("span", { class: "run-item-title", text: `${capitalise(r.modality || "sense")} · ${r.dataset ? datasetTitle(r.dataset) : "no labelled set chosen"}` }),
         h("span", { class: "run-item-meta", text: meta }),
         h("span", { class: `run-item-outcome run-item-outcome--${run.installed ? "ok" : run.status === "failed" ? "fail" : "none"}`, text: outcome })),
       h("button", {
@@ -2345,6 +2516,9 @@ async function startReplay(run) {
     if (!result || !result.job_id) throw new Error("The server started no replay.");
     state.starting = false;
     state.replayDismissed = null;
+    // The report, graph and chat follow the band's model: show the replay on the model it was recorded for.
+    const model = run.request && run.request.model;
+    if (model && model !== state.model && selectableModel(model)) chooseModel(model);
     startJob(result.job_id, run.request || null, false);
     state.job.replay = { of: run.id, recorded: run.recorded, speed: state.replaySpeed };
     renderTraceHead();
@@ -2375,15 +2549,17 @@ function renderReplayBar() {
   const frac = done ? 1 : total && job.elapsed !== null ? Math.min(1, job.elapsed / total) : 0;
   const last = [...job.steps.keys()].pop();
   bar.hidden = false;
-  bar.replaceChildren(
+  const said = job.cancelled ? "Replay stopped" : job.status === "failed" || job.status === "lost" ? "Replay failed" : done ? "Replay finished" : "Replaying a recorded run";
+  // Native replaceChildren would print a null child as the text "null", so leave it out.
+  bar.replaceChildren(...[
     h("span", { class: "replay-mark", text: done ? "■" : "▶" }),
-    h("span", { class: "replay-text", text: `${job.status === "failed" ? "Replay failed or cancelled" : done ? "Replay finished" : "Replaying a recorded run"} · ${job.replay.speed || 1}×${job.replay.recorded ? ` · recorded ${clock(job.replay.recorded)}` : ""}` }),
+    h("span", { class: "replay-text", text: `${said} · ${job.replay.speed || 1}×${job.replay.recorded ? ` · recorded ${clock(job.replay.recorded)}` : ""}` }),
     h("span", { class: "replay-track" }, h("span", { class: "replay-fill", style: `width:${(frac * 100).toFixed(1)}%` })),
     h("span", { class: "replay-step num", text: [last || "", job.elapsed !== null ? seconds(job.elapsed) : "", total !== null ? `/ ${seconds(total)}` : ""].filter(Boolean).join(" ") }),
     h("span", { class: "replay-note", text: "chat stays live" }),
     !done ? h("button", { type: "button", class: "btn btn--small", disabled: job.cancelling, text: job.cancelling ? "Stopping…" : "Stop replay", onclick: cancelJob }) : null,
     done ? h("button", { type: "button", class: "icon-button", "aria-label": "Close the replay bar", onclick: () => { state.replayDismissed = job.id; renderReplayBar(); } }, icon("x", 13)) : null,
-  );
+  ].filter(Boolean));
 }
 
 // ---------------------------------------------------------------- chats
@@ -2673,11 +2849,7 @@ function bindEvents() {
     e.currentTarget.classList.remove("is-dropping");
     chooseFitFile(e.dataTransfer.files[0]);
   });
-  for (const radio of document.querySelectorAll('input[name="fit-mode"]')) radio.addEventListener("change", () => {
-    $("auto-fields").hidden = !$("fit-auto").checked;
-    $("manual-fields").hidden = $("fit-auto").checked;
-    syncControls();
-  });
+  for (const radio of document.querySelectorAll('input[name="fit-mode"]')) radio.addEventListener("change", syncFitMode);
   $("model-select").addEventListener("change", (e) => setModel(e.target.value));
   $("dataset-select").addEventListener("change", (e) => setDataset(e.target.value));
   for (const radio of document.querySelectorAll('input[name="scope"]')) {

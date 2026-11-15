@@ -84,6 +84,9 @@
             <input id="fit-file" type="file">
           </label>
           <p id="fit-file-name" class="hint">The agent will choose examples and verify a bridge for your goal.</p>
+          <label class="label" for="fit-examples">Labelled examples folder on the server (optional)</label>
+          <input id="fit-examples" class="text-input" type="text" autocomplete="off" spellcheck="false" placeholder="For example: ~/data/bird-calls" aria-describedby="fit-examples-hint">
+          <p id="fit-examples-hint" class="hint">One sub-folder of files per label, with at least 10 files in each. Leave it empty and the agent looks for labelled examples itself.</p>
         </div>
         <div id="manual-fields" class="field" hidden>
           <div class="field">
@@ -136,6 +139,8 @@
         <span id="chat-model" class="pane-sub"></span>
         <button id="chat-new" class="icon-button chat-new" type="button" title="New chat (Ctrl+Shift+O)" aria-label="New chat"><span data-icon="plus"></span></button>
       </div>
+      <!-- Why the model list failed, with Try again: in the chat pane, which is always in view. -->
+      <div id="model-error" class="error pane-error" role="alert" hidden></div>
       <div id="replay-bar" class="replay-bar" role="status" hidden></div>
       <div id="chat-activity" class="chat-activity" role="status" hidden></div>
       <div id="thread" class="thread" role="log" aria-label="Conversation" aria-live="polite" aria-relevant="additions" tabindex="0">
@@ -236,7 +241,6 @@
           <span id="graph-sub" class="pane-sub"></span>
         </div>
       <section class="graph" aria-labelledby="graph-heading">
-        <div id="model-error" class="error graph-error" role="alert" hidden></div>
         <div id="graph-canvas" class="graph-canvas"></div>
         <ul class="legend" aria-label="Wire colours">
           <li><span class="swatch" style="--swatch: var(--wire-audio)"></span>Audio</li>
