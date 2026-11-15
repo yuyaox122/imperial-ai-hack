@@ -185,6 +185,7 @@ from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Literal
 
@@ -1729,6 +1730,44 @@ def _label_key(label: str) -> str:
     return re.sub(r"[\W_]+", "", label.casefold())
 
 
+def _label_keys(label: str) -> set[str]:
+    """_label_key(label) and the other names of the same country (country_aliases), so a probe set labelled by
+    country code and one labelled by country name ("BR", "brazil") share a label."""
+    key = _label_key(label)
+    return {key} | country_aliases().get(key, set())
+
+
+def country_aliases(path: str | None = None) -> dict[str, set[str]]:
+    """Loose label key -> loose keys of the same country: its ISO 3166 alpha-2 code and Natural Earth's country
+    name (with and without "of America" and "The"), read from the gazetteer sense.adapter_kit uses (`path`, else
+    SENSE_GAZETTEER, else ~/.cache/sense-harness/gazetteer/ne_10m_populated_places_simple.geojson); {} when it is
+    missing or unreadable. Cached per path. Used only to keep two probe sets' categories apart, where one source
+    labels countries by code and the other by name; a mistaken alias can only treat more labels as shared."""
+    path = path or os.environ.get("SENSE_GAZETTEER") or os.path.expanduser(
+        "~/.cache/sense-harness/gazetteer/ne_10m_populated_places_simple.geojson")
+    return _country_aliases_at(path)
+
+
+@lru_cache(maxsize=8)
+def _country_aliases_at(path: str) -> dict[str, set[str]]:
+    try:
+        with open(path, encoding="utf-8") as handle:
+            features = json.load(handle).get("features") or []
+    except (OSError, ValueError, AttributeError):
+        features = []
+    groups: dict[str, set[str]] = {}
+    for feature in features:
+        props = (feature or {}).get("properties") or {}
+        code, name = str(props.get("iso_a2") or ""), str(props.get("adm0name") or "")
+        if len(code) != 2 or not code.isalpha() or not name:
+            continue
+        short = re.sub(r"\b(of america|the)\b", "", name, flags=re.IGNORECASE)
+        keys = {_label_key(text) for text in (code, name, short)} - {""}
+        for key in keys:
+            groups.setdefault(key, set()).update(keys)
+    return groups
+
+
 def _unseen_categories(
     model: BaseModel, bridge: Bridge, unseen: ProbeSet, main_labels: list[str], max_items: int, seed: int,
 ) -> tuple[float | None, float, str]:
@@ -1739,8 +1778,8 @@ def _unseen_categories(
     from sense.bridges import five_options
     from sense.verify import _subsample
 
-    taken = {_label_key(label) for label in main_labels}
-    keep = [c for c, label in enumerate(unseen.labels) if _label_key(label) not in taken]
+    taken = set().union(*(_label_keys(label) for label in main_labels))
+    keep = [c for c, label in enumerate(unseen.labels) if not (_label_keys(label) & taken)]
     shared = [label for c, label in enumerate(unseen.labels) if c not in keep]
     items = [(Path(p), keep.index(c)) for p, c in unseen.items if c in keep]
     dropped = f" (dropped as already probed: {', '.join(shared)})" if shared else ""

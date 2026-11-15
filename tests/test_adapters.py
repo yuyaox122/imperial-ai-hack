@@ -1104,6 +1104,23 @@ def test_verify_files_unseen_categories_control(tmp_path):
     assert "the adapter failed on 5 of them, counted as wrong" in card.reason
 
 
+def test_a_country_code_and_its_name_are_one_label_for_the_unseen_control(tmp_path, monkeypatch):
+    """One source labels countries by name, the other by ISO code: "BR" must count as already probed."""
+    places = [("BR", "Brazil"), ("US", "United States of America"), ("JP", "Japan")]
+    features = [{"type": "Feature", "geometry": {"type": "Point", "coordinates": [0, 0]},
+                 "properties": {"name": "x", "adm0name": name, "iso_a2": code}} for code, name in places]
+    gazetteer = tmp_path / "places.geojson"
+    gazetteer.write_text(json.dumps({"type": "FeatureCollection", "features": features}))
+    monkeypatch.setenv("SENSE_GAZETTEER", str(gazetteer))
+    assert "br" in adapters._label_keys("brazil") and "brazil" in adapters._label_keys("BR")
+    assert "unitedstates" in adapters._label_keys("us") and "us" in adapters._label_keys("United_States")
+    assert adapters._label_keys("pink") == {"pink"}
+    taken = set().union(*(adapters._label_keys(label) for label in ["brazil", "france"]))
+    assert [label for label in ["BR", "JP", "CN"] if not (adapters._label_keys(label) & taken)] == ["JP", "CN"]
+    monkeypatch.setenv("SENSE_GAZETTEER", str(tmp_path / "missing.geojson"))
+    assert adapters._label_keys("BR") == {"br"}  # without a gazetteer, text matching as before
+
+
 def test_verify_files_says_why_unseen_categories_were_not_measured(tmp_path):
     main, overlapping = _four_and_unseen(tmp_path, unseen_labels=("RED", "Green", "purple"))
     bridge = AdapterBridge(kind="text", modality="colour file", model_name="fake", code=FIRST_LINE)
