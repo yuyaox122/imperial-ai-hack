@@ -106,3 +106,23 @@ def test_a_character_cut_off_by_the_read_window_is_still_text(tmp_path):
     p = tmp_path / "long.txt"
     p.write_bytes(("é" * 3000).encode())  # byte 4,096 falls inside a two-byte character
     assert detect(p).format == "text"
+
+
+# ----------------------------------------------------------------------------- release: every format the specialist reads
+@pytest.mark.parametrize("sf_format,subtype,fmt", [
+    ("AIFF", "PCM_16", "aiff"), ("AIFF", "FLOAT", "aiff"),  # FLOAT is written as AIFC
+    ("AU", "PCM_16", "au"), ("RF64", "PCM_16", "wav"), ("WAV", "PCM_16", "wav"),
+])
+def test_audio_the_specialist_reads_is_audio(tmp_path, sf_format, subtype, fmt):
+    sf = pytest.importorskip("soundfile")
+    import numpy as np
+    p = tmp_path / "clip.bin"  # the extension is never consulted
+    sf.write(p, np.zeros(800, dtype=np.float32), 8000, format=sf_format, subtype=subtype)
+    d = detect(p)
+    assert (d.modality, d.format, d.how) == ("audio", fmt, "magic bytes")
+
+
+def test_text_that_starts_like_an_au_header_stays_text(tmp_path):
+    p = tmp_path / "notes.txt"
+    p.write_bytes(b".snd files are Sun audio; this note is plain text.\n")
+    assert (detect(p).modality, detect(p).format) == ("text", "text")
