@@ -70,7 +70,9 @@ def test_every_record_is_described_in_the_socket_pilot_readme(record):
 @pytest.mark.parametrize("record", sorted(ARTIFACTS.glob("run_*.json")), ids=lambda path: path.name)
 def test_the_readme_quotes_the_card_each_recorded_run_installed(record):
     run = json.loads(read(record))
-    card = next(card for card in run["cards"] if card["bridge"] == run["installed"])
+    # A refused run (installed None) is quoted by its best card: the score that was not enough.
+    card = next((card for card in run["cards"] if card["bridge"] == run["installed"]), None) or max(
+        run["cards"], key=lambda card: card["accuracy"])
     assert f"{card['accuracy'] * 100:.1f}%" in read(README), (
         f"README.md does not quote the {card['bridge']} card that {record.name} installed"
     )

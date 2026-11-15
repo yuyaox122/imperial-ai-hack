@@ -1,0 +1,1069 @@
+{
+  "id": "2f87a3c40cf8",
+  "origin": "server",
+  "recorded": "2026-11-15T05:16:49+00:00",
+  "request": {
+    "model": "claude-sonnet",
+    "dataset": "video-dataset-d82575ac2c",
+    "modality": "video",
+    "scope": "closed"
+  },
+  "status": "done",
+  "events": [
+    {
+      "step": "detect",
+      "status": "start",
+      "message": "Detecting the contents of mystery.mp4.",
+      "data": {},
+      "t": 0.0
+    },
+    {
+      "step": "detect",
+      "status": "ok",
+      "message": "mystery.mp4 starts with the bytes of an MP4 (ISO media, brand 'isom') file, so it is a video. Since Claude Sonnet 5.5 does not read video files and no specialist is wired for them, the agent will write an adapter: code that turns the file into something Claude Sonnet 5.5 reads.",
+      "data": {
+        "file": "mystery.mp4",
+        "goal": "What action is happening in this video?",
+        "modality": "video",
+        "format": "mp4",
+        "how": "magic bytes",
+        "detail": "mystery.mp4 starts with the bytes of an MP4 (ISO media, brand 'isom') file, so it is a video.",
+        "flow": "adapter"
+      },
+      "t": 0.001
+    },
+    {
+      "step": "design",
+      "status": "start",
+      "message": "Designing an adapter that lets Claude Sonnet 5.5 sense mystery.mp4: What action is happening in this video?",
+      "data": {
+        "file": "mystery.mp4",
+        "goal": "What action is happening in this video?"
+      },
+      "t": 0.001
+    },
+    {
+      "step": "design",
+      "status": "ok",
+      "message": "A images adapter for video (mp4) files: Extract timestamped frames across the video and arrange them in chronological contact sheets, with denser sampling where motion occurs. Include the video duration and frame timestamps so the model can infer the action from changes over time.",
+      "data": {
+        "modality": "video",
+        "format": "mp4",
+        "route": "images",
+        "description": "Extract timestamped frames across the video and arrange them in chronological contact sheets, with denser sampling where motion occurs. Include the video duration and frame timestamps so the model can infer the action from changes over time.",
+        "libraries": [
+          "ffmpeg (via subprocess)",
+          "ffprobe (via subprocess)",
+          "PIL"
+        ],
+        "question": "What action is happening in the video?",
+        "label_hint": "Short descriptions of the main visible action.",
+        "labels": [
+          "Walking",
+          "Running",
+          "Jumping",
+          "Dancing",
+          "Swimming",
+          "Cycling"
+        ],
+        "probe_plan": "dataset",
+        "probe_reason": "A public action-recognition dataset provides videos with independently annotated action labels.",
+        "install": [],
+        "detection": {
+          "modality": "video",
+          "format": "mp4",
+          "how": "magic bytes",
+          "detail": "mystery.mp4 starts with the bytes of an MP4 (ISO media, brand 'isom') file, so it is a video."
+        },
+        "toolbox": [
+          "numpy",
+          "scipy",
+          "PIL",
+          "json",
+          "csv",
+          "math",
+          "struct",
+          "zipfile",
+          "gzip",
+          "io",
+          "re",
+          "xml.etree",
+          "statistics",
+          "trimesh",
+          "rdkit",
+          "soundfile",
+          "matplotlib",
+          "ffmpeg (via subprocess)",
+          "ffprobe (via subprocess)",
+          "adapter_kit (this harness's helper module, on the adapter's path: import adapter_kit. video_frames(path, n=6) -> PIL frames and video_summary(path) -> dict, for video; contact_sheet(images) -> one PIL image; load_mesh(path), mesh_views(path, views=4) -> PIL renders and mesh_summary(path) -> dict with a plain description, for 3D meshes; read_molecule(path), molecule_summary(path) -> dict with a plain description and molecule_image(path), for molecules; read_coordinates(path) -> [(lat, lon)], coordinate_summary(lat, lon) -> dict and nearest_places(lat, lon), for coordinates; ValueError when a file cannot be read)"
+        ],
+        "head_preview": "[hex dump of the first 768 of 144673 bytes] 00000000 00 00 00 20 66 74 79 70 69 73 6f 6d 00 00 02 00 |... ftypisom....| 00000010 69 73 6f 6d 69 73 6f 32 61 76 63 31 6d 70 34 31 |isomiso2avc1mp41| 00000020 00 00 08 aa 6d 6f 6f 76 00 00 00 6c 6d 76 68 64 |....moov...lmvhd| 00000030 00 00 00 00 00 0..."
+      },
+      "t": 2.96
+    },
+    {
+      "step": "build",
+      "status": "start",
+      "message": "Writing adapt(path) with ffmpeg (via subprocess), ffprobe (via subprocess), PIL and running it on mystery.mp4 in the sandbox.",
+      "data": {
+        "libraries": [
+          "ffmpeg (via subprocess)",
+          "ffprobe (via subprocess)",
+          "PIL"
+        ],
+        "sandboxed": true,
+        "max_attempts": 3
+      },
+      "t": 2.96
+    },
+    {
+      "step": "build",
+      "status": "ok",
+      "message": "The adapter ran on mystery.mp4 after 1 attempt (1.0 s).",
+      "data": {
+        "attempts": 1,
+        "libraries": [
+          "PIL",
+          "adapter_kit (this harness's helper module, on the adapter's path: import adapter_kit. video_frames(path, n=6) -> PIL frames and video_summary(path) -> dict, for video; contact_sheet(images) -> one PIL image; load_mesh(path), mesh_views(path, views=4) -> PIL renders and mesh_summary(path) -> dict with a plain description, for 3D meshes; read_molecule(path), molecule_summary(path) -> dict with a plain description and molecule_image(path), for molecules; read_coordinates(path) -> [(lat, lon)], coordinate_summary(lat, lon) -> dict and nearest_places(lat, lon), for coordinates; ValueError when a file cannot be read)",
+          "ffmpeg (via subprocess)",
+          "ffprobe (via subprocess)",
+          "io",
+          "json",
+          "math",
+          "numpy"
+        ],
+        "code_sha256": "185cfaabd2bd32320140518b3b2e7afa3c80f56568a9d7e7db6c6830791d89c2",
+        "code": "import io, json, math, subprocess\nfrom PIL import Image, ImageDraw, ImageFont\nimport numpy as np\n\n\ndef adapt(path):\n    duration = 0.0\n    fps = 25.0\n    try:\n        p = subprocess.run(['ffprobe', '-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=duration,avg_frame_rate:format=duration', '-of', 'json', path], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=8)\n        info = json.loads(p.stdout or b'{}')\n        stream = (info.get('streams') or [{}])[0]\n        for v in (stream.get('duration'), info.get('format', {}).get('duration')):\n            try:\n                d = float(v)\n                if math.isfinite(d) and d > 0:\n                    duration = d\n                    break\n            except Exception:\n                pass\n        try:\n            a, b = stream.get('avg_frame_rate', '25/1').split('/')\n            fps = float(a) / float(b)\n            if not math.isfinite(fps) or fps <= 0:\n                fps = 25.0\n        except Exception:\n            pass\n    except Exception:\n        pass\n\n    def frame(t):\n        try:\n            p = subprocess.run(['ffmpeg', '-v', 'error', '-ss', '%.4f' % max(0, t), '-i', path, '-frames:v', '1', '-vf', 'scale=320:240:force_original_aspect_ratio=decrease', '-f', 'image2pipe', '-vcodec', 'mjpeg', 'pipe:1'], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=5)\n            if p.stdout:\n                im = Image.open(io.BytesIO(p.stdout))\n                im.load()\n                return im.convert('RGB')\n        except Exception:\n            pass\n        return None\n\n    if duration <= 0:\n        try:\n            import adapter_kit\n            frames = adapter_kit.video_frames(path, n=12)\n            if frames:\n                return {'images': [x.convert('RGB') for x in frames[:9]]}\n        except Exception:\n            pass\n        im = frame(0)\n        return {'images': [im] if im else []}\n\n    end = max(0.0, duration - max(1.0 / fps, 0.04))\n    count = 18 if duration > 1 else 12\n    times = [end * i / (count - 1) for i in range(count)]\n    samples = []\n    for t in times:\n        im = frame(t)\n        if im is not None:\n            samples.append((t, im))\n    if not samples:\n        try:\n            import adapter_kit\n            return {'images': adapter_kit.video_frames(path, n=6)[:9]}\n        except Exception:\n            return {'images': []}\n\n    # Add intermediate frames in intervals with the largest visual changes.\n    if len(samples) >= 2:\n        scores = []\n        for i in range(len(samples) - 1):\n            a = np.asarray(samples[i][1].convert('L').resize ( (64, 48) ), dtype=np.float32)\n            b = np.asarray(samples[i + 1][1].convert('L').resize((64, 48)), dtype=np.float32)\n            scores.append((float(np.mean(np.abs(a - b))), i))\n        for _, i in sorted(scores, reverse=True)[:6]:\n            t = (samples[i][0] + samples[i + 1][0]) / 2\n            im = frame(t)\n            if im is not None:\n                samples.append((t, im))\n    samples.sort(key=lambda x: x[0])\n\n    # Four frames per sheet preserve useful detail under the 512-pixel limit.\n    sheets = []\n    for start in range(0, len(samples), 4):\n        group = samples[start:start + 4]\n        sheet = Image.new('RGB', (512, 430), 'white')\n        draw = ImageDraw.Draw(sheet)\n        draw.text((5, 3), 'Duration %.2f s | frames %d-%d' % (duration, start + 1, start + len(group)), fill='black')\n        for j, (t, im) in enumerate(group):\n            x = (j % 2) * 256\n            y = 22 + (j // 2) * 204\n            im.thumbnail((252, 180), Image.Resampling.LANCZOS)\n            sheet.paste(im, (x + (256 - im.width) // 2, y + (180 - im.height) // 2))\n            draw.text((x + 5, y + 182), '%.2f s' % t, fill='black')\n        sheets.append(sheet)\n    return {'images': sheets[:9]}\n",
+        "preview": "6 images: 512x430, 512x430, 512x430, 512x430, 512x430, 512x430",
+        "output_kind": "images",
+        "notes": [],
+        "seconds": 0.99
+      },
+      "t": 17.752
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Searching the Hugging Face Hub and the web for labelled probe files.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "search",
+        "goal": "What action is happening in this video?",
+        "modality": "video"
+      },
+      "t": 17.752
+    },
+    {
+      "step": "data",
+      "status": "ok",
+      "message": "Found 21 candidate datasets for labelled probe files.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "search",
+        "queries": [
+          "action recognition",
+          "UCF101",
+          "HMDB51",
+          "Kinetics",
+          "Something Something",
+          "action video",
+          "action",
+          "ucf101",
+          "kinetics",
+          "hmdb"
+        ],
+        "origin": "llm+rule",
+        "found": 21,
+        "top": [
+          "Sina272/hmdb51-v2",
+          "Sina272/hmdb51-v3",
+          "Sina272/hmdb51-v4",
+          "divm/hmdb51",
+          "Serrelab/hmdb51",
+          "jili5044/hmdb51",
+          "mteb/HMDB51ZeroShot",
+          "SabrianLinnn/hmdb51",
+          "MichiganNLP/hmdb",
+          "shangzx/Fence-Climbing-Action-Recognition-Dataset",
+          "Chris-davis-thor/motioncapture",
+          "giu-alb/something_something_v2"
+        ],
+        "web": {
+          "used": true,
+          "reason": null,
+          "origin": "live",
+          "hub_ids": [
+            "giu-alb/something_something_v2",
+            "Chris-davis-thor/motioncapture"
+          ],
+          "tables": [],
+          "refused": []
+        },
+        "excluded": []
+      },
+      "t": 21.921
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Trying Sina272/hmdb51-v2.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "Sina272/hmdb51-v2",
+        "source": "Sina272/hmdb51-v2",
+        "kind": "hub",
+        "downloads": 254,
+        "found_by": "hub",
+        "licence": null,
+        "url": "https://huggingface.co/datasets/Sina272/hmdb51-v2"
+      },
+      "t": 21.921
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of Sina272/hmdb51-v2.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "Sina272/hmdb51-v2",
+        "source": "Sina272/hmdb51-v2",
+        "kind": "hub"
+      },
+      "t": 21.921
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "Sina272/hmdb51-v2 does not fit: Sina272/hmdb51-v2 has no Video column for video (columns: file_name, label)",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "Sina272/hmdb51-v2",
+        "source": "Sina272/hmdb51-v2",
+        "kind": "hub",
+        "reason": "Sina272/hmdb51-v2 has no Video column for video (columns: file_name, label)"
+      },
+      "t": 24.342
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of Sina272/hmdb51-v2.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "Sina272/hmdb51-v2",
+        "source": "Sina272/hmdb51-v2",
+        "kind": "folder"
+      },
+      "t": 24.342
+    },
+    {
+      "step": "data",
+      "status": "ok",
+      "message": "Sina272/hmdb51-v2 fits: input ?, label its 0/1 columns.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "Sina272/hmdb51-v2",
+        "source": "Sina272/hmdb51-v2",
+        "kind": "folder",
+        "mapping": {
+          "config": "15d38beeb0c38b0a2f3e0f667eaa32112d085c0f",
+          "split": "",
+          "input_columns": [],
+          "input_kind": "media",
+          "template": "",
+          "extension": ".avi",
+          "label_column": "",
+          "label_kind": "folder",
+          "label_names": [
+            "walk",
+            "turn",
+            "run",
+            "drink",
+            "shake_hands",
+            "stand",
+            "jump",
+            "dribble",
+            "swing_baseball",
+            "sit",
+            "somersault",
+            "fall_floor",
+            "shoot_ball",
+            "clap",
+            "kick",
+            "kick_ball",
+            "laugh",
+            "dive",
+            "hit",
+            "sword",
+            "sword_exercise",
+            "punch",
+            "talk",
+            "hug",
+            "fencing",
+            "push",
+            "ride_horse",
+            "handstand",
+            "climb_stairs",
+            "shoot_bow",
+            "chew",
+            "smoke",
+            "climb",
+            "eat",
+            "brush_hair",
+            "cartwheel",
+            "flic_flac",
+            "pick",
+            "pour",
+            "golf",
+            "situp",
+            "pullup",
+            "wave",
+            "draw_sword",
+            "pushup",
+            "ride_bike",
+            "shoot_gun",
+            "catch",
+            "kiss",
+            "smile",
+            "... 1 more"
+          ],
+          "label_separator": null,
+          "media_type": "Video",
+          "origin": "rule",
+          "reason": "rule: 6,766 .avi files labelled by the name of folder 2 of their path (e.g. videos/brush_hair/April_09_brush_hair_u_nm_np1_ba_goo_0.avi), 51 labels",
+          "folder_depth": 1
+        }
+      },
+      "t": 26.79
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Fetching labelled files from Sina272/hmdb51-v2.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "fetch",
+        "hub_id": "Sina272/hmdb51-v2",
+        "source": "Sina272/hmdb51-v2",
+        "kind": "folder",
+        "folder": "<repo>/.sense/fetched/probes/video/Sina272__hmdb51-v2"
+      },
+      "t": 26.79
+    },
+    {
+      "step": "data",
+      "status": "ok",
+      "message": "Fetched 160 files in 8 labels from Sina272/hmdb51-v2.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "fetch",
+        "hub_id": "Sina272/hmdb51-v2",
+        "source": "Sina272/hmdb51-v2",
+        "kind": "folder",
+        "counts": {
+          "walk": 20,
+          "turn": 20,
+          "run": 20,
+          "drink": 20,
+          "shake_hands": 20,
+          "stand": 20,
+          "jump": 20,
+          "dribble": 20
+        },
+        "rows_seen": 6766,
+        "skipped": {},
+        "bytes": 47826842
+      },
+      "t": 59.974
+    },
+    {
+      "step": "data",
+      "status": "ok",
+      "message": "Using Sina272/hmdb51-v2: 8 labels (walk, turn, run, drink, shake_hands, stand, jump, dribble).",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "Sina272/hmdb51-v2",
+        "source": "Sina272/hmdb51-v2",
+        "kind": "folder",
+        "labels": [
+          "walk",
+          "turn",
+          "run",
+          "drink",
+          "shake_hands",
+          "stand",
+          "jump",
+          "dribble"
+        ],
+        "licence": null
+      },
+      "t": 59.974
+    },
+    {
+      "step": "data",
+      "status": "ok",
+      "message": "Using 160 dataset probe files in 8 labels (dribble, drink, jump, run, shake hands, stand, turn, walk); all are held out, since the adapter was written before they existed.",
+      "data": {
+        "name": "video-dataset-d82575ac2c",
+        "provenance": "dataset",
+        "source": "https://huggingface.co/datasets/Sina272/hmdb51-v2",
+        "licence": "unknown",
+        "labels": [
+          "dribble",
+          "drink",
+          "jump",
+          "run",
+          "shake hands",
+          "stand",
+          "turn",
+          "walk"
+        ],
+        "counts": {
+          "dribble": 20,
+          "drink": 20,
+          "jump": 20,
+          "run": 20,
+          "shake hands": 20,
+          "stand": 20,
+          "turn": 20,
+          "walk": 20
+        },
+        "n": 160,
+        "split": {
+          "fit": 96,
+          "dev": 32,
+          "test": 32
+        },
+        "meta": {
+          "folder": "<repo>/.sense/fetched/probes/video/Sina272__hmdb51-v2",
+          "copied_to": "<repo>/.sense/probes/video-dataset-d82575ac2c",
+          "per_label": {
+            "dribble": 20,
+            "drink": 20,
+            "jump": 20,
+            "run": 20,
+            "shake hands": 20,
+            "stand": 20,
+            "turn": 20,
+            "walk": 20
+          },
+          "duplicates_collapsed": 0,
+          "conflicts_dropped": [],
+          "capped": 0,
+          "skipped": {
+            "hidden": 0,
+            "empty": 0,
+            "subfolders": 0,
+            "other_types": 0
+          },
+          "suffixes": null,
+          "warnings": [],
+          "seed": 0,
+          "min_per_label": 5,
+          "max_per_label": 40
+        },
+        "label_leaks": [],
+        "fetched": {
+          "hub_id": "Sina272/hmdb51-v2",
+          "url": "https://huggingface.co/datasets/Sina272/hmdb51-v2",
+          "title": "HMDB51 Action Recognition Dataset",
+          "kind": "folder",
+          "source": "Sina272/hmdb51-v2",
+          "licence": null,
+          "licence_source": null,
+          "label_values": {
+            "walk": "walk",
+            "turn": "turn",
+            "run": "run",
+            "drink": "drink",
+            "shake_hands": "shake_hands",
+            "stand": "stand",
+            "jump": "jump",
+            "dribble": "dribble"
+          },
+          "counts": {
+            "walk": 20,
+            "turn": 20,
+            "run": 20,
+            "drink": 20,
+            "shake_hands": 20,
+            "stand": 20,
+            "jump": 20,
+            "dribble": 20
+          },
+          "mapping": {
+            "config": "15d38beeb0c38b0a2f3e0f667eaa32112d085c0f",
+            "split": "",
+            "input_columns": [],
+            "input_kind": "media",
+            "template": "",
+            "extension": ".avi",
+            "label_column": "",
+            "label_kind": "folder",
+            "label_names": [
+              "walk",
+              "turn",
+              "run",
+              "drink",
+              "shake_hands",
+              "stand",
+              "jump",
+              "dribble",
+              "swing_baseball",
+              "sit",
+              "somersault",
+              "fall_floor",
+              "shoot_ball",
+              "clap",
+              "kick",
+              "kick_ball",
+              "laugh",
+              "dive",
+              "hit",
+              "sword",
+              "sword_exercise",
+              "punch",
+              "talk",
+              "hug",
+              "fencing",
+              "push",
+              "ride_horse",
+              "handstand",
+              "climb_stairs",
+              "shoot_bow",
+              "chew",
+              "smoke",
+              "climb",
+              "eat",
+              "brush_hair",
+              "cartwheel",
+              "flic_flac",
+              "pick",
+              "pour",
+              "golf",
+              "situp",
+              "pullup",
+              "wave",
+              "draw_sword",
+              "pushup",
+              "ride_bike",
+              "shoot_gun",
+              "catch",
+              "kiss",
+              "smile",
+              "... 1 more"
+            ],
+            "label_separator": null,
+            "media_type": "Video",
+            "origin": "rule",
+            "reason": "rule: 6,766 .avi files labelled by the name of folder 2 of their path (e.g. videos/brush_hair/April_09_brush_hair_u_nm_np1_ba_goo_0.avi), 51 labels",
+            "folder_depth": 1
+          },
+          "rows_seen": 6766,
+          "skipped": {},
+          "notes": [
+            "the dataset viewer could not be used (Sina272/hmdb51-v2 has no Video column for video (columns: file_name, label)), so the files were read from the repository's folders",
+            "rule: 6,766 .avi files labelled by the name of folder 2 of their path (e.g. videos/brush_hair/April_09_brush_hair_u_nm_np1_ba_goo_0.avi), 51 labels",
+            "labels are the names of the folders the files sit in (folder 2 of each path), read from Sina272/hmdb51-v2's file list at revision 15d38beeb0c38b0a2f3e0f667eaa32112d085c0f; files are written as <n><extension>, never under their own names",
+            "the Hub dataset card states no licence, so the files' terms are unknown",
+            "stripped the metadata that can name a label from 160 files (tags, by an ffmpeg remux)"
+          ],
+          "tried": []
+        }
+      },
+      "t": 60.169
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Searching the Hugging Face Hub and the web for labelled files of other categories.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "search",
+        "goal": "What action is happening in this video?",
+        "modality": "video"
+      },
+      "t": 60.169
+    },
+    {
+      "step": "data",
+      "status": "ok",
+      "message": "Found 21 candidate datasets for labelled files of other categories.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "search",
+        "queries": [
+          "action recognition",
+          "UCF101",
+          "HMDB51",
+          "Kinetics",
+          "Something Something",
+          "action video",
+          "action",
+          "ucf101",
+          "kinetics",
+          "hmdb"
+        ],
+        "origin": "llm+rule",
+        "found": 21,
+        "top": [
+          "Sina272/hmdb51-v3",
+          "Sina272/hmdb51-v4",
+          "divm/hmdb51",
+          "Serrelab/hmdb51",
+          "jili5044/hmdb51",
+          "mteb/HMDB51ZeroShot",
+          "SabrianLinnn/hmdb51",
+          "MichiganNLP/hmdb",
+          "shangzx/Fence-Climbing-Action-Recognition-Dataset",
+          "jamarks/my-action-recognition-dataset",
+          "Chris-davis-thor/motioncapture",
+          "giu-alb/something_something_v2"
+        ],
+        "web": {
+          "used": true,
+          "reason": null,
+          "origin": "memo",
+          "hub_ids": [
+            "giu-alb/something_something_v2",
+            "Chris-davis-thor/motioncapture"
+          ],
+          "tables": [],
+          "refused": []
+        },
+        "excluded": [
+          {
+            "source": "Sina272/hmdb51-v2",
+            "reason": "in exclude_sources"
+          }
+        ]
+      },
+      "t": 63.054
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Trying Sina272/hmdb51-v3.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "Sina272/hmdb51-v3",
+        "source": "Sina272/hmdb51-v3",
+        "kind": "hub",
+        "downloads": 195,
+        "found_by": "hub",
+        "licence": null,
+        "url": "https://huggingface.co/datasets/Sina272/hmdb51-v3"
+      },
+      "t": 63.054
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of Sina272/hmdb51-v3.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "Sina272/hmdb51-v3",
+        "source": "Sina272/hmdb51-v3",
+        "kind": "hub"
+      },
+      "t": 63.054
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "Sina272/hmdb51-v3 does not fit: the viewer's splits of Sina272/hmdb51-v3 failed: HTTP 500 from datasets-server.huggingface.co: Couldn't infer the same data file format for all splits. Got {NamedSplit('train'): ('videofolder', {}), NamedSplit('test'): ('csv', {})}",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "Sina272/hmdb51-v3",
+        "source": "Sina272/hmdb51-v3",
+        "kind": "hub",
+        "reason": "the viewer's splits of Sina272/hmdb51-v3 failed: HTTP 500 from datasets-server.huggingface.co: Couldn't infer the same data file format for all splits. Got {NamedSplit('train'): ('videofolder', {}), NamedSplit('test'): ('csv', {})}"
+      },
+      "t": 63.206
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of Sina272/hmdb51-v3.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "Sina272/hmdb51-v3",
+        "source": "Sina272/hmdb51-v3",
+        "kind": "folder"
+      },
+      "t": 63.206
+    },
+    {
+      "step": "data",
+      "status": "ok",
+      "message": "Sina272/hmdb51-v3 fits: input ?, label its 0/1 columns.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "Sina272/hmdb51-v3",
+        "source": "Sina272/hmdb51-v3",
+        "kind": "folder",
+        "mapping": {
+          "config": "2266371481966141052b6ffaa3c5b0d51bcda966",
+          "split": "",
+          "input_columns": [],
+          "input_kind": "media",
+          "template": "",
+          "extension": ".avi",
+          "label_column": "",
+          "label_kind": "folder",
+          "label_names": [
+            "walk",
+            "turn",
+            "run",
+            "drink",
+            "shake_hands",
+            "stand",
+            "jump",
+            "dribble",
+            "swing_baseball",
+            "sit",
+            "somersault",
+            "fall_floor",
+            "shoot_ball",
+            "clap",
+            "kick",
+            "kick_ball",
+            "laugh",
+            "dive",
+            "hit",
+            "sword",
+            "sword_exercise",
+            "punch",
+            "talk",
+            "hug",
+            "fencing",
+            "push",
+            "ride_horse",
+            "handstand",
+            "climb_stairs",
+            "shoot_bow",
+            "chew",
+            "smoke",
+            "climb",
+            "eat",
+            "brush_hair",
+            "cartwheel",
+            "flic_flac",
+            "pick",
+            "pour",
+            "golf",
+            "situp",
+            "pullup",
+            "wave",
+            "draw_sword",
+            "pushup",
+            "ride_bike",
+            "shoot_gun",
+            "catch",
+            "kiss",
+            "smile",
+            "... 1 more"
+          ],
+          "label_separator": null,
+          "media_type": "Video",
+          "origin": "rule",
+          "reason": "rule: 6,766 .avi files labelled by the name of folder 2 of their path (e.g. videos/brush_hair/April_09_brush_hair_u_nm_np1_ba_goo_0.avi), 51 labels",
+          "folder_depth": 1
+        }
+      },
+      "t": 66.075
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Fetching labelled files from Sina272/hmdb51-v3.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "fetch",
+        "hub_id": "Sina272/hmdb51-v3",
+        "source": "Sina272/hmdb51-v3",
+        "kind": "folder",
+        "folder": "<repo>/.sense/fetched/probes/video-unseen/Sina272__hmdb51-v3"
+      },
+      "t": 66.075
+    },
+    {
+      "step": "data",
+      "status": "ok",
+      "message": "Fetched 160 files in 8 labels from Sina272/hmdb51-v3.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "fetch",
+        "hub_id": "Sina272/hmdb51-v3",
+        "source": "Sina272/hmdb51-v3",
+        "kind": "folder",
+        "counts": {
+          "swing_baseball": 20,
+          "sit": 20,
+          "somersault": 20,
+          "fall_floor": 20,
+          "shoot_ball": 20,
+          "clap": 20,
+          "kick": 20,
+          "kick_ball": 20
+        },
+        "rows_seen": 6766,
+        "skipped": {},
+        "bytes": 43835672
+      },
+      "t": 100.222
+    },
+    {
+      "step": "data",
+      "status": "ok",
+      "message": "Using Sina272/hmdb51-v3: 8 labels (swing_baseball, sit, somersault, fall_floor, shoot_ball, clap, kick, kick_ball).",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "Sina272/hmdb51-v3",
+        "source": "Sina272/hmdb51-v3",
+        "kind": "folder",
+        "labels": [
+          "swing_baseball",
+          "sit",
+          "somersault",
+          "fall_floor",
+          "shoot_ball",
+          "clap",
+          "kick",
+          "kick_ball"
+        ],
+        "licence": null
+      },
+      "t": 100.222
+    },
+    {
+      "step": "data",
+      "status": "info",
+      "message": "Also scoring 160 files of 8 other categories (clap, fall floor, kick, kick ball, shoot ball, sit, somersault, swing baseball), which the adapter was not built around.",
+      "data": {
+        "unseen": {
+          "name": "video-unseen-7ac4fdb6c1",
+          "source": "https://huggingface.co/datasets/Sina272/hmdb51-v3",
+          "labels": [
+            "clap",
+            "fall floor",
+            "kick",
+            "kick ball",
+            "shoot ball",
+            "sit",
+            "somersault",
+            "swing baseball"
+          ],
+          "per_label": {
+            "clap": 20,
+            "fall floor": 20,
+            "kick": 20,
+            "kick ball": 20,
+            "shoot ball": 20,
+            "sit": 20,
+            "somersault": 20,
+            "swing baseball": 20
+          },
+          "n": 160
+        }
+      },
+      "t": 100.321
+    },
+    {
+      "step": "verify",
+      "status": "start",
+      "message": "Scoring adapter:video-mp4 on dataset probe files against swapped-input and no-input controls, and 160 files of categories it was not built around.",
+      "data": {
+        "bridge": "adapter:video-mp4",
+        "n_test": 160,
+        "native": false,
+        "unseen": "video-unseen-7ac4fdb6c1"
+      },
+      "t": 100.343
+    },
+    {
+      "step": "verify",
+      "status": "ok",
+      "message": "adapter:video-mp4 scored 78.0% on 50 held-out probe files (chance 20.0%); controls: swapped input 8.0%, no input 20.0%, unseen categories 92.0% (chance 20.0%).",
+      "data": {
+        "card": {
+          "model": "claude-sonnet",
+          "modality": "video",
+          "dataset": "video-dataset-d82575ac2c",
+          "scope": "closed",
+          "bridge": "adapter:video-mp4",
+          "kind": "image",
+          "n": 50,
+          "chance": 0.2,
+          "accuracy": 0.78,
+          "controls": {
+            "swapped": 0.08,
+            "no_input": 0.2,
+            "unseen_categories": 0.92
+          },
+          "verdict": "candidate",
+          "reason": "Unseen categories: 92.0% on 50 files of 8 categories the adapter was not built around (clap, fall floor, kick, kick ball, shoot ball, sit, somersault, swing baseball; source: https://huggingface.co/datasets/Sina272/hmdb51-v3), against 20.0% chance.",
+          "created": "2026-11-15T05:16:49+00:00",
+          "interval": [
+            0.6476,
+            0.8725
+          ],
+          "control_chance": {
+            "unseen_categories": 0.2
+          }
+        },
+        "controls": {
+          "swapped": 0.08,
+          "no_input": 0.2,
+          "unseen_categories": 0.92
+        },
+        "control_chance": {
+          "unseen_categories": 0.2
+        },
+        "seconds": 108.99
+      },
+      "t": 209.33
+    },
+    {
+      "step": "decide",
+      "status": "start",
+      "message": "Checking adapter:video-mp4 against the bars for an image bridge: chance plus 15 points, 10 points above swapped input, 15 points above chance on the unseen categories, at least 10 probe files, and a 95% interval clear of chance.",
+      "data": {
+        "bridge": "adapter:video-mp4"
+      },
+      "t": 209.33
+    },
+    {
+      "step": "decide",
+      "status": "ok",
+      "message": "adapter:video-mp4 passed: it scored 78.0% against 20.0% chance, meets the 35.0% bar for an image bridge, and 92.0% on categories it was not built around (20.0% chance there).",
+      "data": {
+        "install": "adapter:video-mp4",
+        "accepted": true,
+        "card": {
+          "model": "claude-sonnet",
+          "modality": "video",
+          "dataset": "video-dataset-d82575ac2c",
+          "scope": "closed",
+          "bridge": "adapter:video-mp4",
+          "kind": "image",
+          "n": 50,
+          "chance": 0.2,
+          "accuracy": 0.78,
+          "controls": {
+            "swapped": 0.08,
+            "no_input": 0.2,
+            "unseen_categories": 0.92
+          },
+          "verdict": "installed",
+          "reason": "adapter:video-mp4 passed: it scored 78.0% against 20.0% chance, meets the 35.0% bar for an image bridge, and 92.0% on categories it was not built around (20.0% chance there). Unseen categories: 92.0% on 50 files of 8 categories the adapter was not built around (clap, fall floor, kick, kick ball, shoot ball, sit, somersault, swing baseball; source: https://huggingface.co/datasets/Sina272/hmdb51-v3), against 20.0% chance.",
+          "created": "2026-11-15T05:16:49+00:00",
+          "interval": [
+            0.6476,
+            0.8725
+          ],
+          "control_chance": {
+            "unseen_categories": 0.2
+          }
+        }
+      },
+      "t": 209.33
+    },
+    {
+      "step": "install",
+      "status": "start",
+      "message": "Installing adapter:video-mp4 for Claude Sonnet 5.5.",
+      "data": {
+        "bridge": "adapter:video-mp4",
+        "replaced": null
+      },
+      "t": 209.337
+    },
+    {
+      "step": "install",
+      "status": "ok",
+      "message": "Installed adapter:video-mp4; Claude Sonnet 5.5 can now take video files in chat.",
+      "data": {
+        "bridge": "adapter:video-mp4",
+        "replaced": null,
+        "directory": "<repo>/.sense/claude-sonnet/video"
+      },
+      "t": 209.338
+    },
+    {
+      "step": "done",
+      "status": "ok",
+      "message": "Claude Sonnet 5.5 can now take video files through adapter:video-mp4: it scored 78.0% on 50 probe files, against 20.0% chance.",
+      "data": {
+        "installed": "adapter:video-mp4",
+        "needs_user": false,
+        "bridge": "adapter:video-mp4"
+      },
+      "t": 209.338
+    }
+  ],
+  "cards": [
+    {
+      "model": "claude-sonnet",
+      "modality": "video",
+      "dataset": "video-dataset-d82575ac2c",
+      "scope": "closed",
+      "bridge": "adapter:video-mp4",
+      "kind": "image",
+      "n": 50,
+      "chance": 0.2,
+      "accuracy": 0.78,
+      "controls": {
+        "swapped": 0.08,
+        "no_input": 0.2,
+        "unseen_categories": 0.92
+      },
+      "verdict": "installed",
+      "reason": "adapter:video-mp4 passed: it scored 78.0% against 20.0% chance, meets the 35.0% bar for an image bridge, and 92.0% on categories it was not built around (20.0% chance there). Unseen categories: 92.0% on 50 files of 8 categories the adapter was not built around (clap, fall floor, kick, kick ball, shoot ball, sit, somersault, swing baseball; source: https://huggingface.co/datasets/Sina272/hmdb51-v3), against 20.0% chance.",
+      "created": "2026-11-15T05:16:49+00:00",
+      "interval": [
+        0.6476,
+        0.8725
+      ],
+      "control_chance": {
+        "unseen_categories": 0.2
+      }
+    }
+  ],
+  "installed": "adapter:video-mp4",
+  "error": null,
+  "seconds": 209.338,
+  "format": 1
+}
