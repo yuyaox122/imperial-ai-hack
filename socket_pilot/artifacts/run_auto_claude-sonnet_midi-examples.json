@@ -1,0 +1,1512 @@
+{
+  "id": "b35492951f83",
+  "origin": "server",
+  "recorded": "2026-11-15T06:01:18+00:00",
+  "request": {
+    "model": "claude-sonnet",
+    "dataset": "music-examples-7893be6164",
+    "modality": "music",
+    "scope": "closed"
+  },
+  "status": "done",
+  "events": [
+    {
+      "step": "detect",
+      "status": "start",
+      "message": "Detecting the contents of mystery.mid.",
+      "data": {},
+      "t": 0.0
+    },
+    {
+      "step": "detect",
+      "status": "ok",
+      "message": "mystery.mid matches no known signature and is not UTF-8 or UTF-16 text. Since Claude Sonnet 5.5 does not read other files and no specialist is wired for them, the agent will write an adapter: code that turns the file into something Claude Sonnet 5.5 reads.",
+      "data": {
+        "file": "mystery.mid",
+        "goal": "What genre of music is this?",
+        "modality": "other",
+        "format": "unknown",
+        "how": "content",
+        "detail": "mystery.mid matches no known signature and is not UTF-8 or UTF-16 text.",
+        "flow": "adapter"
+      },
+      "t": 0.001
+    },
+    {
+      "step": "design",
+      "status": "start",
+      "message": "Designing an adapter that lets Claude Sonnet 5.5 sense mystery.mid: What genre of music is this?",
+      "data": {
+        "file": "mystery.mid",
+        "goal": "What genre of music is this?"
+      },
+      "t": 0.001
+    },
+    {
+      "step": "design",
+      "status": "ok",
+      "message": "A text adapter for music (midi) files: Parse the MIDI events and describe tempo, meter, instruments, note patterns, rhythm, harmony, and arrangement, including any relevant metadata. Report observable musical features without assigning a genre.",
+      "data": {
+        "modality": "music",
+        "format": "midi",
+        "route": "text",
+        "description": "Parse the MIDI events and describe tempo, meter, instruments, note patterns, rhythm, harmony, and arrangement, including any relevant metadata. Report observable musical features without assigning a genre.",
+        "libraries": [
+          "mido"
+        ],
+        "question": "Which genre best describes this music?",
+        "label_hint": "Music genre categories.",
+        "labels": [
+          "classical",
+          "jazz",
+          "rock",
+          "pop",
+          "folk",
+          "electronic"
+        ],
+        "probe_plan": "dataset",
+        "probe_reason": "Genre labels require externally annotated musical examples rather than labels inferred from a generation script.",
+        "install": [],
+        "detection": {
+          "modality": "other",
+          "format": "unknown",
+          "how": "content",
+          "detail": "mystery.mid matches no known signature and is not UTF-8 or UTF-16 text."
+        },
+        "toolbox": [
+          "numpy",
+          "scipy",
+          "PIL",
+          "json",
+          "csv",
+          "math",
+          "struct",
+          "zipfile",
+          "gzip",
+          "io",
+          "re",
+          "xml.etree",
+          "statistics",
+          "trimesh",
+          "rdkit",
+          "soundfile",
+          "matplotlib",
+          "ffmpeg (via subprocess)",
+          "ffprobe (via subprocess)",
+          "adapter_kit (this harness's helper module, on the adapter's path: import adapter_kit. video_frames(path, n=6) -> PIL frames and video_summary(path) -> dict, for video; contact_sheet(images) -> one PIL image; load_mesh(path), mesh_views(path, views=4) -> PIL renders and mesh_summary(path) -> dict with a plain description, for 3D meshes; read_molecule(path), molecule_summary(path) -> dict with a plain description and molecule_image(path), for molecules; read_coordinates(path) -> [(lat, lon)], coordinate_summary(lat, lon) -> dict and nearest_places(lat, lon), for coordinates; ValueError when a file cannot be read)",
+          "mido"
+        ],
+        "head_preview": "[hex dump of the first 583 of 583 bytes] 00000000 4d 54 68 64 00 00 00 06 00 00 00 01 01 e0 4d 54 |MThd..........MT| 00000010 72 6b 00 00 02 31 00 ff 51 03 05 b8 d8 00 ff 58 |rk...1..Q......X| 00000020 04 03 02 18 08 00 c0 00 00 c1 00 00 91 30 46 00 |.............0F.| 00000030 90 48 5a 83 56 80 4..."
+      },
+      "t": 2.603
+    },
+    {
+      "step": "build",
+      "status": "start",
+      "message": "Writing adapt(path) with mido and running it on mystery.mid in the sandbox.",
+      "data": {
+        "libraries": [
+          "mido"
+        ],
+        "sandboxed": true,
+        "max_attempts": 3
+      },
+      "t": 2.603
+    },
+    {
+      "step": "build",
+      "status": "ok",
+      "message": "The adapter ran on mystery.mid after 1 attempt (0.1 s).",
+      "data": {
+        "attempts": 1,
+        "libraries": [
+          "mido",
+          "statistics"
+        ],
+        "code_sha256": "f79fff1e4b59b78fa07ea88191283de189ba0a6a63637af2b6ba9721bf0510a1",
+        "code": "import mido\nfrom collections import Counter, defaultdict, deque\nimport statistics\n\nGM = ('Acoustic Grand Piano,Bright Acoustic Piano,Electric Grand Piano,Honky-tonk Piano,Electric Piano 1,Electric Piano 2,Harpsichord,Clavinet,Celesta,Glockenspiel,Music Box,Vibraphone,Marimba,Xylophone,Tubular Bells,Dulcimer,Drawbar Organ,Percussive Organ,Rock Organ,Church Organ,Reed Organ,Accordion,Harmonica,Tango Accordion,Acoustic Guitar nylon,Acoustic Guitar steel,Electric Guitar jazz,Electric Guitar clean,Electric Guitar muted,Overdriven Guitar,Distortion Guitar,Guitar harmonics,Acoustic Bass,Electric Bass finger,Electric Bass pick,Fretless Bass,Slap Bass 1,Slap Bass 2,Synth Bass 1,Synth Bass 2,Violin,Viola,Cello,Contrabass,Tremolo Strings,Pizzicato Strings,Orchestral Harp,Timpani,String Ensemble 1,String Ensemble 2,Synth Strings 1,Synth Strings 2,Choir Aahs,Voice Oohs,Synth Voice,Orchestra Hit,Trumpet,Trombone,Tuba,Muted Trumpet,French Horn,Brass Section,Synth Brass 1,Synth Brass 2,Soprano Sax,Alto Sax,Tenor Sax,Baritone Sax,Oboe,English Horn,Bassoon,Clarinet,Piccolo,Flute,Recorder,Pan Flute,Blown Bottle,Shakuhachi,Whistle,Ocarina,Lead square,Lead sawtooth,Lead calliope,Lead chiff,Lead charang,Lead voice,Lead fifths,Lead bass and lead,Pad new age,Pad warm,Pad polysynth,Pad choir,Pad bowed,Pad metallic,Pad halo,Pad sweep,FX rain,FX soundtrack,FX crystal,FX atmosphere,FX brightness,FX goblins,FX echoes,FX sci-fi,Sitar,Banjo,Shamisen,Koto,Kalimba,Bag pipe,Fiddle,Shanai,Tinkle Bell,Agogo,Steel Drums,Woodblock,Taiko Drum,Melodic Tom,Synth Drum,Reverse Cymbal,Guitar Fret Noise,Breath Noise,Seashore,Bird Tweet,Telephone Ring,Helicopter,Applause,Gunshot').split(',')\nPC = ['C','C#','D','Eb','E','F','F#','G','Ab','A','Bb','B']\nDR = {35:'bass drum 2',36:'bass drum',37:'side stick',38:'snare',39:'hand clap',40:'electric snare',41:'low floor tom',42:'closed hi-hat',43:'high floor tom',44:'pedal hi-hat',45:'low tom',46:'open hi-hat',47:'low-mid tom',48:'high-mid tom',49:'crash cymbal',50:'high tom',51:'ride cymbal',52:'Chinese cymbal',53:'ride bell',54:'tambourine',55:'splash cymbal',56:'cowbell',57:'crash cymbal 2',59:'ride cymbal 2',60:'high bongo',61:'low bongo',62:'mute high conga',63:'open high conga',64:'low conga',75:'claves'}\n\ndef note(n):\n    return PC[n % 12] + str(n // 12 - 1)\n\ndef adapt(path):\n    try:\n        mid = mido.MidiFile(path, clip=True)\n    except Exception as e:\n        return {'text': 'Could not parse MIDI file: ' + str(e)[:200]}\n    ppq = mid.ticks_per_beat\n    if ppq <= 0:\n        return {'text': 'MIDI file with SMPTE timing; %d tracks, timing division %d.' % (len(mid.tracks), ppq)}\n    events = []\n    track_ends = []\n    for ti, track in enumerate(mid.tracks):\n        t = 0\n        for order, msg in enumerate(track):\n            t += msg.time\n            events.append((t, ti, order, msg))\n        track_ends.append(t)\n    events.sort(key=lambda x: (x[0], x[1], x[2]))\n    programs = [0] * 16\n    active = defaultdict(deque)\n    notes = defaultdict(list)\n    tempos, meters, keys, metadata = [], [], [], []\n    for t, ti, order, msg in events:\n        typ = msg.type\n        if typ == 'set_tempo': tempos.append((t, msg.tempo))\n        elif typ == 'time_signature': meters.append((t, msg.numerator, msg.denominator))\n        elif typ == 'key_signature': keys.append((t, msg.key))\n        elif typ in ('track_name','instrument_name','lyrics','text','marker','copyright'):\n            s = getattr(msg, 'text', getattr(msg, 'name', ''))\n            if s and len(metadata) < 20: metadata.append('%s: %s' % (typ, str(s)[:100]))\n        elif typ == 'program_change': programs[msg.channel] = msg.program\n        elif typ == 'note_on' and msg.velocity > 0:\n            active[(msg.channel, msg.note)].append((t, msg.velocity, programs[msg.channel], ti))\n        elif typ == 'note_off' or (typ == 'note_on' and msg.velocity == 0):\n            q = active[(msg.channel, msg.note)]\n            if q:\n                start, vel, prog, tr = q.popleft()\n                notes[msg.channel].append((start, max(0, t-start), msg.note, vel, prog, tr))\n    end = max(track_ends or [0])\n    for (ch, pitch), q in active.items():\n        while q:\n            start, vel, prog, tr = q.popleft()\n            notes[ch].append((start, max(0, end-start), pitch, vel, prog, tr))\n    for ch in notes: notes[ch].sort()\n    tempo_events = sorted(tempos) or [(0, 500000)]\n    if tempo_events[0][0] > 0: tempo_events.insert(0, (0, 500000))\n    seconds = 0.0\n    for i, (t, tempo) in enumerate(tempo_events):\n        nxt = tempo_events[i+1][0] if i+1 < len(tempo_events) else end\n        seconds += max(0, min(end, nxt)-t) * tempo / (ppq * 1000000)\n    lines = ['MIDI type %s, %d track(s), %d ticks per quarter; duration %.1f seconds, %.1f quarter-note beats; %d note events.' % (mid.type, len(mid.tracks), ppq, seconds, end/ppq, sum(map(len, notes.values())))]\n    lines.append('Tempo: ' + ', '.join('%.1f BPM at beat %.1f' % (60000000/v, t/ppq) for t,v in tempo_events[:8]) + (' (more changes)' if len(tempo_events)>8 else ''))\n    lines.append('Meter: ' + (', '.join('%d/%d at beat %.1f' % (a,b,t/ppq) for t,a,b in meters[:8]) if meters else 'not specified (MIDI default 4/4)'))\n    if keys: lines.append('Key signature metadata: ' + ', '.join('%s at beat %.1f' % (k,t/ppq) for t,k in keys[:8]))\n    if metadata: lines.append('Metadata: ' + '; '.join(metadata[:10]))\n    allpit = Counter()\n    for ch, ns in sorted(notes.items(), key=lambda x: -len(x[1]))[:12]:\n        pitches = [n[2] for n in ns]\n        velocities = [n[3] for n in ns]\n        progs = Counter(n[4] for n in ns)\n        starts = sorted(set(n[0] for n in ns))\n        gaps = Counter(round((b-a)/ppq, 2) for a,b in zip(starts, starts[1:]) if b>a)\n        durations = Counter(round(n[1]/ppq, 2) for n in ns if n[1]>0)\n        simultaneous = Counter(n[0] for n in ns)\n        if ch == 9:\n            drums = Counter(pitches)\n            desc = 'percussion: ' + ', '.join('%s %d' % (DR.get(p, 'MIDI drum %d' % p), c) for p,c in drums.most_common(10))\n        else:\n            allpit.update(p % 12 for p in pitches)\n            desc = 'programs ' + ', '.join('%s (%d notes)' % (GM[p] if 0 <= p < 128 else str(p), c) for p,c in progs.most_common(4))\n            desc += '; range %s-%s' % (note(min(pitches)), note(max(pitches)))\n        lines.append('Channel %d: %s; %d notes, velocity median %d (range %d-%d); %d distinct onset times, max %d simultaneous notes.' % (ch+1, desc, len(ns), statistics.median(velocities), min(velocities), max(velocities), len(starts), max(simultaneous.values())))\n        if gaps: lines.append('  Common onset spacings in quarter beats: ' + ', '.join('%g (%d)' % x for x in gaps.most_common(5)))\n        if durations: lines.append('  Common note lengths in quarter beats: ' + ', '.join('%g (%d)' % x for x in durations.most_common(5)))\n        if ch != 9:\n            groups = defaultdict(list)\n            for t,d,p,v,pr,tr in ns[:1000]: groups[t].append(p)\n            seq = []\n            for t in sorted(groups)[:24]:\n                ps = sorted(groups[t])\n                seq.append('%g:%s' % (round(t/ppq,2), '+'.join(note(p) for p in ps[:5])))\n            lines.append('  Opening onsets (quarter beat:pitches): ' + ' '.join(seq))\n    if allpit:\n        lines.append('Pitch-class counts across pitched channels: ' + ', '.join('%s %d' % (PC[p],c) for p,c in allpit.most_common()))\n        onset_groups = defaultdict(set)\n        for ch, ns in notes.items():\n            if ch != 9:\n                for t,d,p,v,pr,tr in ns: onset_groups[t].add(p % 12)\n        chords = Counter(tuple(sorted(s)) for s in onset_groups.values() if len(s)>=3)\n        if chords:\n            lines.append('Most common simultaneous onset pitch sets: ' + '; '.join('%s (%d)' % ('-'.join(PC[p] for p in chord), count) for chord,count in chords.most_common(8)))\n    return {'text': '\\n'.join(lines)[:4000]}\n",
+        "preview": "MIDI type 0, 1 track(s), 480 ticks per quarter; duration 9.0 seconds, 24.0 quarter-note beats; 64 note events.\nTempo: 160.0 BPM at beat 0.0\nMeter: 3/4 at beat 0.0\nChannel 2: programs Acoustic Grand Piano (40 notes); range G2-B4; 40 notes, velocity median 70 (range 70-70); 24 distinct onset times,...",
+        "output_kind": "text",
+        "notes": [],
+        "seconds": 0.119
+      },
+      "t": 31.612
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading labelled probe files from <tmp>/midi_examples.",
+      "data": {
+        "provenance": "user",
+        "source": "<tmp>/midi_examples"
+      },
+      "t": 31.612
+    },
+    {
+      "step": "data",
+      "status": "ok",
+      "message": "Using 60 user probe files in 5 labels (classical, country, jazz, latin, rock); all are held out, since the adapter was written before they existed.",
+      "data": {
+        "name": "music-examples-7893be6164",
+        "provenance": "user",
+        "source": "<tmp>/midi_examples",
+        "licence": "user supplied",
+        "labels": [
+          "classical",
+          "country",
+          "jazz",
+          "latin",
+          "rock"
+        ],
+        "counts": {
+          "classical": 12,
+          "country": 12,
+          "jazz": 12,
+          "latin": 12,
+          "rock": 12
+        },
+        "n": 60,
+        "split": {
+          "fit": 35,
+          "dev": 10,
+          "test": 15
+        },
+        "meta": {
+          "folder": "<tmp>/midi_examples",
+          "copied_to": "<repo>/.sense/probes/music-examples-7893be6164",
+          "per_label": {
+            "classical": 12,
+            "country": 12,
+            "jazz": 12,
+            "latin": 12,
+            "rock": 12
+          },
+          "duplicates_collapsed": 0,
+          "conflicts_dropped": [],
+          "capped": 0,
+          "skipped": {
+            "hidden": 0,
+            "empty": 0,
+            "subfolders": 0,
+            "other_types": 0
+          },
+          "suffixes": [
+            ".mid"
+          ],
+          "warnings": [],
+          "seed": 0,
+          "min_per_label": 5,
+          "max_per_label": 40
+        },
+        "label_leaks": []
+      },
+      "t": 31.632
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Searching the Hugging Face Hub and the web for labelled files of other categories.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "search",
+        "goal": "What genre of music is this?",
+        "modality": "music"
+      },
+      "t": 31.672
+    },
+    {
+      "step": "data",
+      "status": "ok",
+      "message": "Found 20 candidate datasets for labelled files of other categories.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "search",
+        "queries": [
+          "music genre",
+          "genre classification",
+          "GTZAN",
+          "FMA",
+          "music genres",
+          "genre music",
+          "midi",
+          "genre",
+          "music"
+        ],
+        "origin": "llm+rule",
+        "found": 20,
+        "top": [
+          "storylinez/gtzan-music-genre-dataset",
+          "Khahn-nh/GTZAN-Dataset-Music-Genre-Classification",
+          "DynamicSuperb/MusicGenreClassification_FMA",
+          "rpmon/fma-genre-classification",
+          "ccmusic-database/music_genre",
+          "danilotpnta/GTZAN_genre_classification",
+          "MiKauAI/music_genres_classification-finetuned",
+          "Erik3Zg/Marimba_Music_Genre_Classification",
+          "matteuscantisani/rsn-music-genre-classification",
+          "AntSanchez77/gtzan-music-genre-dataset",
+          "SoundStock/soundstock.com-music-genres-taxonomy",
+          "SpiceeChat/Genre-Classifier-Country-Per-Country"
+        ],
+        "web": {
+          "used": true,
+          "reason": null,
+          "origin": "memo",
+          "hub_ids": [
+            "storylinez/gtzan-music-genre-dataset",
+            "rpmon/fma-genre-classification",
+            "ccmusic-database/music_genre"
+          ],
+          "tables": [],
+          "refused": []
+        },
+        "excluded": []
+      },
+      "t": 34.542
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Trying storylinez/gtzan-music-genre-dataset.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "storylinez/gtzan-music-genre-dataset",
+        "source": "storylinez/gtzan-music-genre-dataset",
+        "kind": "hub",
+        "downloads": 1016,
+        "found_by": "both",
+        "licence": "mit",
+        "url": "https://huggingface.co/datasets/storylinez/gtzan-music-genre-dataset"
+      },
+      "t": 34.542
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of storylinez/gtzan-music-genre-dataset.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "storylinez/gtzan-music-genre-dataset",
+        "source": "storylinez/gtzan-music-genre-dataset",
+        "kind": "hub"
+      },
+      "t": 34.542
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "storylinez/gtzan-music-genre-dataset does not fit: storylinez/gtzan-music-genre-dataset has no input column for music: wanted a column named like with fitting values (columns: audio, genre)",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "storylinez/gtzan-music-genre-dataset",
+        "source": "storylinez/gtzan-music-genre-dataset",
+        "kind": "hub",
+        "reason": "storylinez/gtzan-music-genre-dataset has no input column for music: wanted a column named like  with fitting values (columns: audio, genre)"
+      },
+      "t": 36.762
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of storylinez/gtzan-music-genre-dataset.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "storylinez/gtzan-music-genre-dataset",
+        "source": "storylinez/gtzan-music-genre-dataset",
+        "kind": "folder"
+      },
+      "t": 36.762
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "storylinez/gtzan-music-genre-dataset does not fit: storylinez/gtzan-music-genre-dataset holds no .mid files",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "storylinez/gtzan-music-genre-dataset",
+        "source": "storylinez/gtzan-music-genre-dataset",
+        "kind": "folder",
+        "reason": "storylinez/gtzan-music-genre-dataset holds no .mid files"
+      },
+      "t": 37.089
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "Could not use storylinez/gtzan-music-genre-dataset: inspect: storylinez/gtzan-music-genre-dataset has no input column for music: wanted a column named like with fitting values (columns: audio, genre); folder: storylinez/gtzan-music-genre-dataset holds no .mid files",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "storylinez/gtzan-music-genre-dataset",
+        "source": "storylinez/gtzan-music-genre-dataset",
+        "kind": "folder",
+        "reason": "inspect: storylinez/gtzan-music-genre-dataset has no input column for music: wanted a column named like  with fitting values (columns: audio, genre); folder: storylinez/gtzan-music-genre-dataset holds no .mid files"
+      },
+      "t": 37.089
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Trying Khahn-nh/GTZAN-Dataset-Music-Genre-Classification.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "Khahn-nh/GTZAN-Dataset-Music-Genre-Classification",
+        "source": "Khahn-nh/GTZAN-Dataset-Music-Genre-Classification",
+        "kind": "hub",
+        "downloads": 26,
+        "found_by": "hub",
+        "licence": null,
+        "url": "https://huggingface.co/datasets/Khahn-nh/GTZAN-Dataset-Music-Genre-Classification"
+      },
+      "t": 37.089
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of Khahn-nh/GTZAN-Dataset-Music-Genre-Classification.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "Khahn-nh/GTZAN-Dataset-Music-Genre-Classification",
+        "source": "Khahn-nh/GTZAN-Dataset-Music-Genre-Classification",
+        "kind": "hub"
+      },
+      "t": 37.089
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "Khahn-nh/GTZAN-Dataset-Music-Genre-Classification does not fit: Khahn-nh/GTZAN-Dataset-Music-Genre-Classification has no input column for music: wanted a column named like with fitting values (columns: mel, label, track_id, artist_id, genre)",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "Khahn-nh/GTZAN-Dataset-Music-Genre-Classification",
+        "source": "Khahn-nh/GTZAN-Dataset-Music-Genre-Classification",
+        "kind": "hub",
+        "reason": "Khahn-nh/GTZAN-Dataset-Music-Genre-Classification has no input column for music: wanted a column named like  with fitting values (columns: mel, label, track_id, artist_id, genre)"
+      },
+      "t": 38.865
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of Khahn-nh/GTZAN-Dataset-Music-Genre-Classification.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "Khahn-nh/GTZAN-Dataset-Music-Genre-Classification",
+        "source": "Khahn-nh/GTZAN-Dataset-Music-Genre-Classification",
+        "kind": "folder"
+      },
+      "t": 38.865
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "Khahn-nh/GTZAN-Dataset-Music-Genre-Classification does not fit: Khahn-nh/GTZAN-Dataset-Music-Genre-Classification holds no .mid files",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "Khahn-nh/GTZAN-Dataset-Music-Genre-Classification",
+        "source": "Khahn-nh/GTZAN-Dataset-Music-Genre-Classification",
+        "kind": "folder",
+        "reason": "Khahn-nh/GTZAN-Dataset-Music-Genre-Classification holds no .mid files"
+      },
+      "t": 39.072
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "Could not use Khahn-nh/GTZAN-Dataset-Music-Genre-Classification: inspect: Khahn-nh/GTZAN-Dataset-Music-Genre-Classification has no input column for music: wanted a column named like with fitting values (columns: mel, label, track_id, artist_id, genre); folder: Khahn-nh/GTZAN-Dataset-Music-Genre-Classification holds no .mid files",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "Khahn-nh/GTZAN-Dataset-Music-Genre-Classification",
+        "source": "Khahn-nh/GTZAN-Dataset-Music-Genre-Classification",
+        "kind": "folder",
+        "reason": "inspect: Khahn-nh/GTZAN-Dataset-Music-Genre-Classification has no input column for music: wanted a column named like  with fitting values (columns: mel, label, track_id, artist_id, genre); folder: Khahn-nh/GTZAN-Dataset-Music-Genre-Classification holds no .mid files"
+      },
+      "t": 39.073
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Trying DynamicSuperb/MusicGenreClassification_FMA.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "DynamicSuperb/MusicGenreClassification_FMA",
+        "source": "DynamicSuperb/MusicGenreClassification_FMA",
+        "kind": "hub",
+        "downloads": 65,
+        "found_by": "hub",
+        "licence": null,
+        "url": "https://huggingface.co/datasets/DynamicSuperb/MusicGenreClassification_FMA"
+      },
+      "t": 39.073
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of DynamicSuperb/MusicGenreClassification_FMA.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "DynamicSuperb/MusicGenreClassification_FMA",
+        "source": "DynamicSuperb/MusicGenreClassification_FMA",
+        "kind": "hub"
+      },
+      "t": 39.073
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "DynamicSuperb/MusicGenreClassification_FMA does not fit: DynamicSuperb/MusicGenreClassification_FMA has no input column for music: wanted a column named like with fitting values (columns: audio, file, instruction, label)",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "DynamicSuperb/MusicGenreClassification_FMA",
+        "source": "DynamicSuperb/MusicGenreClassification_FMA",
+        "kind": "hub",
+        "reason": "DynamicSuperb/MusicGenreClassification_FMA has no input column for music: wanted a column named like  with fitting values (columns: audio, file, instruction, label)"
+      },
+      "t": 40.64
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of DynamicSuperb/MusicGenreClassification_FMA.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "DynamicSuperb/MusicGenreClassification_FMA",
+        "source": "DynamicSuperb/MusicGenreClassification_FMA",
+        "kind": "folder"
+      },
+      "t": 40.64
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "DynamicSuperb/MusicGenreClassification_FMA does not fit: DynamicSuperb/MusicGenreClassification_FMA holds no .mid files",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "DynamicSuperb/MusicGenreClassification_FMA",
+        "source": "DynamicSuperb/MusicGenreClassification_FMA",
+        "kind": "folder",
+        "reason": "DynamicSuperb/MusicGenreClassification_FMA holds no .mid files"
+      },
+      "t": 40.788
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "Could not use DynamicSuperb/MusicGenreClassification_FMA: inspect: DynamicSuperb/MusicGenreClassification_FMA has no input column for music: wanted a column named like with fitting values (columns: audio, file, instruction, label); folder: DynamicSuperb/MusicGenreClassification_FMA holds no .mid files",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "DynamicSuperb/MusicGenreClassification_FMA",
+        "source": "DynamicSuperb/MusicGenreClassification_FMA",
+        "kind": "folder",
+        "reason": "inspect: DynamicSuperb/MusicGenreClassification_FMA has no input column for music: wanted a column named like  with fitting values (columns: audio, file, instruction, label); folder: DynamicSuperb/MusicGenreClassification_FMA holds no .mid files"
+      },
+      "t": 40.788
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Trying rpmon/fma-genre-classification.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "rpmon/fma-genre-classification",
+        "source": "rpmon/fma-genre-classification",
+        "kind": "hub",
+        "downloads": 212,
+        "found_by": "both",
+        "licence": null,
+        "url": "https://huggingface.co/datasets/rpmon/fma-genre-classification"
+      },
+      "t": 40.789
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of rpmon/fma-genre-classification.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "rpmon/fma-genre-classification",
+        "source": "rpmon/fma-genre-classification",
+        "kind": "hub"
+      },
+      "t": 40.789
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "rpmon/fma-genre-classification does not fit: rpmon/fma-genre-classification has no input column for music: wanted a column named like with fitting values (columns: audio, genre, track_id, title, artist)",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "rpmon/fma-genre-classification",
+        "source": "rpmon/fma-genre-classification",
+        "kind": "hub",
+        "reason": "rpmon/fma-genre-classification has no input column for music: wanted a column named like  with fitting values (columns: audio, genre, track_id, title, artist)"
+      },
+      "t": 42.304
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of rpmon/fma-genre-classification.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "rpmon/fma-genre-classification",
+        "source": "rpmon/fma-genre-classification",
+        "kind": "folder"
+      },
+      "t": 42.304
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "rpmon/fma-genre-classification does not fit: rpmon/fma-genre-classification holds no .mid files",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "rpmon/fma-genre-classification",
+        "source": "rpmon/fma-genre-classification",
+        "kind": "folder",
+        "reason": "rpmon/fma-genre-classification holds no .mid files"
+      },
+      "t": 42.622
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "Could not use rpmon/fma-genre-classification: inspect: rpmon/fma-genre-classification has no input column for music: wanted a column named like with fitting values (columns: audio, genre, track_id, title, artist); folder: rpmon/fma-genre-classification holds no .mid files",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "rpmon/fma-genre-classification",
+        "source": "rpmon/fma-genre-classification",
+        "kind": "folder",
+        "reason": "inspect: rpmon/fma-genre-classification has no input column for music: wanted a column named like  with fitting values (columns: audio, genre, track_id, title, artist); folder: rpmon/fma-genre-classification holds no .mid files"
+      },
+      "t": 42.622
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Trying ccmusic-database/music_genre.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "ccmusic-database/music_genre",
+        "source": "ccmusic-database/music_genre",
+        "kind": "hub",
+        "downloads": 423,
+        "found_by": "both",
+        "licence": "cc-by-nc-nd-4.0",
+        "url": "https://huggingface.co/datasets/ccmusic-database/music_genre"
+      },
+      "t": 42.623
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of ccmusic-database/music_genre.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "ccmusic-database/music_genre",
+        "source": "ccmusic-database/music_genre",
+        "kind": "hub"
+      },
+      "t": 42.623
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "ccmusic-database/music_genre does not fit: ccmusic-database/music_genre has no input column for music: wanted a column named like with fitting values (columns: mel, cqt, chroma, fst_level_label, sec_level_label, thr_level_label)",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "ccmusic-database/music_genre",
+        "source": "ccmusic-database/music_genre",
+        "kind": "hub",
+        "reason": "ccmusic-database/music_genre has no input column for music: wanted a column named like  with fitting values (columns: mel, cqt, chroma, fst_level_label, sec_level_label, thr_level_label)"
+      },
+      "t": 44.598
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of ccmusic-database/music_genre.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "ccmusic-database/music_genre",
+        "source": "ccmusic-database/music_genre",
+        "kind": "folder"
+      },
+      "t": 44.598
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "ccmusic-database/music_genre does not fit: ccmusic-database/music_genre holds no .mid files",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "ccmusic-database/music_genre",
+        "source": "ccmusic-database/music_genre",
+        "kind": "folder",
+        "reason": "ccmusic-database/music_genre holds no .mid files"
+      },
+      "t": 44.805
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "Could not use ccmusic-database/music_genre: inspect: ccmusic-database/music_genre has no input column for music: wanted a column named like with fitting values (columns: mel, cqt, chroma, fst_level_label, sec_level_label, thr_level_label); folder: ccmusic-database/music_genre holds no .mid files",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "ccmusic-database/music_genre",
+        "source": "ccmusic-database/music_genre",
+        "kind": "folder",
+        "reason": "inspect: ccmusic-database/music_genre has no input column for music: wanted a column named like  with fitting values (columns: mel, cqt, chroma, fst_level_label, sec_level_label, thr_level_label); folder: ccmusic-database/music_genre holds no .mid files"
+      },
+      "t": 44.805
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Trying danilotpnta/GTZAN_genre_classification.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "danilotpnta/GTZAN_genre_classification",
+        "source": "danilotpnta/GTZAN_genre_classification",
+        "kind": "hub",
+        "downloads": 181,
+        "found_by": "hub",
+        "licence": "mit",
+        "url": "https://huggingface.co/datasets/danilotpnta/GTZAN_genre_classification"
+      },
+      "t": 44.805
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of danilotpnta/GTZAN_genre_classification.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "danilotpnta/GTZAN_genre_classification",
+        "source": "danilotpnta/GTZAN_genre_classification",
+        "kind": "hub"
+      },
+      "t": 44.805
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "danilotpnta/GTZAN_genre_classification does not fit: danilotpnta/GTZAN_genre_classification has no input column for music: wanted a column named like with fitting values (columns: id, audio, genre, title, artist, tempo, keys, loudness, sorted_pred_genres, x_tsne, y_tsne, z_tsne, x_umap, y_umap, z_umap)",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "danilotpnta/GTZAN_genre_classification",
+        "source": "danilotpnta/GTZAN_genre_classification",
+        "kind": "hub",
+        "reason": "danilotpnta/GTZAN_genre_classification has no input column for music: wanted a column named like  with fitting values (columns: id, audio, genre, title, artist, tempo, keys, loudness, sorted_pred_genres, x_tsne, y_tsne, z_tsne, x_umap, y_umap, z_umap)"
+      },
+      "t": 46.382
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of danilotpnta/GTZAN_genre_classification.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "danilotpnta/GTZAN_genre_classification",
+        "source": "danilotpnta/GTZAN_genre_classification",
+        "kind": "folder"
+      },
+      "t": 46.382
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "danilotpnta/GTZAN_genre_classification does not fit: danilotpnta/GTZAN_genre_classification holds no .mid files",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "danilotpnta/GTZAN_genre_classification",
+        "source": "danilotpnta/GTZAN_genre_classification",
+        "kind": "folder",
+        "reason": "danilotpnta/GTZAN_genre_classification holds no .mid files"
+      },
+      "t": 46.541
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "Could not use danilotpnta/GTZAN_genre_classification: inspect: danilotpnta/GTZAN_genre_classification has no input column for music: wanted a column named like with fitting values (columns: id, audio, genre, title, artist, tempo, keys, loudness, sorted_pred_genres, x_tsne, y_tsne, z_tsne, x_umap, y_umap, z_umap); folder: danilotpnta/GTZAN_genre_clas...",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "danilotpnta/GTZAN_genre_classification",
+        "source": "danilotpnta/GTZAN_genre_classification",
+        "kind": "folder",
+        "reason": "inspect: danilotpnta/GTZAN_genre_classification has no input column for music: wanted a column named like  with fitting values (columns: id, audio, genre, title, artist, tempo, keys, loudness, sorted_pred_genres, x_tsne, y_tsne, z_tsne, x_umap, y_umap, z_umap); folder: danilotpnta/GTZAN_genre_classification holds no .mid files"
+      },
+      "t": 46.541
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Trying MiKauAI/music_genres_classification-finetuned.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "MiKauAI/music_genres_classification-finetuned",
+        "source": "MiKauAI/music_genres_classification-finetuned",
+        "kind": "hub",
+        "downloads": 30,
+        "found_by": "hub",
+        "licence": null,
+        "url": "https://huggingface.co/datasets/MiKauAI/music_genres_classification-finetuned"
+      },
+      "t": 46.542
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of MiKauAI/music_genres_classification-finetuned.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "MiKauAI/music_genres_classification-finetuned",
+        "source": "MiKauAI/music_genres_classification-finetuned",
+        "kind": "hub"
+      },
+      "t": 46.542
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "MiKauAI/music_genres_classification-finetuned does not fit: MiKauAI/music_genres_classification-finetuned has no input column for music: wanted a column named like with fitting values (columns: label, input_values, attention_mask)",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "MiKauAI/music_genres_classification-finetuned",
+        "source": "MiKauAI/music_genres_classification-finetuned",
+        "kind": "hub",
+        "reason": "MiKauAI/music_genres_classification-finetuned has no input column for music: wanted a column named like  with fitting values (columns: label, input_values, attention_mask)"
+      },
+      "t": 48.591
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of MiKauAI/music_genres_classification-finetuned.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "MiKauAI/music_genres_classification-finetuned",
+        "source": "MiKauAI/music_genres_classification-finetuned",
+        "kind": "folder"
+      },
+      "t": 48.591
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "MiKauAI/music_genres_classification-finetuned does not fit: MiKauAI/music_genres_classification-finetuned holds no .mid files",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "MiKauAI/music_genres_classification-finetuned",
+        "source": "MiKauAI/music_genres_classification-finetuned",
+        "kind": "folder",
+        "reason": "MiKauAI/music_genres_classification-finetuned holds no .mid files"
+      },
+      "t": 48.744
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "Could not use MiKauAI/music_genres_classification-finetuned: inspect: MiKauAI/music_genres_classification-finetuned has no input column for music: wanted a column named like with fitting values (columns: label, input_values, attention_mask); folder: MiKauAI/music_genres_classification-finetuned holds no .mid files",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "MiKauAI/music_genres_classification-finetuned",
+        "source": "MiKauAI/music_genres_classification-finetuned",
+        "kind": "folder",
+        "reason": "inspect: MiKauAI/music_genres_classification-finetuned has no input column for music: wanted a column named like  with fitting values (columns: label, input_values, attention_mask); folder: MiKauAI/music_genres_classification-finetuned holds no .mid files"
+      },
+      "t": 48.744
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Trying Erik3Zg/Marimba_Music_Genre_Classification.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "Erik3Zg/Marimba_Music_Genre_Classification",
+        "source": "Erik3Zg/Marimba_Music_Genre_Classification",
+        "kind": "hub",
+        "downloads": 7,
+        "found_by": "hub",
+        "licence": null,
+        "url": "https://huggingface.co/datasets/Erik3Zg/Marimba_Music_Genre_Classification"
+      },
+      "t": 48.745
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of Erik3Zg/Marimba_Music_Genre_Classification.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "Erik3Zg/Marimba_Music_Genre_Classification",
+        "source": "Erik3Zg/Marimba_Music_Genre_Classification",
+        "kind": "hub"
+      },
+      "t": 48.745
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "Erik3Zg/Marimba_Music_Genre_Classification does not fit: the viewer's splits of Erik3Zg/Marimba_Music_Genre_Classification failed: HTTP 500 from datasets-server.huggingface.co: The dataset is empty.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "Erik3Zg/Marimba_Music_Genre_Classification",
+        "source": "Erik3Zg/Marimba_Music_Genre_Classification",
+        "kind": "hub",
+        "reason": "the viewer's splits of Erik3Zg/Marimba_Music_Genre_Classification failed: HTTP 500 from datasets-server.huggingface.co: The dataset is empty."
+      },
+      "t": 48.906
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of Erik3Zg/Marimba_Music_Genre_Classification.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "Erik3Zg/Marimba_Music_Genre_Classification",
+        "source": "Erik3Zg/Marimba_Music_Genre_Classification",
+        "kind": "folder"
+      },
+      "t": 48.906
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "Erik3Zg/Marimba_Music_Genre_Classification does not fit: Erik3Zg/Marimba_Music_Genre_Classification holds no .mid files",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "Erik3Zg/Marimba_Music_Genre_Classification",
+        "source": "Erik3Zg/Marimba_Music_Genre_Classification",
+        "kind": "folder",
+        "reason": "Erik3Zg/Marimba_Music_Genre_Classification holds no .mid files"
+      },
+      "t": 49.092
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "Could not use Erik3Zg/Marimba_Music_Genre_Classification: inspect: the viewer's splits of Erik3Zg/Marimba_Music_Genre_Classification failed: HTTP 500 from datasets-server.huggingface.co: The dataset is empty.; folder: Erik3Zg/Marimba_Music_Genre_Classification holds no .mid files",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "Erik3Zg/Marimba_Music_Genre_Classification",
+        "source": "Erik3Zg/Marimba_Music_Genre_Classification",
+        "kind": "folder",
+        "reason": "inspect: the viewer's splits of Erik3Zg/Marimba_Music_Genre_Classification failed: HTTP 500 from datasets-server.huggingface.co: The dataset is empty.; folder: Erik3Zg/Marimba_Music_Genre_Classification holds no .mid files"
+      },
+      "t": 49.092
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Trying matteuscantisani/rsn-music-genre-classification.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "matteuscantisani/rsn-music-genre-classification",
+        "source": "matteuscantisani/rsn-music-genre-classification",
+        "kind": "hub",
+        "downloads": 6,
+        "found_by": "hub",
+        "licence": null,
+        "url": "https://huggingface.co/datasets/matteuscantisani/rsn-music-genre-classification"
+      },
+      "t": 49.092
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of matteuscantisani/rsn-music-genre-classification.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "matteuscantisani/rsn-music-genre-classification",
+        "source": "matteuscantisani/rsn-music-genre-classification",
+        "kind": "hub"
+      },
+      "t": 49.092
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "matteuscantisani/rsn-music-genre-classification does not fit: the viewer's rows of matteuscantisani/rsn-music-genre-classification failed: HTTP 500 from datasets-server.huggingface.co: Server error while post-processing the rows. Please report the issue.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "matteuscantisani/rsn-music-genre-classification",
+        "source": "matteuscantisani/rsn-music-genre-classification",
+        "kind": "hub",
+        "reason": "the viewer's rows of matteuscantisani/rsn-music-genre-classification failed: HTTP 500 from datasets-server.huggingface.co: Server error while post-processing the rows. Please report the issue."
+      },
+      "t": 55.861
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of matteuscantisani/rsn-music-genre-classification.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "matteuscantisani/rsn-music-genre-classification",
+        "source": "matteuscantisani/rsn-music-genre-classification",
+        "kind": "folder"
+      },
+      "t": 55.861
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "matteuscantisani/rsn-music-genre-classification does not fit: matteuscantisani/rsn-music-genre-classification holds no .mid files",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "matteuscantisani/rsn-music-genre-classification",
+        "source": "matteuscantisani/rsn-music-genre-classification",
+        "kind": "folder",
+        "reason": "matteuscantisani/rsn-music-genre-classification holds no .mid files"
+      },
+      "t": 56.079
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "Could not use matteuscantisani/rsn-music-genre-classification: inspect: the viewer's rows of matteuscantisani/rsn-music-genre-classification failed: HTTP 500 from datasets-server.huggingface.co: Server error while post-processing the rows. Please report the issue.; folder: matteuscantisani/rsn-music-genre-classification holds no .mid files",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "matteuscantisani/rsn-music-genre-classification",
+        "source": "matteuscantisani/rsn-music-genre-classification",
+        "kind": "folder",
+        "reason": "inspect: the viewer's rows of matteuscantisani/rsn-music-genre-classification failed: HTTP 500 from datasets-server.huggingface.co: Server error while post-processing the rows. Please report the issue.; folder: matteuscantisani/rsn-music-genre-classification holds no .mid files"
+      },
+      "t": 56.079
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Trying AntSanchez77/gtzan-music-genre-dataset.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "AntSanchez77/gtzan-music-genre-dataset",
+        "source": "AntSanchez77/gtzan-music-genre-dataset",
+        "kind": "hub",
+        "downloads": 9,
+        "found_by": "hub",
+        "licence": null,
+        "url": "https://huggingface.co/datasets/AntSanchez77/gtzan-music-genre-dataset"
+      },
+      "t": 56.079
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of AntSanchez77/gtzan-music-genre-dataset.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "AntSanchez77/gtzan-music-genre-dataset",
+        "source": "AntSanchez77/gtzan-music-genre-dataset",
+        "kind": "hub"
+      },
+      "t": 56.079
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "AntSanchez77/gtzan-music-genre-dataset does not fit: AntSanchez77/gtzan-music-genre-dataset has no input column for music: wanted a column named like with fitting values (columns: audio, genre)",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "AntSanchez77/gtzan-music-genre-dataset",
+        "source": "AntSanchez77/gtzan-music-genre-dataset",
+        "kind": "hub",
+        "reason": "AntSanchez77/gtzan-music-genre-dataset has no input column for music: wanted a column named like  with fitting values (columns: audio, genre)"
+      },
+      "t": 57.873
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of AntSanchez77/gtzan-music-genre-dataset.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "AntSanchez77/gtzan-music-genre-dataset",
+        "source": "AntSanchez77/gtzan-music-genre-dataset",
+        "kind": "folder"
+      },
+      "t": 57.873
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "AntSanchez77/gtzan-music-genre-dataset does not fit: AntSanchez77/gtzan-music-genre-dataset holds no .mid files",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "AntSanchez77/gtzan-music-genre-dataset",
+        "source": "AntSanchez77/gtzan-music-genre-dataset",
+        "kind": "folder",
+        "reason": "AntSanchez77/gtzan-music-genre-dataset holds no .mid files"
+      },
+      "t": 58.131
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "Could not use AntSanchez77/gtzan-music-genre-dataset: inspect: AntSanchez77/gtzan-music-genre-dataset has no input column for music: wanted a column named like with fitting values (columns: audio, genre); folder: AntSanchez77/gtzan-music-genre-dataset holds no .mid files",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "AntSanchez77/gtzan-music-genre-dataset",
+        "source": "AntSanchez77/gtzan-music-genre-dataset",
+        "kind": "folder",
+        "reason": "inspect: AntSanchez77/gtzan-music-genre-dataset has no input column for music: wanted a column named like  with fitting values (columns: audio, genre); folder: AntSanchez77/gtzan-music-genre-dataset holds no .mid files"
+      },
+      "t": 58.131
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Trying SoundStock/soundstock.com-music-genres-taxonomy.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "SoundStock/soundstock.com-music-genres-taxonomy",
+        "source": "SoundStock/soundstock.com-music-genres-taxonomy",
+        "kind": "hub",
+        "downloads": 58,
+        "found_by": "hub",
+        "licence": "mit",
+        "url": "https://huggingface.co/datasets/SoundStock/soundstock.com-music-genres-taxonomy"
+      },
+      "t": 58.131
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of SoundStock/soundstock.com-music-genres-taxonomy.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "SoundStock/soundstock.com-music-genres-taxonomy",
+        "source": "SoundStock/soundstock.com-music-genres-taxonomy",
+        "kind": "hub"
+      },
+      "t": 58.131
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "SoundStock/soundstock.com-music-genres-taxonomy does not fit: SoundStock/soundstock.com-music-genres-taxonomy has no input column for music: wanted a column named like with fitting values (columns: genre_id, name, level, parent_genre_id, root_genre_id, root_name, region, era, tags_mood, tags_context, bpm_min, bpm_max, aliases, name_lower, has_region, has_er...",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "SoundStock/soundstock.com-music-genres-taxonomy",
+        "source": "SoundStock/soundstock.com-music-genres-taxonomy",
+        "kind": "hub",
+        "reason": "SoundStock/soundstock.com-music-genres-taxonomy has no input column for music: wanted a column named like  with fitting values (columns: genre_id, name, level, parent_genre_id, root_genre_id, root_name, region, era, tags_mood, tags_context, bpm_min, bpm_max, aliases, name_lower, has_region, has_era, path, notes)"
+      },
+      "t": 59.959
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of SoundStock/soundstock.com-music-genres-taxonomy.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "SoundStock/soundstock.com-music-genres-taxonomy",
+        "source": "SoundStock/soundstock.com-music-genres-taxonomy",
+        "kind": "folder"
+      },
+      "t": 59.959
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "SoundStock/soundstock.com-music-genres-taxonomy does not fit: SoundStock/soundstock.com-music-genres-taxonomy holds no .mid files",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "SoundStock/soundstock.com-music-genres-taxonomy",
+        "source": "SoundStock/soundstock.com-music-genres-taxonomy",
+        "kind": "folder",
+        "reason": "SoundStock/soundstock.com-music-genres-taxonomy holds no .mid files"
+      },
+      "t": 60.172
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "Could not use SoundStock/soundstock.com-music-genres-taxonomy: inspect: SoundStock/soundstock.com-music-genres-taxonomy has no input column for music: wanted a column named like with fitting values (columns: genre_id, name, level, parent_genre_id, root_genre_id, root_name, region, era, tags_mood, tags_context, bpm_min, bpm_max, aliases, name_lower, has_regio...",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "SoundStock/soundstock.com-music-genres-taxonomy",
+        "source": "SoundStock/soundstock.com-music-genres-taxonomy",
+        "kind": "folder",
+        "reason": "inspect: SoundStock/soundstock.com-music-genres-taxonomy has no input column for music: wanted a column named like  with fitting values (columns: genre_id, name, level, parent_genre_id, root_genre_id, root_name, region, era, tags_mood, tags_context, bpm_min, bpm_max, aliases, name_lower, has_region, has_era, path, notes); folder: SoundStock/soundstock.com-music-genres-taxonomy holds no .mid files"
+      },
+      "t": 60.172
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Trying SpiceeChat/Genre-Classifier-Country-Per-Country.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "SpiceeChat/Genre-Classifier-Country-Per-Country",
+        "source": "SpiceeChat/Genre-Classifier-Country-Per-Country",
+        "kind": "hub",
+        "downloads": 934,
+        "found_by": "hub",
+        "licence": "other",
+        "url": "https://huggingface.co/datasets/SpiceeChat/Genre-Classifier-Country-Per-Country"
+      },
+      "t": 60.172
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of SpiceeChat/Genre-Classifier-Country-Per-Country.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "SpiceeChat/Genre-Classifier-Country-Per-Country",
+        "source": "SpiceeChat/Genre-Classifier-Country-Per-Country",
+        "kind": "hub"
+      },
+      "t": 60.172
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "SpiceeChat/Genre-Classifier-Country-Per-Country does not fit: SpiceeChat/Genre-Classifier-Country-Per-Country has no input column for music: wanted a column named like with fitting values (columns: first_name, gender)",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "SpiceeChat/Genre-Classifier-Country-Per-Country",
+        "source": "SpiceeChat/Genre-Classifier-Country-Per-Country",
+        "kind": "hub",
+        "reason": "SpiceeChat/Genre-Classifier-Country-Per-Country has no input column for music: wanted a column named like  with fitting values (columns: first_name, gender)"
+      },
+      "t": 61.801
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of SpiceeChat/Genre-Classifier-Country-Per-Country.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "SpiceeChat/Genre-Classifier-Country-Per-Country",
+        "source": "SpiceeChat/Genre-Classifier-Country-Per-Country",
+        "kind": "folder"
+      },
+      "t": 61.801
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "SpiceeChat/Genre-Classifier-Country-Per-Country does not fit: SpiceeChat/Genre-Classifier-Country-Per-Country holds no .mid files",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "SpiceeChat/Genre-Classifier-Country-Per-Country",
+        "source": "SpiceeChat/Genre-Classifier-Country-Per-Country",
+        "kind": "folder",
+        "reason": "SpiceeChat/Genre-Classifier-Country-Per-Country holds no .mid files"
+      },
+      "t": 61.993
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "Could not use SpiceeChat/Genre-Classifier-Country-Per-Country: inspect: SpiceeChat/Genre-Classifier-Country-Per-Country has no input column for music: wanted a column named like with fitting values (columns: first_name, gender); folder: SpiceeChat/Genre-Classifier-Country-Per-Country holds no .mid files",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "SpiceeChat/Genre-Classifier-Country-Per-Country",
+        "source": "SpiceeChat/Genre-Classifier-Country-Per-Country",
+        "kind": "folder",
+        "reason": "inspect: SpiceeChat/Genre-Classifier-Country-Per-Country has no input column for music: wanted a column named like  with fitting values (columns: first_name, gender); folder: SpiceeChat/Genre-Classifier-Country-Per-Country holds no .mid files"
+      },
+      "t": 61.993
+    },
+    {
+      "step": "data",
+      "status": "info",
+      "message": "Unseen categories not measured: no candidate dataset gave usable probes: storylinez/gtzan-music-genre-dataset (inspect: storylinez/gtzan-music-genre-dataset has no input column for music: wanted a column named like with fitting values (columns: audio, genre); folder: storylinez/gtzan-music-genre-dataset holds no .mid files); Kh....",
+      "data": {
+        "purpose": "unseen",
+        "reason": "no candidate dataset gave usable probes: storylinez/gtzan-music-genre-dataset (inspect: storylinez/gtzan-music-genre-dataset has no input column for music: wanted a column named like  with fitting values (columns: audio, genre); folder: storylinez/gtzan-music-genre-dataset holds no .mid files); Khahn-nh/GTZAN-Dataset-Music-Genre-Classification (inspect: Khahn-nh/GTZAN-Dataset-Music-Genre-Classification has no input column for music: wanted a column named like  with fitting values (columns: mel, label, track_id, artist_id, genre); folder: Khahn-nh/GTZAN-Dataset-Music-Genre-Classification holds no .mid files); DynamicSuperb/MusicGenreClassification_FMA (inspect: DynamicSuperb/MusicGenreClassification_FMA has no input column for music: wanted a column named like  with fitting values (columns: audio, file, instruction, label); folder: DynamicSuperb/MusicGenreClassification_FMA holds no .mid files); rpmon/fma-genre-classification (inspect: rpmon/fma-genre-classification has no input column for music: wanted a column named like  with fitting values (columns: audio, genre, track_id, title, artist); folder: rpmon/fma-genre-classification holds no .mid files); ccmusic-database/music_genre (inspect: ccmusic-database/music_genre has no input column for music: wanted a column named like  with fitting values (columns: mel, cqt, chroma, fst_level_label, sec_level_label, thr_level_label); folder: ccmusic-database/music_genre holds no .mid files); danilotpnta/GTZAN_genre_classification (inspect: danilotpnta/GTZAN_genre_classification has no input column for music: wanted a column named like  with fitting values (columns: id, audio, genre, title, artist, tempo, keys, loudness, sorted_pred_genres, x_tsne, y_tsne, z_tsne, x_umap, y_umap, z_umap); folder: danilotpnta/GTZAN_genre_classification holds no .mid files); MiKauAI/music_genres_classification-finetuned (inspect: MiKauAI/music_genres_classification-finetuned has no input column for music: wanted a column named like  with fitting values (columns: label, input_values, attention_mask); folder: MiKauAI/music_genres_classification-finetuned holds no .mid files); Erik3Zg/Marimba_Music_Genre_Classification (inspect: the viewer's splits of Erik3Zg/Marimba_Music_Genre_Classification failed: HTTP 500 from datasets-server.huggingface.co: The dataset is empty.; folder: Erik3Zg/Marimba_Music_Genre_Classification holds no .mid files); matteuscantisani/rsn-music-genre-classification (inspect: the viewer's rows of matteuscantisani/rsn-music-genre-classification failed: HTTP 500 from datasets-server.huggingface.co: Server error while post-processing the rows. Please report the issue.; folder: matteuscantisani/rsn-music-genre-classification holds no .mid files); AntSanchez77/gtzan-music-genre-dataset (inspect: AntSanchez77/gtzan-music-genre-dataset has no input column for music: wanted a column named like  with fitting values (columns: audio, genre); folder: AntSanchez77/gtzan-music-genre-dataset holds no .mid files); SoundStock/soundstock.com-music-genres-taxonomy (inspect: SoundStock/soundstock.com-music-genres-taxonomy has no input column for music: wanted a column named like  with fitting values (columns: genre_id, name, level, parent_genre_id, root_genre_id, root_name, region, era, tags_mood, tags_context, bpm_min, bpm_max, aliases, name_lower, has_region, has_era, path, notes); folder: SoundStock/soundstock.com-music-genres-taxonomy holds no .mid files); SpiceeChat/Genre-Classifier-Country-Per-Country (inspect: SpiceeChat/Genre-Classifier-Country-Per-Country has no input column for music: wanted a column named like  with fitting values (columns: first_name, gender); folder: SpiceeChat/Genre-Classifier-Country-Per-Country holds no .mid files)"
+      },
+      "t": 61.994
+    },
+    {
+      "step": "verify",
+      "status": "start",
+      "message": "Scoring adapter:music-midi on user probe files against swapped-input and no-input controls.",
+      "data": {
+        "bridge": "adapter:music-midi",
+        "n_test": 60,
+        "native": false,
+        "unseen": null
+      },
+      "t": 62.014
+    },
+    {
+      "step": "verify",
+      "status": "ok",
+      "message": "adapter:music-midi scored 32.0% on 50 held-out probe files (chance 20.0%); controls: swapped input 10.0%, no input 20.0%.",
+      "data": {
+        "card": {
+          "model": "claude-sonnet",
+          "modality": "music",
+          "dataset": "music-examples-7893be6164",
+          "scope": "closed",
+          "bridge": "adapter:music-midi",
+          "kind": "text",
+          "n": 50,
+          "chance": 0.2,
+          "accuracy": 0.32,
+          "controls": {
+            "swapped": 0.1,
+            "no_input": 0.2
+          },
+          "verdict": "candidate",
+          "reason": "",
+          "created": "2026-11-15T06:01:17+00:00",
+          "interval": [
+            0.2076,
+            0.4581
+          ],
+          "control_chance": {}
+        },
+        "controls": {
+          "swapped": 0.1,
+          "no_input": 0.2
+        },
+        "control_chance": {},
+        "seconds": 62.52
+      },
+      "t": 124.537
+    },
+    {
+      "step": "decide",
+      "status": "start",
+      "message": "Checking adapter:music-midi against the bars for a text bridge: chance plus 15 points, 10 points above swapped input, at least 10 probe files, and a 95% interval clear of chance.",
+      "data": {
+        "bridge": "adapter:music-midi"
+      },
+      "t": 124.537
+    },
+    {
+      "step": "decide",
+      "status": "ok",
+      "message": "adapter:music-midi failed: it scored 32.0%, below the 35.0% bar for a text bridge (20.0% chance plus 15 points).",
+      "data": {
+        "install": null,
+        "accepted": false,
+        "card": {
+          "model": "claude-sonnet",
+          "modality": "music",
+          "dataset": "music-examples-7893be6164",
+          "scope": "closed",
+          "bridge": "adapter:music-midi",
+          "kind": "text",
+          "n": 50,
+          "chance": 0.2,
+          "accuracy": 0.32,
+          "controls": {
+            "swapped": 0.1,
+            "no_input": 0.2
+          },
+          "verdict": "rejected",
+          "reason": "adapter:music-midi failed: it scored 32.0%, below the 35.0% bar for a text bridge (20.0% chance plus 15 points). Unseen categories not measured: no candidate dataset gave usable probes: storylinez/gtzan-music-genre-dataset (inspect: storylinez/gtzan-music-genre-dataset has no input column for music: wanted a column named like with fitting values (columns: audio, genre); folder: storylinez/gtzan-music-genre-dataset holds no .mid files); Kh....",
+          "created": "2026-11-15T06:01:17+00:00",
+          "interval": [
+            0.2076,
+            0.4581
+          ],
+          "control_chance": {}
+        }
+      },
+      "t": 124.537
+    },
+    {
+      "step": "install",
+      "status": "info",
+      "message": "Installed nothing; adapter:music-midi did not pass its checks.",
+      "data": {
+        "bridge": "adapter:music-midi"
+      },
+      "t": 124.537
+    },
+    {
+      "step": "done",
+      "status": "ok",
+      "message": "No music sense was installed for Claude Sonnet 5.5: adapter:music-midi failed: it scored 32.0%, below the 35.0% bar for a text bridge (20.0% chance plus 15 points).",
+      "data": {
+        "installed": null,
+        "needs_user": false,
+        "bridge": "adapter:music-midi"
+      },
+      "t": 124.538
+    }
+  ],
+  "cards": [
+    {
+      "model": "claude-sonnet",
+      "modality": "music",
+      "dataset": "music-examples-7893be6164",
+      "scope": "closed",
+      "bridge": "adapter:music-midi",
+      "kind": "text",
+      "n": 50,
+      "chance": 0.2,
+      "accuracy": 0.32,
+      "controls": {
+        "swapped": 0.1,
+        "no_input": 0.2
+      },
+      "verdict": "rejected",
+      "reason": "adapter:music-midi failed: it scored 32.0%, below the 35.0% bar for a text bridge (20.0% chance plus 15 points). Unseen categories not measured: no candidate dataset gave usable probes: storylinez/gtzan-music-genre-dataset (inspect: storylinez/gtzan-music-genre-dataset has no input column for music: wanted a column named like with fitting values (columns: audio, genre); folder: storylinez/gtzan-music-genre-dataset holds no .mid files); Kh....",
+      "created": "2026-11-15T06:01:17+00:00",
+      "interval": [
+        0.2076,
+        0.4581
+      ],
+      "control_chance": {}
+    }
+  ],
+  "installed": null,
+  "error": null,
+  "seconds": 124.538,
+  "format": 1
+}

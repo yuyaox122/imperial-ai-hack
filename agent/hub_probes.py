@@ -415,6 +415,7 @@ class _Profile:
     label_words: tuple[str, ...] = ()  # column names that label this modality by themselves
     input_words: tuple[str, ...] = ()  # words that only name the input, never the label's topic
     folder: str | None = None  # the _FOLDER_EXT key of the files a folder-labelled repository may hold
+    format_words: tuple[str, ...] = ()  # an unknown format's own name ("midi"): searched with the goal's topic words
 
 
 _PROFILES = {
@@ -815,7 +816,10 @@ def _hub_query(goal: str, modality: str, limit: int, deadline: float | None):
     """(found: hub_id -> HubCandidate, hits: how many queries found each, errors, queries, query origin)."""
     # The model's queries come first, the rule's (goal words plus the modality's own words) after: in a real run the
     # model's terms alone ("shapenet ...") missed the one dataset with real meshes that the rule's terms find.
-    asked = _llm_queries(llm.ask_json(_SEARCH_INSTRUCTION, {"goal": goal, "modality": modality}, SEARCH_SCHEMA))
+    profile = _profile(modality)
+    fmt = profile.format_words if profile else ()
+    shown = f"{modality} ({', '.join(fmt)} files)" if fmt else modality  # the model's queries name the format too
+    asked = _llm_queries(llm.ask_json(_SEARCH_INSTRUCTION, {"goal": goal, "modality": shown}, SEARCH_SCHEMA))
     origin = "llm+rule" if asked else "rule"
     queries = list(dict.fromkeys([*asked, *_rule_queries(goal, modality)]))[:MAX_QUERIES + 5]
     if not queries:
@@ -854,6 +858,10 @@ def _ranked(candidates: list, hits: Counter, queries: list[str], modality: str) 
             candidate.score += 1
         else:
             candidate.score += _tag_bonus(candidate.tags, profile) + (candidate.found_by != "hub")
+        if profile and profile.format_words and _relevance(candidate, set(profile.format_words)):
+            # For an unknown format its name is the only sign of usable files, as the modality tag is for a known one:
+            # without it, audio genre sets (two topic words) outranked the MIDI set (one topic word, one format word).
+            candidate.score += MODALITY_TAG_BONUS
     return sorted(candidates, key=lambda c: (-c.score, -hits[_source_of(c)], -getattr(c, "downloads", 0),
                                              _source_of(c)))
 
@@ -905,12 +913,16 @@ def _llm_queries(answer: object) -> list[str]:
 
 def _rule_queries(goal: str, modality: str) -> list[str]:
     """The goal's first two content words together, then the modality's search words interleaved with the goal's
-    words; a word that only names the input (molecule, video, 3d, ...) is searched only inside the first query."""
+    words; a word that only names the input (molecule, video, 3d, ...) is searched only inside the first query. An
+    unknown format's name leads, paired with the goal's first topic words ("midi genre"): in a real run its MIDI goal
+    searched "midi" and "genre" apart, and only the pair finds the one dataset of MIDI files labelled by genre."""
     profile = _profile(modality)
     inputs = set(profile.input_words) if profile else set(_content_words(modality))
     goal_words = _content_words(goal)
-    queries = [" ".join(goal_words[:2])] if len(goal_words) >= 2 else []
     words = [w for w in goal_words if w not in inputs]
+    fmt = profile.format_words if profile else ()
+    queries = [f"{f} {w}" for f in fmt for w in [w for w in words if w not in fmt][:2]]
+    queries += [" ".join(goal_words[:2])] if len(goal_words) >= 2 else []
     extra = [w for w in (profile.words if profile else _content_words(modality)) if w not in inputs]
     if not words and not extra:
         words = goal_words or _content_words(modality)
@@ -3424,7 +3436,8 @@ def find_probes(goal: str, modality: str, dest_root: Path, *, format_words: list
         # ("music" is an alias of "audio"), whose datasets hold sound, not the user's format.
         _ALIASES.pop(name, None)
         _FOLDER_EXT[key] = exts
-        _PROFILES[name] = _Profile(words=words, ext=exts[0] if exts else ".bin", folder=key if exts else None)
+        _PROFILES[name] = _Profile(words=words, ext=exts[0] if exts else ".bin", folder=key if exts else None,
+                                   format_words=words)
     try:
         return _find_probes(goal, modality, dest_root, **kwargs)
     finally:

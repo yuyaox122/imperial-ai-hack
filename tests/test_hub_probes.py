@@ -24,6 +24,7 @@ import time
 import urllib.parse
 import zipfile
 import zlib
+from collections import Counter
 from pathlib import Path
 
 import pytest
@@ -2206,8 +2207,37 @@ def test_an_unknown_format_searches_with_its_name_and_reads_folders_of_its_files
     with pytest.raises(ProbesUnavailable):
         find_probes("What genre of music is this?", "Music", tmp_path, format_words=["midi", "bad word!"],
                     suffixes=[".mid", "mid", ".toolongextension"])
-    assert any("midi" in q for q in seen["queries"]) and seen["exts"] == (".mid",)  # not the audio profile's files
+    assert seen["queries"][:2] == ["midi genre", "midi music"]  # the format with the topic, not apart
+    assert seen["exts"] == (".mid",)  # not the audio profile's files
     assert hub_probes._profile("music") is before and "adhoc:music" not in hub_probes._FOLDER_EXT  # restored after
     with pytest.raises(ProbesUnavailable):  # without hints the profile is the usual one
         find_probes("What genre of music is this?", "music", tmp_path)
     assert ".mid" not in seen["exts"] and ".wav" in seen["exts"]
+
+
+def test_an_unknown_formats_name_ranks_its_datasets_first_and_reaches_the_models_queries(tmp_path, monkeypatch):
+    """In the real run audio genre sets (two topic words in the name) outranked the one MIDI genre set."""
+    def hub(hub_id, tags=()):
+        return hub_probes.HubCandidate(hub_id, hub_id, 1000, 0, "mit", list(tags), f"https://huggingface.co/{hub_id}")
+
+    seen = {}
+
+    def inner(goal, modality, dest_root, **kw):
+        audio = hub("someone/music-genre-classification", ["modality:audio"])
+        midi = hub("someone/lakh-midi-genres")
+        queries = hub_probes._rule_queries(goal, modality)
+        seen["order"] = [c.hub_id for c in hub_probes._ranked([audio, midi], Counter(), queries, modality)]
+        raise ProbesUnavailable("stop here")
+
+    monkeypatch.setattr(hub_probes, "_find_probes", inner)
+    with pytest.raises(ProbesUnavailable):
+        find_probes("What genre of music is this?", "music", tmp_path, format_words=["midi"], suffixes=[".mid"])
+    assert seen["order"] == ["someone/lakh-midi-genres", "someone/music-genre-classification"]
+
+    asked = []
+    monkeypatch.setattr(hub_probes.llm, "ask_json", lambda instruction, payload, schema: asked.append(payload))
+    monkeypatch.setattr(hub_probes, "_get_json", lambda *a, **k: [])
+    monkeypatch.setattr(hub_probes, "_find_probes", lambda goal, modality, dest_root, **kw:
+                        hub_probes._hub_query(goal, modality, 5, None))
+    find_probes("What genre of music is this?", "music", tmp_path, format_words=["midi"], suffixes=[".mid"])
+    assert asked[0]["modality"] == "music (midi files)"
