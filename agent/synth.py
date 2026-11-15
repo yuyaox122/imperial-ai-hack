@@ -95,7 +95,10 @@ Public surface (do not rename):
                   give it as they are (sense.models.takes_as_is), so route "images" is offered only for a model
                   that takes images in chat, never for a local model. When agent.detect named the file's modality
                   video, 3d, molecule, geo or image, the design takes that modality (designed_modality keeps the
-                  LLM's own name), so the sense is installed under the name chat looks it up by
+                  LLM's own name), so the sense is installed under the name chat looks it up by. For any other file
+                  (agent.detect's "other") the design keeps the LLM's name unless it is one of agent.detect's own
+                  (agent.detect.MODALITIES), which is renamed "<name>-<format>" ("audio-m4a"): an adapter verified
+                  on M4A voice memos never replaces the audio sense
         [install_request]  only when the design asks to install packages (and code may run here): start with
                   requested; agent.installer.plan checks them; a plan refused by the checks (always in fake mode,
                   where the installer reaches nothing) is not put to the user: fail with the verdict. Otherwise
@@ -151,8 +154,9 @@ Public surface (do not rename):
       The bridge is a sense.adapters.AdapterBridge; its code (adapter.py) and manifest (bridge.json: modality,
       format, route, description, libraries, written_by, attempts, question, goal, code_sha256, design, probes
       with label_leaks and, for generated probes, caveat, and for a public dataset fetched; detected, what
-      agent.detect said about the user's file ({modality, format, suffix}: server/app.py finds the sense for a file
-      agent.detect calls "other" by it); install, the install_request record, when the design asked for packages;
+      agent.detect said about the user's file ({modality, format, suffix}) and formats, the sorted agent.detect
+      formats of that file and of the probe files of the same modality: server/app.py gives the sense only files
+      agent.detect describes alike; install, the install_request record, when the design asked for packages;
       unseen (name, source, labels, per_label) when that control ran) are saved with it.
       Returns ([card], installed name or None); ([], None) when the run stopped before a card.
 
@@ -190,7 +194,7 @@ from typing import Any, Callable
 import numpy as np
 
 from agent import llm
-from agent.detect import detect
+from agent.detect import MODALITIES as DETECT_MODALITIES, detect, words
 from agent.planner import RulePlanner, pct
 from sense import adapters, config, models, registry
 from sense.adapters import AdapterBridge, AdapterError, ProbeSet
@@ -1283,6 +1287,22 @@ def _mostly_text(paths: list[Path]) -> bool:
     return bool(paths) and 2 * sum(_reads_as_text(p) for p in paths) >= len(paths)
 
 
+def _verified_formats(detection: dict, paths: list[Path]) -> list[str]:
+    """The agent.detect formats the adapter is verified on: the user's file's, and those of the probe files
+    agent.detect gives the same modality (a set of JPEG photos for an adapter built from a PNG). Chat gives the
+    sense only files of these formats (server/app.py)."""
+    modality = detection.get("modality")
+    formats = {str(detection.get("format") or "")}
+    for path in paths:
+        try:
+            found = detect(Path(path))
+        except (OSError, ValueError):
+            continue
+        if found.modality == modality:
+            formats.add(found.format)
+    return sorted(f for f in formats if f)
+
+
 def _folder_labels(folder: Path | ProbeSet | None) -> list[str]:
     """The labels a labelled folder (its sub-folder names, read as sense.adapters.probe_folder reads them) or a
     ProbeSet holds, to mask in what the adapter's author sees; [] when there are none or it cannot be read."""
@@ -1488,7 +1508,13 @@ def run_synth(
             # chat finds an installed sense by agent.detect's modality name, not by the designer's ("3d-model")
             renamed["designed_modality"] = d.modality
             d.modality = detected
-        say("ok", f"A {d.route} adapter for {d.modality} ({d.format}) files: {d.description}", **d.to_dict(),
+        elif detected not in _DETECTED_MODALITIES and d.modality in DETECT_MODALITIES:
+            # A file agent.detect calls "other" (an M4A voice memo, a TIFF, a CSV of SMILES) keeps the designer's
+            # name, but never one of agent.detect's own: an "audio" adapter verified on M4A files would replace the
+            # verified audio sense, which every WAV then went through.
+            renamed["designed_modality"] = d.modality
+            d.modality = _modality_slug(f"{d.modality}-{d.format}")
+        say("ok", f"A {d.route} adapter for {words(d.modality)} ({d.format}) files: {d.description}", **d.to_dict(),
             **renamed, detection=detection, toolbox=box, head_preview=_one_line(head, PREVIEW_CHARS))
 
         install_record: dict[str, Any] | None = None
@@ -1507,7 +1533,7 @@ def run_synth(
         refusal = adapters.sandbox_problem()
         if refusal is not None:
             say("fail", refusal, sandboxed=False)
-            finish(f"No {d.modality} sense was installed: agent-written code cannot run safely here. {refusal}")
+            finish(f"No {words(d.modality)} sense was installed: agent-written code cannot run safely here. {refusal}")
             return [], None
         if not sandboxed:
             say("info", "Warning: there is no sandbox here, so the code the agent writes runs with network and file "
@@ -1524,7 +1550,7 @@ def run_synth(
                                                hide=_folder_labels(examples) + _folder_labels(unseen))
         except AdapterError as err:
             say("fail", err.reason, attempts=ADAPTER_ATTEMPTS, error=err.to_dict())
-            finish(f"No {d.modality} sense was installed: no adapter the agent wrote ran on {file.name}.")
+            finish(f"No {words(d.modality)} sense was installed: no adapter the agent wrote ran on {file.name}.")
             return [], None
         code_sha = hashlib.sha256(code.encode("utf-8")).hexdigest()
         libraries = _used_libraries(code, d, box)
@@ -1577,7 +1603,7 @@ def run_synth(
                 )
             except AdapterError as err:
                 say("fail", err.reason, provenance="generated", error=err.to_dict())
-                finish(f"No {d.modality} sense was installed: no generated probe files. {_ask_for_examples(d)}",
+                finish(f"No {words(d.modality)} sense was installed: no generated probe files. {_ask_for_examples(d)}",
                        needs_user=True, wanted=_wanted(d))
                 return [], None
         elif probes is None:
@@ -1646,8 +1672,9 @@ def run_synth(
             "libraries": libraries, "written_by": os.environ.get("SENSE_LLM_MODEL") or llm.DEFAULT_MODEL,
             "attempts": used, "question": d.question, "goal": goal, "code_sha256": code_sha, "design": d.to_dict(),
             "probes": probe_facts,
-            # how chat recognises a file for this sense when agent.detect calls it "other" (csv, fasta, unknown)
-            "detected": {"modality": detection.get("modality"), "format": detection.get("format"), "suffix": suffix},
+            # which files chat sends to this sense: those agent.detect describes like the files it was verified on
+            "detected": {"modality": detection.get("modality"), "format": detection.get("format"), "suffix": suffix,
+                         "formats": _verified_formats(detection, probes.files)},
         }
         if generator_code is not None:
             manifest["generator_sha256"] = facts["generator_sha256"]
@@ -1657,8 +1684,10 @@ def run_synth(
             manifest["install"] = install_record
         if unseen_set is not None:
             manifest["unseen"] = {k: unseen_set.to_dict()[k] for k in ("name", "source", "labels", "per_label")}
+        # a modality renamed "<name>-<format>" already says the format: adapter:audio-m4a, not adapter:audio-m4a-m4a
+        slug = d.modality if d.modality.endswith(f"-{d.format}") else None
         bridge = AdapterBridge(kind=d.kind, modality=d.modality, model_name=model_name, code=code,
-                               manifest=_jsonable(manifest), timeout=ADAPTER_TIMEOUT)
+                               manifest=_jsonable(manifest), slug=slug, timeout=ADAPTER_TIMEOUT)
         request = FitRequest(model=model_name, dataset=probes.name, modality=d.modality, scope="closed")
         if on_request is not None:  # agent.jobs keeps it as the job's request, which sense.runs records
             on_request(request)
@@ -1675,7 +1704,7 @@ def run_synth(
             card = adapters.verify_files(model, bridge, probes, request, idx=scored, native=native, unseen=unseen_set)
         except AdapterError as err:
             say("fail", err.reason, bridge=bridge.name, error=err.to_dict())
-            finish(f"No {d.modality} sense was installed: {err.reason}")
+            finish(f"No {words(d.modality)} sense was installed: {err.reason}")
             return [], None
         seconds = round(time.monotonic() - started, 2)
         say("ok", _card_summary(card), card=card.to_dict(), controls=card.controls,
@@ -1707,7 +1736,7 @@ def run_synth(
             if generator_code is not None:
                 (directory / "generator.py").write_text(generator_code, encoding="utf-8")
             installed = bridge.name
-            say("ok", f"Installed {bridge.name}; {info.label} can now take {d.modality} files in chat.",
+            say("ok", f"Installed {bridge.name}; {info.label} can now take {words(d.modality)} files in chat.",
                 bridge=bridge.name, replaced=earlier, directory=str(directory))
         elif ok:
             card.verdict = "candidate"
@@ -1720,12 +1749,12 @@ def run_synth(
             say("info", f"Installed nothing; {bridge.name} did not pass its checks.", bridge=bridge.name)
 
         if installed:
-            message = (f"{info.label} can now take {d.modality} files through {installed}: it scored "
+            message = (f"{info.label} can now take {words(d.modality)} files through {installed}: it scored "
                        f"{pct(card.accuracy)} on {card.n} probe files, against {pct(card.chance)} chance.")
         elif ok:
-            message = f"No {d.modality} sense was installed for {info.label}: {sentence} But {blocked}."
+            message = f"No {words(d.modality)} sense was installed for {info.label}: {sentence} But {blocked}."
         else:
-            message = f"No {d.modality} sense was installed for {info.label}: {sentence}"
+            message = f"No {words(d.modality)} sense was installed for {info.label}: {sentence}"
         finish(message, installed=installed, bridge=bridge.name)
         return [card], installed
 

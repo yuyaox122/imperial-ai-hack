@@ -3403,7 +3403,9 @@ def find_probes(goal: str, modality: str, dest_root: Path, *, wanted_labels: lis
          "top": [_source_of(c) for c in window], "web": web_info, "excluded": excluded})
     if not ranked:
         raise ProbesUnavailable(f"the Hub search found no open dataset for queries {queries}" + _web_note(web)
-                                + (f"; {len(excluded)} sources were in exclude_sources" if excluded else ""))
+                                + (f"; {len(excluded)} other {'match was' if len(excluded) == 1 else 'matches were'} "
+                                   f"left out because the run had already used {'it' if len(excluded) == 1 else 'them'}"
+                                   if excluded else ""))
     tried, fetched, out_of_time = [], 0, False
     min_files = fetch_kwargs.get("min_per_label", 6)
     for candidate in window:
