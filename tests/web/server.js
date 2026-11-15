@@ -7,6 +7,7 @@ const assets = new Map([
   ["/static/app.js", ["../../web/app.js", "text/javascript"]],
   ["/static/brain.js", ["../../web/brain.js", "text/javascript"]],
   ["/static/style.css", ["../../web/style.css", "text/css"]],
+  ["/static/favicon.svg", ["../../web/favicon.svg", "image/svg+xml"]],
 ]);
 http.createServer(async (req, res) => {
   if (req.url === "/test-stream") {
