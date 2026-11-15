@@ -32,14 +32,28 @@ All JSON. Errors: {"detail": "<what went wrong and what to do>"} with a 4xx or 5
   POST /api/auto                                    multipart form: model, goal (what the model should do with the
                                                     file), file (one upload), examples (optional: a folder on the
                                                     server with one sub-folder of files per label)
-       -> {"job_id": str}                           an agent run from one file and a goal (agent.jobs.start_auto): it
-                                                    detects the file's modality, researches a specialist and
-                                                    labelled data (or uses examples), then fits, verifies and
-                                                    installs or refuses. Poll GET /api/jobs/<job_id>; events come in
-                                                    the order detect, research, data, inspect, plan, fit, verify,
-                                                    claims, decide, install, done, and a native file or one that
-                                                    needs the user ends earlier. job.request.dataset is "" until the
-                                                    data step picks a set. The upload is kept under
+       -> {"job_id": str}                           an agent run from one file of any type and a goal
+                                                    (agent.jobs.start_auto, agent.auto.run_auto): it detects the
+                                                    file's modality, then takes one of three flows, which the detect
+                                                    event's data names as "flow". native: the model takes the file
+                                                    as it is in chat (text; an image for an API model), events detect,
+                                                    done. specialist (audio): researches a specialist and labelled
+                                                    data (or uses examples), then fits, verifies and installs or
+                                                    refuses, events in the order detect, research, data, inspect,
+                                                    plan, fit, verify, claims, decide, install, done. adapter
+                                                    (everything else: video, 3d, molecule, geo, csv, fasta, an
+                                                    unknown format, an image for a local model): the agent designs
+                                                    an adapter, writes and runs its code in a sandbox, finds labelled
+                                                    probe files (the examples folder, else a public dataset, else
+                                                    generated ones when the label is built into the content), verifies
+                                                    and installs or refuses (agent.synth.run_synth), events in the
+                                                    order detect, design, install_request and approval (only when the
+                                                    design asks to install packages: see POST
+                                                    /api/jobs/<job_id>/approval), build, data, verify, decide,
+                                                    install, done. A run that needs the user (no labelled examples
+                                                    found) ends earlier with done data needs_user true. Poll GET
+                                                    /api/jobs/<job_id>. job.request.dataset is "" (and modality "")
+                                                    until the data step picks a set. The upload is kept under
                                                     <SENSE_HOME>/uploads/<12 hex>/<its name, made safe and cut to 120
                                                     bytes>, because the run reads it after this returns, and removed
                                                     once the run has ended (a folder left by a server that stopped
@@ -49,9 +63,23 @@ All JSON. Errors: {"detail": "<what went wrong and what to do>"} with a 4xx or 5
                                                     replay is in progress. A finished run is recorded for replay as
                                                     with fit
   GET  /api/jobs/<job_id>
-       -> JobState dict                             id, request, status, events[], cards[], installed, error
+       -> JobState dict                             id, request, status, events[], cards[], installed, error, and
+                                                    pending_approval: the request the run is waiting on, {"id",
+                                                    "kind" ("install"), "payload", "timeout", "asked"} (agent.jobs.
+                                                    pending), or null. An install request's payload holds "plan"
+                                                    (agent.installer.InstallPlan.to_dict()), "summary" (one sentence)
+                                                    and "review" (an LLM's opinion, or null)
                                                     a replayed job (id "replay-...") also has
-                                                    "replay": {"of": run id, "recorded", "speed"}
+                                                    "replay": {"of": run id, "recorded", "speed"}; its
+                                                    pending_approval is always null
+  POST /api/jobs/<job_id>/approval                  body: {"id": str, "approve": bool}
+       -> {"answered": true, "approve": bool}       answers the run's open request (agent.jobs.answer): the run
+                                                    goes on at once, with the packages installed when approved and
+                                                    without them when declined. A request not answered within its
+                                                    timeout (600 s) counts as declined. 404 for an unknown job; 400
+                                                    for a body that is not that JSON object (approve must be true or
+                                                    false itself); 409 when that request is not open (answered
+                                                    already, timed out, cancelled, a wrong id, or a replay)
   DELETE /api/jobs/<job_id>
        -> {"cancelled": bool}                       stops a replay or a live agent run: true when it was running
                                                     and is now asked to stop, false when it had already finished.
@@ -81,13 +109,21 @@ All JSON. Errors: {"detail": "<what went wrong and what to do>"} with a 4xx or 5
                                                     and, optionally, history
        -> {"reply": str, "used": [{"bridge", "kind", "source", "detail"}]}
           `used` lists how each file reached the model, uploads first, then samples. A file's modality is decided
-          from its bytes, as POST /api/auto decides it (agent.detect: magic bytes, then text), and a listed audio
-          extension (sense.specialists.AUDIO_EXTENSIONS) also means audio; a text file agent.detect reads as a
-          molecule, places or a mesh (SMILES, coordinates, OBJ...) is given as text. Kind "native" (bridge ""): the model
-          takes the file as it is: a text file's text, at most TEXT_FILE_CHARS (8000) characters, is sent after the
-          message; an image (PNG or JPEG, at most 20 MB) is shown to a model that takes images (an API model whose
-          ModelInfo.native lists "image"; the local models take no images yet). Otherwise the installed sense for
-          the file's modality carries it, and `kind` is its bridge kind. A file the model cannot take, whose
+          from its bytes, as POST /api/auto decides it (agent.detect: magic bytes, then the content), and a listed
+          audio extension (sense.specialists.AUDIO_EXTENSIONS) also means audio. An upload is saved under a
+          temporary name that keeps its extension when that is a dot and 1 to 10 letters or digits (adapters see
+          the right suffix). Kind "native" (bridge ""): the model takes the file as it is: a text file's text, at
+          most TEXT_FILE_CHARS (8000) characters, is sent after the message; an image (PNG or JPEG, at most 20 MB)
+          is shown to a model that takes images (an API model whose ModelInfo.native lists "image"; the local
+          models take no images yet: sense.models.takes_as_is). Otherwise the installed sense for the file's
+          detected modality carries it (video, 3d, molecule, geo, image, audio; a file agent.detect calls "other",
+          such as CSV or FASTA, goes to the agent-written adapter built from a file of the same detected format, or
+          for an unknown format the same extension), and `kind` is its bridge kind. An agent-written adapter
+          (bridge "adapter:<name>", kind "text" or "image") runs its code on the file in its sandbox; the detail
+          says what it produced (the start of its text, cut, or how many images); an image-kind adapter needs a
+          model that takes images, else the file is not shown and the detail says why, as when the adapter fails
+          on the file. A text file agent.detect reads as a mesh, a molecule or places (OBJ, SMILES,
+          coordinates...) that no installed sense takes is given as text. A file the model cannot take, whose
           modality has no installed sense, that cannot be read or that is empty, is reported with kind "none" and
           is not shown to the model; the detail says why. For kind "tool" (the model
           could call the listen tool, which asks CLAP about the file) the detail says whether the model called it
@@ -98,7 +134,8 @@ All JSON. Errors: {"detail": "<what went wrong and what to do>"} with a 4xx or 5
           each cut to HISTORY_CHARS (4000) characters. Missing, empty or [] starts a new conversation; anything
           else that is not such a list is a 400 that says what form it takes.
           400 for an empty message; 413 for a file over MAX_UPLOAD_BYTES (200 MB); 409 while an agent run holds a
-          different local model.
+          different local model; 500 if an installed sense the files need cannot be loaded (the installed senses
+          are loaded only when a file may need one).
   POST /api/chat/stream                             the same form as POST /api/chat
        -> text/event-stream: Server-Sent Events ("event: <name>\\ndata: <JSON>\\n\\n"), in this order
             used    the `used` list, as POST /api/chat gives it but sent before the reply, so a tool input's
@@ -127,6 +164,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import shutil
 import tempfile
 import threading
@@ -137,7 +175,7 @@ from pathlib import Path
 from typing import Any
 
 import anyio
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -146,6 +184,7 @@ from pydantic import BaseModel as RequestBody
 from agent import jobs
 from agent.detect import detect, is_text
 from sense import datasets, models, registry
+from sense.adapters import AdapterError
 from sense.config import REPO
 from sense.contracts import FitRequest, ModelInfo, SenseInput
 from sense import config, runs
@@ -167,6 +206,7 @@ NAME_BYTES = 120  # a kept upload's file name is cut to this many bytes, its ext
 UPLOAD_KEEP_SECONDS = 24 * 3600  # an upload folder this old was left by a server that stopped while a run read it
 TEXT_FILE_CHARS = 8000  # a text file given to the model as it is: at most this many characters of it
 IMAGE_BYTES = 20 * 2**20  # the most an image shown to the model as it is may hold (what the OpenAI API takes)
+_SAFE_SUFFIX = re.compile(r"\.[a-z0-9]{1,10}")  # a chat upload's temporary file keeps an extension like this
 
 app = FastAPI(title="Sense harness")
 _sample_paths: dict[str, Path] = {}  # opaque id -> path, filled only from datasets.sample_files
@@ -237,10 +277,8 @@ def _modality_of(name: str, path: Path) -> str | None:
     """The modality of an attached file, decided from its bytes as POST /api/auto decides it (agent.detect), so
     that chat gives the model every file the agent taught it to read, whatever the file is called. Magic bytes
     (WAV, FLAC, Ogg, MP3, PNG, JPEG, GIF, MP4 and other video, GLB) decide first; then a listed audio extension
-    means audio, since soundfile also reads AIFF and AU, and the bridge reports a file it cannot read; then text.
-    A text file that agent.detect reads as a molecule, places or a mesh (SMILES, coordinates, OBJ...) is still
-    given as text, as it was before agent.detect knew those modalities. None for anything else, such as CSV,
-    FASTA or an unknown binary format."""
+    means audio, since soundfile also reads AIFF and AU, and the bridge reports a file it cannot read; then
+    agent.detect's modality from the content (text, 3d, molecule, geo or other). None for an empty file."""
     try:
         found = detect(path)
     except ValueError:  # an empty file
@@ -249,16 +287,14 @@ def _modality_of(name: str, path: Path) -> str | None:
         return found.modality
     if Path(name).suffix.lower() in AUDIO_EXTENSIONS:
         return "audio"
-    if found is not None and found.modality not in ("text", "other") and is_text(path):
-        return "text"
-    return "text" if found is not None and found.modality == "text" else None
+    return found.modality if found is not None else None
 
 
 def _takes_images(info: ModelInfo) -> bool:
-    """Whether chat can show this model an image as it is. Only API model adapters take image inputs
-    (sense.models_api); the local adapters in sense.models take text and vector inputs only, even when their
-    ModelInfo.native lists "image"."""
-    return "image" in info.native and not info.open_weights
+    """Whether chat can show this model an image as it is (sense.models.takes_as_is). Only API model adapters take
+    image inputs (sense.models_api); the local adapters in sense.models take text and vector inputs only, even when
+    their ModelInfo.native lists "image"."""
+    return models.takes_as_is(info, "image")
 
 
 def _not_native(info: ModelInfo, modality: str) -> str | None:
@@ -270,9 +306,60 @@ def _not_native(info: ModelInfo, modality: str) -> str | None:
         if _takes_images(info):
             return None
         if "image" in info.native:
-            return f"{info.label} cannot be shown images here: image inputs are wired up for API models only."
-        return f"{info.label} does not read images, and no image sense can be installed yet."
-    return f"{info.label} does not read {modality} as it is."
+            return (f"{info.label} cannot be shown images here: image inputs are wired up for API models only. Run "
+                    "the agent on an image to give it an image sense, which describes images as text.")
+        return f"{info.label} does not read images. Run the agent on an image to give it an image sense."
+    return f"{info.label} does not read {modality} as it is. Run the agent on such a file to give it a {modality} sense."
+
+
+# agent.detect's modality names: a sense installed under any other name is an agent-written adapter for a file
+# agent.detect calls "other" (csv, fasta, an unknown binary), installed under the name its design gave it
+_DETECT_MODALITIES = ("audio", "image", "video", "3d", "molecule", "geo", "text", "other")
+
+
+def _reads_as_text(modality: str | None, path: Path) -> bool:
+    """Whether a file can fall back to being given as text when no sense takes it: a text file agent.detect reads
+    as a molecule, places or a mesh (SMILES, coordinates, OBJ...), as before agent.detect knew those modalities.
+    Never a file agent.detect calls "other" (CSV, FASTA, an unknown binary)."""
+    return modality in ("3d", "molecule", "geo") and is_text(path)
+
+
+def _could_have_sense(modality: str, rows: list[dict]) -> bool:
+    """Whether the installed senses (registry.installed rows) may hold one for a file of `modality`."""
+    names = {row.get("modality") for row in rows}
+    if modality == "other":
+        return any(name not in _DETECT_MODALITIES for name in names)
+    return modality in names
+
+
+def _installed(model: str) -> list[dict]:
+    """registry.installed(model), or [] when it cannot be read: a chat that may need no sense still goes on (a
+    sense that is really needed and broken is reported when it is loaded)."""
+    try:
+        return registry.installed(model)
+    except Exception:
+        log.warning("The installed senses of %s could not be listed.", model, exc_info=True)
+        return []
+
+
+def _sense_for(bridges: list, modality: str, path: Path) -> Any:
+    """The installed sense for a file of `modality`, or None. A file agent.detect calls "other" goes to an
+    agent-written adapter built from a file agent.detect described alike (its manifest's "detected"): the same
+    format, or for format "unknown" the same file extension."""
+    if modality != "other":
+        return next((b for b in bridges if b.modality == modality), None)
+    try:
+        found = detect(path)
+    except ValueError:
+        return None
+    suffix = path.suffix.lower()
+    for bridge in bridges:
+        detected = (getattr(bridge, "manifest", None) or {}).get("detected") or {}
+        if detected.get("modality") != "other" or detected.get("format") != found.format:
+            continue
+        if found.format != "unknown" or (suffix and detected.get("suffix") == suffix):
+            return bridge
+    return None
 
 
 def _read_text(path: Path) -> tuple[str, bool]:
@@ -503,11 +590,38 @@ def api_job(job_id: str) -> dict:
     replayed = replay.get(job_id)
     if replayed is not None:
         state, info = replayed
-        return state.to_dict() | {"replay": info}
+        return state.to_dict() | {"replay": info, "pending_approval": None}
     state = jobs.get(job_id)
     if state is None:
         raise _bad_request(f"Unknown job '{job_id}'. Start a run with POST /api/fit first.")
-    return state.to_dict()
+    return state.to_dict() | {"pending_approval": jobs.pending(job_id)}
+
+
+@app.post("/api/jobs/{job_id}/approval")
+async def api_answer_approval(job_id: str, request: Request) -> dict:
+    # The body is read by hand, not by a pydantic model, so that every bad body is a 400 that says what to send
+    # (FastAPI would answer 422), and a JSON 1 or "yes" is never taken for true.
+    if replay.get(job_id) is None and jobs.get(job_id) is None:
+        raise HTTPException(status_code=404, detail=f"Unknown job '{job_id}'. Use the job id POST /api/auto returned.")
+    form = 'Send {"id": "<the request id from pending_approval>", "approve": true} or "approve": false.'
+    try:
+        body = json.loads(await request.body() or b"null")
+    except (ValueError, RecursionError):
+        raise _bad_request(f"The body is not valid JSON. {form}")
+    if not isinstance(body, dict) or not isinstance(body.get("id"), str) or not body["id"].strip():
+        raise _bad_request(f"The body needs the id of the open request as a string. {form}")
+    if not isinstance(body.get("approve"), bool):
+        raise _bad_request(f"\"approve\" must be true or false. {form}")
+    if replay.get(job_id) is not None or not jobs.answer(job_id, body["id"], body["approve"]):
+        open_request = jobs.pending(job_id) if replay.get(job_id) is None else None
+        now = (f" The open request is {open_request['id']}." if open_request
+               else " Nothing is waiting for an answer now.")
+        raise HTTPException(
+            status_code=409,
+            detail=f"Request '{body['id']}' of job '{job_id}' is not open: it was answered, timed out or cancelled, "
+            f"or the id is wrong.{now} See pending_approval in GET /api/jobs/{job_id}.",
+        )
+    return {"answered": True, "approve": body["approve"]}
 
 
 @app.delete("/api/jobs/{job_id}")
@@ -588,9 +702,10 @@ def _prepare_chat(
     model: str, message: str, history: str, files: list[UploadFile], sample_ids: list[str], temp_paths: list[Path],
 ) -> _ChatTurn:
     """What POST /api/chat and POST /api/chat/stream do before the model answers: check the request, save the
-    uploads to temporary files (appended to `temp_paths`, which the caller deletes), load the model and give it each
-    file: as it is (a text file, or an image for a model that takes images) or through the installed sense for the
-    file's modality. Raises HTTPException."""
+    uploads to temporary files (appended to `temp_paths`, which the caller deletes; each keeps a short extension),
+    load the model and give it each file: as it is (a text file, or an image for a model that takes images), through
+    the installed sense for the file's modality (an agent-written adapter runs on the file in its sandbox), or as
+    text when it is a mesh, molecule or places in text form that no sense takes. Raises HTTPException."""
     _check_model(model)
     if not message.strip():
         raise _bad_request("The message is empty. Type a question for the model, then send it.")
@@ -601,9 +716,10 @@ def _prepare_chat(
     for upload in files:
         if not upload.filename:
             continue
-        suffix = Path(upload.filename).suffix.lower()  # only a listed audio extension: never the client's long text
+        # the extension is kept (adapters and some readers go by it), but only a short one of letters and digits
+        suffix = Path(upload.filename).suffix.lower()
         try:
-            fd, tmp = tempfile.mkstemp(suffix=suffix if suffix in AUDIO_EXTENSIONS else "")
+            fd, tmp = tempfile.mkstemp(suffix=suffix if _SAFE_SUFFIX.fullmatch(suffix) else "")
             os.close(fd)
         except OSError as exc:
             raise _cannot_save(upload.filename, exc) from exc
@@ -621,10 +737,20 @@ def _prepare_chat(
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Could not load model '{model}': {exc}")
     modalities = [_modality_of(name, path) for name, path in attached]
-    bridges = {}
-    if any(m and _not_native(base.info, m) for m in modalities):  # chat that needs no sense must not depend on them
+    # Chat that needs no sense must not depend on the installed ones: they are loaded only for a file no other way
+    # can carry (audio, video, an image the model cannot be shown, a binary mesh), or for a file that could go as
+    # text (a mesh, molecule or places in text form; a file agent.detect calls "other") when the registry lists a
+    # sense that may take it.
+    sensed = [(m, path) for (_, path), m in zip(attached, modalities) if m and _not_native(base.info, m)]
+    maybe = [m for m, path in sensed if m == "other" or _reads_as_text(m, path)]
+    bridges: list = []
+    needed = len(maybe) < len(sensed)
+    if not needed and maybe:
+        rows = _installed(model)
+        needed = any(_could_have_sense(m, rows) for m in maybe)
+    if needed:
         try:
-            bridges = {b.modality: b for b in registry.get_bridges(model)}
+            bridges = registry.get_bridges(model)
         except RuntimeError as exc:
             raise HTTPException(status_code=500, detail=str(exc))
 
@@ -637,24 +763,31 @@ def _prepare_chat(
         detail = f"'{name}' was not shown to the model: {why}"
         used.append({"bridge": "", "kind": "none", "source": name, "detail": detail})
 
+    def give_text(name: str, path: Path) -> None:
+        text, cut = _read_text(path)
+        texts.append(f'The attached file "{name}" holds this text'
+                     f'{" (only its start is given here: the file is longer)" if cut else ""}:\n{text}')
+        detail = "its text was given to the model with the message"
+        if cut:
+            detail = f"the first {TEXT_FILE_CHARS} characters of its text were given to the model with the message"
+        used.append({"bridge": "", "kind": "native", "source": name, "detail": detail})
+
     for (name, path), modality in zip(attached, modalities):
-        if modality is None:
-            if path.stat().st_size == 0:
-                not_shown(name, "it is empty.")
-            else:
-                images = ", images (PNG or JPEG)" if _takes_images(base.info) else ""
-                not_shown(name, f"only text files{images} and audio files in these formats can be given to it: "
-                                f"{' '.join(sorted(AUDIO_EXTENSIONS))}.")
+        if modality is None and path.stat().st_size == 0:
+            not_shown(name, "it is empty.")
             continue
-        why_not_native = _not_native(base.info, modality)
+        why_not_native = _not_native(base.info, modality) if modality else "it is not a kind of file chat knows."
+        bridge = _sense_for(bridges, modality, path) if modality and why_not_native else None
+        if bridge is None and why_not_native and "text" in base.info.native and _reads_as_text(modality, path):
+            give_text(name, path)  # a mesh, molecule or places in text form, with no sense for them: as text
+            continue
+        if bridge is None and modality in (None, "other"):
+            images = ", images (PNG or JPEG)" if _takes_images(base.info) else ""
+            not_shown(name, f"only text files{images} and audio files in these formats can be given to it: "
+                            f"{' '.join(sorted(AUDIO_EXTENSIONS))}. Run the agent on this file to write it a sense.")
+            continue
         if why_not_native is None and modality == "text":
-            text, cut = _read_text(path)
-            texts.append(f'The attached file "{name}" holds this text'
-                         f'{" (only its start is given here: the file is longer)" if cut else ""}:\n{text}')
-            detail = "its text was given to the model with the message"
-            if cut:
-                detail = f"the first {TEXT_FILE_CHARS} characters of its text were given to the model with the message"
-            used.append({"bridge": "", "kind": "native", "source": name, "detail": detail})
+            give_text(name, path)
             continue
         if why_not_native is None:  # an image, for a model that takes images
             if path.stat().st_size > IMAGE_BYTES:
@@ -668,15 +801,22 @@ def _prepare_chat(
                                      detail="shown to the model as an image"))
             used.append({"bridge": "", "kind": "native", "source": name, "detail": inputs[-1].detail})
             continue
-        bridge = bridges.get(modality)
         if bridge is None:
             if modality == "audio":
                 not_shown(name, f"{base.info.label} has no installed audio sense. Run the agent for this model first.")
             else:
                 not_shown(name, why_not_native)
             continue
+        if bridge.kind == "image" and not _takes_images(base.info):  # an adapter that renders the file as pictures
+            not_shown(name, f"its sense {bridge.name} turns it into images, and {base.info.label} cannot be shown "
+                            "images here (image inputs are wired up for API models only).")
+            continue
         try:
-            item = bridge.prepare(path)
+            item = bridge.prepare(path)  # an adapter bridge runs the agent's code on the file in the sandbox
+        except AdapterError as exc:  # the agent's code failed on this file; answer with the others
+            not_shown(name, f"the agent-written adapter {bridge.name} could not read it: "
+                            f"{exc.reason.replace(str(path), name).replace(path.name, name)}")
+            continue
         except (ValueError, FileNotFoundError) as exc:  # this file is unreadable; answer with the others
             not_shown(name, str(exc).replace(str(path), name).replace(path.name, name))
             continue
