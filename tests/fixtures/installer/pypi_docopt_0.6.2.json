@@ -1,0 +1,31 @@
+{
+ "info": {
+  "classifiers": [
+   "License :: OSI Approved :: MIT License"
+  ],
+  "home_page": "http://docopt.org",
+  "license": "MIT",
+  "license_expression": null,
+  "project_urls": {
+   "Download": "UNKNOWN",
+   "Homepage": "http://docopt.org"
+  },
+  "summary": "Pythonic argument parser, that will make you smile",
+  "version": "0.6.2",
+  "yanked": false,
+  "yanked_reason": null
+ },
+ "urls": [
+  {
+   "digests": {
+    "sha256": "49b3a825280bd66b3aa83585ef59c4a8c82f2c8a522dbe754a8bc8d08c85c491"
+   },
+   "filename": "docopt-0.6.2.tar.gz",
+   "packagetype": "sdist",
+   "upload_time_iso_8601": "2014-06-16T11:18:57.406351Z",
+   "url": "https://files.pythonhosted.org/packages/a2/55/8f8cab2afd404cf578136ef2cc5dfb50baa1761b68c9da1fb1e4eed343c9/docopt-0.6.2.tar.gz",
+   "yanked": false
+  }
+ ],
+ "vulnerabilities": []
+}
