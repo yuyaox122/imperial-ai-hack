@@ -147,7 +147,7 @@ class LLMPlanner:
             key = config.openai_key()
             if not key:
                 raise RuntimeError("OPENAI_API_KEY is required for the LLM planner")
-            self._client = OpenAI(api_key=key, timeout=30.0, max_retries=0)
+            self._client = OpenAI(api_key=key, timeout=30.0, max_retries=config.API_RETRIES)
         response = self._client.chat.completions.create(**payload)
         choice = response.choices[0]
         if choice.finish_reason != "stop" or choice.message.refusal:

@@ -60,6 +60,10 @@ _load_env_files()
 
 _OFF = ("", "0", "false", "no", "off")  # in any case and with spaces around, for SENSE_FAKE
 
+# Retries the OpenAI and Anthropic SDK clients make (connection errors, 408, 409, 429 and 5xx, with backoff). A
+# verification makes hundreds of calls; with none, one dropped connection ended a real adapter run.
+API_RETRIES = 2
+
 
 def fake() -> bool:
     """SENSE_FAKE: on for any value but "", "0", "false", "no" and "off" (in any case)."""

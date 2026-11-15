@@ -66,7 +66,7 @@ def send(request: dict, client: Anthropic | None = None) -> tuple[dict, str]:
         key = config.anthropic_key()
         if not key:
             raise RuntimeError("ANTHROPIC_API_KEY is required when SENSE_LLM_PROVIDER is anthropic")
-        client = Anthropic(api_key=key, timeout=TIMEOUT_S, max_retries=0)
+        client = Anthropic(api_key=key, timeout=TIMEOUT_S, max_retries=config.API_RETRIES)
     response = client.beta.messages.create(**request)
     if response.stop_reason == "refusal":
         raise ValueError("Claude declined to answer (stop_reason refusal)")

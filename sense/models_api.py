@@ -250,7 +250,7 @@ class OpenAIChatModel(APIChatModel):
         if not key:
             raise RuntimeError("OPENAI_API_KEY is required for openai-chat")
         super().__init__(os.environ.get("SENSE_API_MODEL") or DEFAULT_MODEL)
-        self._client = OpenAI(api_key=key, timeout=30.0, max_retries=0)
+        self._client = OpenAI(api_key=key, timeout=30.0, max_retries=config.API_RETRIES)
 
     @staticmethod
     def _content(message: str, inputs: list[SenseInput]) -> str | list[dict]:

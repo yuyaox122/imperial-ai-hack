@@ -91,7 +91,7 @@ def test_registers_a_closed_model_that_can_call_tools(claude):
     assert info.available and not info.open_weights and info.tools
     model = loader()
     assert isinstance(model, BaseModel) and not isinstance(model, OpenModel)
-    claude.factory.assert_called_once_with(api_key="test-key", timeout=30.0, max_retries=0)
+    claude.factory.assert_called_once_with(api_key="test-key", timeout=30.0, max_retries=2)
 
 
 def test_no_key_marks_it_unavailable_without_constructing_a_client(claude, monkeypatch):
