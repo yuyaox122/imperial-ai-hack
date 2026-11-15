@@ -62,6 +62,11 @@ All JSON. Errors: {"detail": "<what went wrong and what to do>"} with a 4xx or 5
                                                     over MAX_UPLOAD_BYTES (200 MB); 409 while an agent run or a
                                                     replay is in progress. A finished run is recorded for replay as
                                                     with fit
+  GET  /api/jobs/latest
+       -> {"job_id": str | null}                    the agent run in progress (agent.jobs.latest(), while it is
+                                                    running), else null; replays are not listed. A tab that did not
+                                                    start the run uses it to follow the run, answer its approval
+                                                    request or stop it, rather than meet only the 409 of a new run
   GET  /api/jobs/<job_id>
        -> JobState dict                             id, request, status, events[], cards[], installed, error, and
                                                     pending_approval: the request the run is waiting on, {"id",
@@ -115,15 +120,19 @@ All JSON. Errors: {"detail": "<what went wrong and what to do>"} with a 4xx or 5
           the right suffix). Kind "native" (bridge ""): the model takes the file as it is: a text file's text, at
           most TEXT_FILE_CHARS (8000) characters, is sent after the message; an image (PNG or JPEG, at most 20 MB)
           is shown to a model that takes images (an API model whose ModelInfo.native lists "image"; the local
-          models take no images yet: sense.models.takes_as_is). Otherwise the installed sense for the file's
-          detected modality carries it (video, 3d, molecule, geo, image, audio; a file agent.detect calls "other",
-          such as CSV or FASTA, goes to the agent-written adapter built from a file of the same detected format, or
-          for an unknown format the same extension), and `kind` is its bridge kind. An agent-written adapter
+          models take no images yet: sense.models.takes_as_is; a GIF or any other image format goes to a sense).
+          Otherwise the installed sense for the file's detected modality carries it (video, 3d, molecule, geo,
+          image, audio, other), and `kind` is its bridge kind. An agent-written adapter takes only files
+          agent.detect describes as it described the files the adapter was verified on (its manifest's "detected":
+          the same modality, a format of the user's file or of its probe files, and for an unknown format the same
+          extension): an adapter built on OBJ files is not given a PLY file, and a file agent.detect calls "other"
+          (CSV, FASTA, an unknown binary) goes only to an adapter built from such a file. An agent-written adapter
           (bridge "adapter:<name>", kind "text" or "image") runs its code on the file in its sandbox; the detail
           says what it produced (the start of its text, cut, or how many images); an image-kind adapter needs a
           model that takes images, else the file is not shown and the detail says why, as when the adapter fails
           on the file. A text file agent.detect reads as a mesh, a molecule or places (OBJ, SMILES,
-          coordinates...) that no installed sense takes is given as text. A file the model cannot take, whose
+          coordinates...) that no installed sense takes, or whose adapter fails on it, is given as text, the
+          detail saying why its sense did not carry it. A file the model cannot take, whose
           modality has no installed sense, that cannot be read or that is empty, is reported with kind "none" and
           is not shown to the model; the detail says why. For kind "tool" (the model
           could call the listen tool, which asks CLAP about the file) the detail says whether the model called it
@@ -182,7 +191,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel as RequestBody
 
 from agent import jobs
-from agent.detect import detect, is_text
+from agent.detect import MODALITIES as DETECT_MODALITIES, detect, is_text, words
 from sense import datasets, models, registry
 from sense.adapters import AdapterError
 from sense.config import REPO
@@ -273,21 +282,23 @@ def _sample_id(path: str) -> str:
     return hashlib.sha1(str(path).encode()).hexdigest()[:12]
 
 
-def _modality_of(name: str, path: Path) -> str | None:
-    """The modality of an attached file, decided from its bytes as POST /api/auto decides it (agent.detect), so
-    that chat gives the model every file the agent taught it to read, whatever the file is called. Magic bytes
-    (WAV, FLAC, Ogg, MP3, PNG, JPEG, GIF, MP4 and other video, GLB) decide first; then a listed audio extension
-    means audio, since soundfile also reads AIFF and AU, and the bridge reports a file it cannot read; then
-    agent.detect's modality from the content (text, 3d, molecule, geo or other). None for an empty file."""
+def _kind_of(name: str, path: Path) -> tuple[str | None, str]:
+    """The modality and agent.detect format of an attached file, decided from its bytes as POST /api/auto decides
+    it (agent.detect), so that chat gives the model every file the agent taught it to read, whatever the file is
+    called. Magic bytes (WAV, FLAC, Ogg, MP3, PNG, JPEG, GIF, MP4 and other video, GLB) decide first; then a listed
+    audio extension means audio (format: the extension without its dot), since soundfile also reads AIFF and AU,
+    and the bridge reports a file it cannot read; then agent.detect's modality from the content (text, 3d,
+    molecule, geo or other). (None, "") for an empty file."""
     try:
         found = detect(path)
     except ValueError:  # an empty file
         found = None
     if found is not None and found.how == "magic bytes":
-        return found.modality
-    if Path(name).suffix.lower() in AUDIO_EXTENSIONS:
-        return "audio"
-    return found.modality if found is not None else None
+        return found.modality, found.format
+    suffix = Path(name).suffix.lower()
+    if suffix in AUDIO_EXTENSIONS:
+        return "audio", suffix[1:]
+    return (found.modality, found.format) if found is not None else (None, "")
 
 
 def _takes_images(info: ModelInfo) -> bool:
@@ -297,24 +308,32 @@ def _takes_images(info: ModelInfo) -> bool:
     return models.takes_as_is(info, "image")
 
 
-def _not_native(info: ModelInfo, modality: str) -> str | None:
-    """Why chat cannot give the model a file of `modality` as it is, or None when it can (text, and images for a
-    model that takes them)."""
+_SHOWN_IMAGES = ("png", "jpeg")  # the image formats chat shows a model as they are (what SenseInput.image holds)
+
+
+def _not_native(info: ModelInfo, modality: str, fmt: str = "") -> str | None:
+    """Why chat cannot give the model a file of `modality` (agent.detect format `fmt`) as it is, or None when it can
+    (text, and PNG or JPEG images for a model that takes images)."""
     if modality == "text":
         return None if "text" in info.native else f"{info.label} does not read text files."
     if modality == "image":
         if _takes_images(info):
-            return None
+            if not fmt or fmt in _SHOWN_IMAGES:
+                return None
+            return (f"only PNG and JPEG images can be shown to it, and this is a {fmt.upper()} image. Run the agent "
+                    f"on such a file to give it a sense for {fmt.upper()} images.")
         if "image" in info.native:
             return (f"{info.label} cannot be shown images here: image inputs are wired up for API models only. Run "
                     "the agent on an image to give it an image sense, which describes images as text.")
         return f"{info.label} does not read images. Run the agent on an image to give it an image sense."
-    return f"{info.label} does not read {modality} as it is. Run the agent on such a file to give it a {modality} sense."
+    what = words(modality)
+    return f"{info.label} does not read {what} files as they are. Run the agent on such a file to give it a {what} sense."
 
 
 # agent.detect's modality names: a sense installed under any other name is an agent-written adapter for a file
-# agent.detect calls "other" (csv, fasta, an unknown binary), installed under the name its design gave it
-_DETECT_MODALITIES = ("audio", "image", "video", "3d", "molecule", "geo", "text", "other")
+# agent.detect calls "other" (csv, fasta, an unknown binary), installed under the name its design gave it (never
+# one of these: agent.synth renames such a design)
+_DETECT_MODALITIES = DETECT_MODALITIES
 
 
 def _reads_as_text(modality: str | None, path: Path) -> bool:
@@ -342,24 +361,41 @@ def _installed(model: str) -> list[dict]:
         return []
 
 
-def _sense_for(bridges: list, modality: str, path: Path) -> Any:
-    """The installed sense for a file of `modality`, or None. A file agent.detect calls "other" goes to an
-    agent-written adapter built from a file agent.detect described alike (its manifest's "detected"): the same
-    format, or for format "unknown" the same file extension."""
-    if modality != "other":
-        return next((b for b in bridges if b.modality == modality), None)
-    try:
-        found = detect(path)
-    except ValueError:
-        return None
+def _adapter_formats(detected: dict) -> list[str]:
+    """The agent.detect formats an agent-written adapter was built from or scored on (its manifest's "detected")."""
+    formats = detected.get("formats")
+    if isinstance(formats, list) and formats:
+        return [str(f) for f in formats]
+    return [str(detected.get("format") or "")]
+
+
+def _sense_for(bridges: list, modality: str, fmt: str, path: Path) -> tuple[Any, str]:
+    """The installed sense for a file of `modality` and agent.detect format `fmt`: (bridge, ""), or (None, why no
+    installed sense takes it, or "" when none is installed for its modality). An agent-written adapter (a manifest
+    with "detected": how agent.detect described the file it was built from, and the formats it was scored on) takes
+    only files agent.detect describes alike: the same modality and one of those formats, and for format "unknown"
+    the same file extension. Its card covers nothing else, so an OBJ adapter is never handed a PLY file. Any other
+    sense (an audio bridge, or an adapter saved before manifests named their formats) takes every file of its
+    modality."""
     suffix = path.suffix.lower()
+    unverified = None  # an adapter for this modality, built and scored on other formats
     for bridge in bridges:
-        detected = (getattr(bridge, "manifest", None) or {}).get("detected") or {}
-        if detected.get("modality") != "other" or detected.get("format") != found.format:
-            continue
-        if found.format != "unknown" or (suffix and detected.get("suffix") == suffix):
-            return bridge
-    return None
+        detected = (getattr(bridge, "manifest", None) or {}).get("detected")
+        if isinstance(detected, dict) and detected.get("modality"):
+            if detected.get("modality") != modality:
+                continue
+            if fmt in _adapter_formats(detected) and (
+                    fmt != "unknown" or (bool(suffix) and detected.get("suffix") == suffix)):
+                return bridge, ""
+            unverified = unverified or bridge
+        elif modality != "other" and bridge.modality == modality:
+            return bridge, ""
+    if unverified is None or modality == "other":  # adapters for other kinds of file say nothing about this one
+        return None, ""
+    built = ", ".join(f.upper() for f in _adapter_formats(unverified.manifest["detected"]))
+    return None, (f"the installed {words(modality)} sense {unverified.name} was built and checked on {built} files "
+                  f"only, so it is not given a {fmt.upper()} file. Run the agent on this file to give it a sense for "
+                  f"{fmt.upper()} files.")
 
 
 def _read_text(path: Path) -> tuple[str, bool]:
@@ -585,6 +621,12 @@ def api_auto(
     return {"job_id": job_id}
 
 
+@app.get("/api/jobs/latest")  # declared before /api/jobs/{job_id}, which would take "latest" for an id
+def api_latest_job() -> dict:
+    job = jobs.latest()
+    return {"job_id": job.id if job is not None and job.status == "running" else None}
+
+
 @app.get("/api/jobs/{job_id}")
 def api_job(job_id: str) -> dict:
     replayed = replay.get(job_id)
@@ -736,12 +778,12 @@ def _prepare_chat(
         base = models.load_model(model)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Could not load model '{model}': {exc}")
-    modalities = [_modality_of(name, path) for name, path in attached]
+    kinds = [_kind_of(name, path) for name, path in attached]  # (modality, agent.detect format) of each file
     # Chat that needs no sense must not depend on the installed ones: they are loaded only for a file no other way
     # can carry (audio, video, an image the model cannot be shown, a binary mesh), or for a file that could go as
     # text (a mesh, molecule or places in text form; a file agent.detect calls "other") when the registry lists a
     # sense that may take it.
-    sensed = [(m, path) for (_, path), m in zip(attached, modalities) if m and _not_native(base.info, m)]
+    sensed = [(m, path) for (_, path), (m, fmt) in zip(attached, kinds) if m and _not_native(base.info, m, fmt)]
     maybe = [m for m, path in sensed if m == "other" or _reads_as_text(m, path)]
     bridges: list = []
     needed = len(maybe) < len(sensed)
@@ -763,33 +805,51 @@ def _prepare_chat(
         detail = f"'{name}' was not shown to the model: {why}"
         used.append({"bridge": "", "kind": "none", "source": name, "detail": detail})
 
-    def give_text(name: str, path: Path) -> None:
+    def give_text(name: str, path: Path, note: str = "") -> None:
         text, cut = _read_text(path)
         texts.append(f'The attached file "{name}" holds this text'
                      f'{" (only its start is given here: the file is longer)" if cut else ""}:\n{text}')
         detail = "its text was given to the model with the message"
         if cut:
             detail = f"the first {TEXT_FILE_CHARS} characters of its text were given to the model with the message"
+        if note:  # why its sense did not carry it
+            detail += f", since {note[:1].lower()}{note[1:]}"
         used.append({"bridge": "", "kind": "native", "source": name, "detail": detail})
 
-    for (name, path), modality in zip(attached, modalities):
+    for (name, path), (modality, fmt) in zip(attached, kinds):
         if modality is None and path.stat().st_size == 0:
             not_shown(name, "it is empty.")
             continue
-        why_not_native = _not_native(base.info, modality) if modality else "it is not a kind of file chat knows."
-        bridge = _sense_for(bridges, modality, path) if modality and why_not_native else None
-        if bridge is None and why_not_native and "text" in base.info.native and _reads_as_text(modality, path):
-            give_text(name, path)  # a mesh, molecule or places in text form, with no sense for them: as text
+        why_not_native = _not_native(base.info, modality, fmt) if modality else "it is not a kind of file chat knows."
+        bridge, why_no_sense = _sense_for(bridges, modality, fmt, path) if modality and why_not_native else (None, "")
+        # a mesh, molecule or places in text form that no sense carries goes as text, as it did before senses
+        as_text = bool(why_not_native) and "text" in base.info.native and _reads_as_text(modality, path)
+
+        def without_sense(why: str, name: str = name, path: Path = path, as_text: bool = as_text) -> None:
+            if as_text:
+                give_text(name, path, note=why)
+            else:
+                not_shown(name, why)
+
+        if bridge is None and as_text:
+            give_text(name, path, note=why_no_sense)
             continue
         if bridge is None and modality in (None, "other"):
-            images = ", images (PNG or JPEG)" if _takes_images(base.info) else ""
-            not_shown(name, f"only text files{images} and audio files in these formats can be given to it: "
-                            f"{' '.join(sorted(AUDIO_EXTENSIONS))}. Run the agent on this file to write it a sense.")
+            images = ", PNG and JPEG images" if _takes_images(base.info) else ""
+            if fmt != "unknown":
+                what = f"a {fmt.upper()} file"
+            elif path.suffix:
+                what = f"a {path.suffix.lower()} file in a format agent.detect does not know"
+            else:
+                what = "a file in a format agent.detect does not know"
+            not_shown(name, f"no installed sense takes this kind of file ({what}), and as it is the model can be given "
+                            f"only text files{images} and audio files ({' '.join(sorted(AUDIO_EXTENSIONS))}). Run the "
+                            "agent on this file to write it a sense.")
             continue
         if why_not_native is None and modality == "text":
             give_text(name, path)
             continue
-        if why_not_native is None:  # an image, for a model that takes images
+        if why_not_native is None:  # a PNG or JPEG image, for a model that takes images
             if path.stat().st_size > IMAGE_BYTES:
                 not_shown(name, f"it is larger than {IMAGE_BYTES // 2**20} MB, the most an image may be.")
                 continue
@@ -802,20 +862,22 @@ def _prepare_chat(
             used.append({"bridge": "", "kind": "native", "source": name, "detail": inputs[-1].detail})
             continue
         if bridge is None:
-            if modality == "audio":
+            if why_no_sense:
+                not_shown(name, why_no_sense)
+            elif modality == "audio":
                 not_shown(name, f"{base.info.label} has no installed audio sense. Run the agent for this model first.")
             else:
                 not_shown(name, why_not_native)
             continue
         if bridge.kind == "image" and not _takes_images(base.info):  # an adapter that renders the file as pictures
-            not_shown(name, f"its sense {bridge.name} turns it into images, and {base.info.label} cannot be shown "
-                            "images here (image inputs are wired up for API models only).")
+            without_sense(f"its sense {bridge.name} turns it into images, and {base.info.label} cannot be shown "
+                          "images here (image inputs are wired up for API models only).")
             continue
         try:
             item = bridge.prepare(path)  # an adapter bridge runs the agent's code on the file in the sandbox
-        except AdapterError as exc:  # the agent's code failed on this file; answer with the others
-            not_shown(name, f"the agent-written adapter {bridge.name} could not read it: "
-                            f"{exc.reason.replace(str(path), name).replace(path.name, name)}")
+        except AdapterError as exc:  # the agent's code failed on this file; answer with the others (as text if it is)
+            without_sense(f"the agent-written adapter {bridge.name} could not read it: "
+                          f"{exc.reason.replace(str(path), name).replace(path.name, name)}")
             continue
         except (ValueError, FileNotFoundError) as exc:  # this file is unreadable; answer with the others
             not_shown(name, str(exc).replace(str(path), name).replace(path.name, name))
