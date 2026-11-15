@@ -54,8 +54,8 @@ from sense import config
 from sense.contracts import ModelInfo, SenseInput, ToolHandle
 from sense.models import chat_history, register_model, stripped_pieces
 from sense.models_api import (
-    CHAT_INSTRUCTION, TOOL_CALL_TOKENS, TOOL_ROUNDS, APIChatModel, _image_type, _listen, _listen_function, _prompt,
-    _tokens, _tool_handles,
+    CHAT_INSTRUCTION, TOOL_CALL_TOKENS, TOOL_ROUNDS, APIChatModel, _image_type, _instruction, _listen, _listen_function,
+    _prompt, _tokens, _tool_handles,
 )
 
 MODEL_INFO = ModelInfo(
@@ -164,7 +164,8 @@ class AnthropicChatModel(APIChatModel):
         if _tool_handles(inputs):
             yield self.chat(message, inputs, max_new_tokens, history)
             return
-        request = self._request(CHAT_INSTRUCTION, self._messages(message, inputs, history), max_new_tokens)
+        request = self._request(_instruction(CHAT_INSTRUCTION, inputs), self._messages(message, inputs, history),
+                                max_new_tokens)
         self._count(calls=1)  # counted whether or not the request succeeds, as _send does
         texted = False
         # Leaving the with block (also when the reader stops early) closes the HTTP response.
