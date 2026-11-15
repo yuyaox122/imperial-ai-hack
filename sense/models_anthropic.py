@@ -83,7 +83,7 @@ class AnthropicChatModel(APIChatModel):
         if not key:
             raise RuntimeError("ANTHROPIC_API_KEY is required for claude-sonnet")
         super().__init__(os.environ.get("SENSE_CLAUDE_MODEL") or DEFAULT_MODEL)
-        self._client = Anthropic(api_key=key, timeout=30.0, max_retries=0)
+        self._client = Anthropic(api_key=key, timeout=30.0, max_retries=config.API_RETRIES)
 
     @staticmethod
     def _content(message: str, inputs: list[SenseInput]) -> str | list[dict]:

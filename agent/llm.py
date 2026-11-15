@@ -92,7 +92,7 @@ def ask_json(instruction: str, data: dict, schema: dict, *, max_tokens: int = 40
     if not key:
         return None
     try:
-        client = OpenAI(api_key=key, timeout=TIMEOUT_S, max_retries=0)
+        client = OpenAI(api_key=key, timeout=TIMEOUT_S, max_retries=config.API_RETRIES)
         requested = os.environ.get("SENSE_LLM_MODEL") or DEFAULT_MODEL
         response = client.chat.completions.create(
             model=requested,
