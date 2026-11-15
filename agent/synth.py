@@ -680,6 +680,8 @@ def _static_problem(code: str, toolbox: list[str], function: str) -> str | None:
     if function not in defined:
         return f"The code defines no top-level function {function}(...); define it."
     keys = {_tool_key(entry) for entry in toolbox}
+    if "matplotlib" in keys:
+        keys.add("mpl_toolkits")  # shipped inside matplotlib (3D axes); a real run's first attempt was refused for it
     for module in adapters.code_imports(code):
         if module in _NETWORK_MODULES:
             return f"The code uses {module}, a network module; the sandbox has no network, so do without it."

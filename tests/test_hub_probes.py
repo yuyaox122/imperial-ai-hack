@@ -2149,3 +2149,43 @@ def test_mesh_molecule_and_geometry_files_lose_their_names(ext, data, gone, kept
     out, how = hub_probes._strip_metadata(data, ext, None, None, 30)
     assert how == "stripped" and gone not in out and kept in out
     assert hub_probes._strip_metadata(b"\x00not a file of this kind", ext, None, None, 30)[1] == "unstripped"
+
+
+# ----------------------------------------------------------------------------- is the fetched set a fair test?
+def _set(tmp_path, files_by_label):
+    root = tmp_path / "set"
+    for label, names in files_by_label.items():
+        (root / label).mkdir(parents=True)
+        for name in names:
+            (root / label / name).write_bytes(name.encode())
+    counts = {label: len(names) for label, names in files_by_label.items()}
+    return FetchReport(folder=root, labels=list(counts), counts=counts, rows_seen=0, skipped={}, licence=None,
+                       source_url="", notes=[])
+
+
+def test_a_probe_set_keeps_one_file_type_so_no_type_gives_a_label_away(tmp_path, monkeypatch):
+    """A real run took a set whose labels came as .obj under one and .ply under another: the type gave it away."""
+    monkeypatch.setattr(hub_probes.llm, "ask_json", lambda *a, **k: None)
+    report = _set(tmp_path, {"chair": [f"{i}.obj" for i in range(6)] + ["9.ply"], "lamp": [f"{i}.obj" for i in range(6)],
+                             "sofa": [f"{i}.obj" for i in range(6)]})
+    assert hub_probes._probe_set_problem(report, "what object is this", "3d", 6) is None
+    assert report.counts == {"chair": 6, "lamp": 6, "sofa": 6} and not (report.folder / "chair" / "9.ply").exists()
+    assert any("only .obj files were kept" in note for note in report.notes)
+    mixed = _set(tmp_path / "b", {"dora": [f"{i}.ply" for i in range(6)], "flat": [f"{i}.obj" for i in range(6)],
+                                  "round": [f"{i}.stl" for i in range(6)]})
+    assert "different types" in hub_probes._probe_set_problem(mixed, "what object is this", "3d", 6)
+
+
+def test_a_probe_set_needs_three_category_labels_that_answer_the_goal(tmp_path, monkeypatch):
+    monkeypatch.setattr(hub_probes.llm, "ask_json", lambda *a, **k: None)
+    six = [f"{i}.glb" for i in range(6)]
+    junk = _set(tmp_path / "a", {"remesh": six, "dora sharp point ply": six, "chair": six})
+    assert "file formats or processing steps" in hub_probes._probe_set_problem(junk, "what object is this", "3d", 6)
+    two = _set(tmp_path / "b", {"chair": six, "lamp": six})
+    assert "at least 3" in hub_probes._probe_set_problem(two, "what object is this", "3d", 6)
+    three = _set(tmp_path / "c", {"chair": six, "lamp": six, "sofa": six})
+    assert hub_probes._probe_set_problem(three, "what object is this", "3d", 6) is None
+    monkeypatch.setattr(hub_probes.llm, "ask_json", lambda *a, **k: {"answers_goal": False, "reason": "rooms"})
+    assert "do not answer the goal" in hub_probes._probe_set_problem(three, "what object is this", "3d", 6)
+    monkeypatch.setattr(hub_probes.llm, "ask_json", lambda *a, **k: {"answers_goal": True, "reason": "objects"})
+    assert hub_probes._probe_set_problem(three, "what object is this", "3d", 6) is None

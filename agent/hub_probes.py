@@ -3352,6 +3352,61 @@ def _add_web_hub_ids(web: _Web, found: dict, hits: Counter, exclusions: _Exclusi
         hits[candidate.hub_id] += 1
 
 
+# Words that name a file format or a processing step, never a category ("remesh", "dora sharp point ply" were folder
+# names a real run took as labels). "off" is left out: it is also an action word ("take off").
+_FORMAT_WORDS = frozenset("""
+ply obj stl glb gltf fbx dae usd usdz mp4 avi mov webm mkv wav mp3 flac ogg png jpg jpeg tif tiff bmp smi sdf mol csv tsv
+json txt npz npy h5 hdf5 parquet pkl zip remesh remeshed mesh meshes pointcloud pointclouds voxel voxels simplified
+decimated normalized normalised aligned watertight manifold processed preprocessed augmented resampled sharp
+""".split())
+MIN_WEB_LABELS = 3  # a web probe set needs this many labels: two make a coin toss of every question
+_FIT_SCHEMA = {
+    "type": "object",
+    "properties": {"answers_goal": {"type": "boolean"}, "reason": {"type": "string"}},
+    "required": ["answers_goal", "reason"], "additionalProperties": False,
+}
+_FIT_INSTRUCTION = (
+    "A user wants a model to answer this goal about their files. A dataset's labels are listed. Say whether the "
+    "labels are answers to the goal (categories of the kind the goal asks for, such as object names for 'what "
+    "object is this'), not file formats, processing steps, ids or unrelated categories. Judge only the labels; "
+    "never suggest labels."
+)
+
+
+def _probe_set_problem(report: FetchReport, goal: str, modality: str, min_per_label: int) -> str | None:
+    """Why a fetched probe set is not a fair test, or None. Also keeps one file type: when the labels' files differ
+    in extension, an extension could give the label away (probe copies keep it), so only the most common extension
+    that every label has is kept (FetchReport.counts updated), and the set is refused when none is shared."""
+    folder = Path(report.folder)
+    by_label = {label: [p for p in (folder / label).iterdir() if p.is_file()] for label in report.counts
+                if (folder / label).is_dir()}
+    exts = {label: {p.suffix.lower() for p in files} for label, files in by_label.items()}
+    shared = set.intersection(*exts.values()) if exts else set()
+    if any(e != shared for e in exts.values()):
+        if not shared:
+            return "the labels' files are of different types, so a file type would give the label away"
+        keep = max(shared, key=lambda e: sum(p.suffix.lower() == e for files in by_label.values() for p in files))
+        for label, files in by_label.items():
+            for p in files:
+                if p.suffix.lower() != keep:
+                    p.unlink()
+            report.counts[label] = sum(1 for p in (folder / label).iterdir() if p.is_file())
+        report.notes.append(f"only {keep} files were kept, so that no file type gives a label away")
+        if min(report.counts.values()) < min_per_label:
+            return (f"after keeping only {keep} files (one type for every label, so the type gives nothing away), "
+                    f"a label has fewer than {min_per_label} files")
+    labels = [report.label_values.get(name, name) for name in report.labels]
+    junk = [label for label in labels if set(re.findall(r"[a-z]+", str(label).lower())) & _FORMAT_WORDS]
+    if junk:
+        return f"labels {junk[:4]} name file formats or processing steps, not categories"
+    if len(labels) < MIN_WEB_LABELS:
+        return f"only {len(labels)} labels; a fair test needs at least {MIN_WEB_LABELS}"
+    answer = llm.ask_json(_FIT_INSTRUCTION, {"goal": goal, "modality": modality, "labels": labels[:16]}, _FIT_SCHEMA)
+    if isinstance(answer, dict) and answer.get("answers_goal") is False:
+        return f"the labels {labels[:6]} do not answer the goal (the agent's model: {str(answer.get('reason'))[:200]})"
+    return None
+
+
 def find_probes(goal: str, modality: str, dest_root: Path, *, wanted_labels: list[str] | None = None,
                 emit: Callable[[dict], None] | None = None, max_candidates: int = 3, max_inspect: int = 12,
                 total_budget_s: float | None = None, exclude_sources: list[str] | tuple = (),
@@ -3463,6 +3518,13 @@ def find_probes(goal: str, modality: str, dest_root: Path, *, wanted_labels: lis
                 candidate._loaded = None  # the parsed rows are not needed again
             if isinstance(target, FolderCandidate):
                 target._files = None  # nor the file list
+        problem = _probe_set_problem(report, goal, modality, fetch_kwargs.get("min_per_label", 6))
+        if problem:
+            shutil.rmtree(report.folder, ignore_errors=True)
+            tried.append(_tried(candidate, f"set: {problem}"))
+            say({"action": "fetch", "status": "fail"} | tag | {"reason": problem})
+            say({"action": "candidate", "status": "fail"} | tag | {"reason": problem})
+            continue
         say({"action": "fetch", "status": "ok"} | tag | {"counts": dict(report.counts), "rows_seen": report.rows_seen,
                                                          "skipped": dict(report.skipped), "bytes": report.bytes})
         say({"action": "candidate", "status": "ok"} | tag | {"labels": list(report.labels),
