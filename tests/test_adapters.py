@@ -646,6 +646,22 @@ def test_adapter_bridge_is_a_file_bridge_that_saves_and_loads(tmp_path, a_file):
     assert loaded.prepare(a_file).text == "hello world"
 
 
+@pytest.mark.parametrize("kind", ["text", "image"])
+def test_the_registry_loads_an_installed_adapter_sense(a_file, kind):
+    from sense import registry
+    from sense.bridges import load_bridge
+    from sense.contracts import ReportCard
+
+    code = FIRST_LINE if kind == "text" else 'from PIL import Image\ndef adapt(p):\n    return {"images": [Image.new("RGB", (8, 8))]}\n'
+    bridge = AdapterBridge(kind=kind, modality="mystery", model_name="fake", code=code)
+    card = ReportCard("fake", "mystery", "p", "closed", bridge.name, kind, 20, 0.2, 0.9, {"swapped": 0.2})
+    registry.install(bridge, card)
+    (loaded,) = registry.get_bridges("fake")  # what chat calls for every attached file
+    assert isinstance(loaded, AdapterBridge) and (loaded.name, loaded.kind, loaded.code) == (bridge.name, kind, code)
+    assert isinstance(load_bridge(registry.sense_dir("fake", "mystery")), AdapterBridge)
+    assert loaded.prepare(a_file).kind == kind
+
+
 def test_adapter_bridge_caches_per_file_content(a_file, tmp_path, monkeypatch):
     calls = []
     real = adapters.run_adapter

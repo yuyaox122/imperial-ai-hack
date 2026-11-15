@@ -65,8 +65,8 @@ Public surface (do not rename):
       and >= swapped + 0.10); then at least MIN_VERIFY_ITEMS (10) scored probe files and the low end of the 95%
       Wilson interval above chance, so that a lucky adapter on a handful of files is not installed
   registry_loads(bridge) -> str | None
-      None when sense.registry can load the adapter bridge back once installed (its load_bridge must know adapter
-      bridges); else why not
+      None when sense.registry can load the adapter bridge back once installed (sense.bridges.load_bridge loads
+      adapter bridges; this still catches one it cannot load), else why not
   run_synth(model_name, file, goal, emit, *, examples=None, detection=None) -> (cards, installed)
       the whole run, as a trace of contracts.TraceEvent (the say() pattern of agent.auto; every event's data is
       JSON-serialisable; times count from the run's start):
@@ -94,7 +94,7 @@ Public surface (do not rename):
                   followed by the adapter's failures, the label-leak warnings and, for generated probes, the caveat
         [install] when assess passes and registry_loads(bridge) is None: ok after sense.registry.install(bridge,
                   card) (the generator's code is saved beside the bridge as generator.py); when assess passes but
-                  the registry cannot load adapter bridges: info (blocked), nothing installed, verdict "candidate"
+                  the registry cannot load it back: info (blocked), nothing installed, verdict "candidate"
                   (installing would break the model's chat); info "Installed nothing" otherwise
         [done]    ok: installed (Bridge.name or None) and needs_user
         [error]   fail: step, error, after a fail event at the step that raised; the exception is re-raised
@@ -1069,7 +1069,7 @@ def registry_loads(bridge: AdapterBridge) -> str | None:
             return f"the registry loads it back as {shown}, not as this adapter"
         return None
     except Exception as exc:
-        return f"the registry cannot load an adapter bridge yet ({type(exc).__name__}: {_one_line(str(exc), 200)})"
+        return f"the registry cannot load the adapter bridge back ({type(exc).__name__}: {_one_line(str(exc), 200)})"
     finally:
         shutil.rmtree(folder, ignore_errors=True)
 

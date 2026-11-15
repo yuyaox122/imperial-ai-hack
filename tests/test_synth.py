@@ -76,19 +76,6 @@ def _fake_home(tmp_path, monkeypatch):
         monkeypatch.setenv(adapters.UNSANDBOXED_ENV, "1")
 
 
-@pytest.fixture
-def registry_reads_adapters(monkeypatch):
-    """What integration will do: sense.bridges.load_bridge (as the registry calls it) loads adapter bridges."""
-    real = registry.load_bridge
-
-    def load(directory):
-        if json.loads((Path(directory) / "bridge.json").read_text()).get("adapter"):
-            return load_adapter_bridge(directory)
-        return real(directory)
-
-    monkeypatch.setattr(registry, "load_bridge", load)
-
-
 class FakeLLM:
     """Canned answers for agent.llm.ask_json, chosen by schema; records every call."""
 
@@ -512,7 +499,7 @@ def test_assess_wants_enough_files_and_an_interval_clear_of_chance():
 
 
 # ----------------------------------------------------------------------------- run_synth
-def test_run_synth_installs_a_working_adapter_from_user_examples(monkeypatch, tmp_path, note, registry_reads_adapters):
+def test_run_synth_installs_a_working_adapter_from_user_examples(monkeypatch, tmp_path, note):
     examples = colour_tree(tmp_path / "notes")
     for colour in COLOURS:  # a sidecar file of another type beside the examples is not an example
         (examples / colour / "README.md").write_text(f"notes about {colour}\n")
@@ -568,15 +555,19 @@ def test_run_synth_installs_a_working_adapter_from_user_examples(monkeypatch, tm
 
 
 def test_run_synth_installs_nothing_the_registry_cannot_load(monkeypatch, tmp_path, note):
-    # Until sense.bridges.load_bridge knows adapter bridges, installing one would make registry.get_bridges fail
-    # for the whole model, and with it every chat with an attached file.
+    # Installing a sense the registry cannot load back would make registry.get_bridges fail for the whole model,
+    # and with it every chat with an attached file; so a loader that breaks blocks the install.
+    def broken(directory):
+        raise ValueError("unknown bridge kind")
+
+    monkeypatch.setattr(registry, "load_bridge", broken)
     examples = colour_tree(tmp_path / "notes")
     monkeypatch.setattr(llm, "ask_json", FakeLLM(design=colour_design(), codes=[READS_CONTENT]))
     cards, installed, events = run("fake", note, "know which colour a note is about", examples=examples)
     assert installed is None and cards[0].verdict == "candidate" and "Not installed" in cards[0].reason
     assert last(events, "decide").data["accepted"] is True
     blocked = last(events, "install")
-    assert blocked.status == "info" and "cannot load an adapter bridge" in blocked.data["blocked"]
+    assert blocked.status == "info" and "cannot load the adapter bridge back" in blocked.data["blocked"]
     assert registry.installed("fake") == [] and registry.get_bridges("fake") == []
     assert last(events, "done").data["installed"] is None
     json.dumps([e.to_dict() for e in events], allow_nan=False)
@@ -598,7 +589,7 @@ def test_run_synth_refuses_an_adapter_that_ignores_the_file(monkeypatch, tmp_pat
     json.dumps([e.to_dict() for e in events], allow_nan=False)
 
 
-def test_run_synth_refuses_a_constant_label_on_a_skewed_folder(monkeypatch, tmp_path, note, registry_reads_adapters):
+def test_run_synth_refuses_a_constant_label_on_a_skewed_folder(monkeypatch, tmp_path, note):
     # Saying "red" for every file scores 40 of 52 on a folder that is mostly red, well over the chance bar; only
     # the swapped-input control, which scores the same, shows that the file made no difference.
     examples = tmp_path / "skewed"
@@ -627,7 +618,7 @@ def test_labels_never_leak_through_file_names(monkeypatch, tmp_path, note):
     assert not any(colour in str(p.relative_to(config.home())) for p in copies for colour in COLOURS)
 
 
-def test_run_synth_verifies_on_generated_probe_files(monkeypatch, tmp_path, registry_reads_adapters):
+def test_run_synth_verifies_on_generated_probe_files(monkeypatch, tmp_path):
     monkeypatch.setattr(synth, "GENERATED_PER_LABEL", 10)
     number = tmp_path / "reading.txt"
     number.write_text("512.25\n")
