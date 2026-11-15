@@ -78,17 +78,27 @@ Public surface (do not rename):
   registry_loads(bridge) -> str | None
       None when sense.registry can load the adapter bridge back once installed (sense.bridges.load_bridge loads
       adapter bridges; this still catches one it cannot load), else why not
-  run_synth(model_name, file, goal, emit, *, examples=None, detection=None, native=None, unseen=None)
-            -> (cards, installed)
+  run_synth(model_name, file, goal, emit, *, examples=None, detection=None, native=None, unseen=None, web=False,
+            on_request=None, t0=None) -> (cards, installed)
       the whole run, as a trace of contracts.TraceEvent (the say() pattern of agent.auto; every event's data is
-      JSON-serialisable; times count from the run's start). `native` asks verify_files for the native control
-      (None: when the user's file, or at least half of the probe files, reads as text the way verify_files gives
-      a file as it is); `unseen` is a second labelled folder (one sub-folder per label, files of the user's file's
-      extension, MIN_UNSEEN_PER_LABEL (3) per label) or ProbeSet, for the unseen-categories control.
+      JSON-serialisable; times count from t0, a time.monotonic() value, by default the run's start). `native` asks
+      verify_files for the native control (None: when the user's file, or at least half of the probe files, reads
+      as text the way verify_files gives a file as it is); `unseen` is a second labelled folder (one sub-folder per
+      label, files of the user's file's extension, MIN_UNSEEN_PER_LABEL (3) per label) or ProbeSet, for the
+      unseen-categories control. `web` lets the data step look for labelled files on the public web
+      (agent.hub_probes.find_probes) when there is no examples folder, and for unseen categories when `unseen` is
+      None (agent.auto turns it on). on_request(FitRequest(model, dataset=the probe set's name,
+      modality=design.modality, scope "closed")) is called once the probe set is known, before verification
+      (agent.jobs keeps it as the job's request, which sense.runs records).
         [design]  start; ok with the design's fields, detection, toolbox and head_preview (fail, then done, when
-                  the LLM gives no usable design). When agent.detect named the file's modality video, 3d, molecule
-                  or geo, the design takes that modality (designed_modality keeps the LLM's own name), so the sense
-                  is installed under the name chat looks it up by
+                  the LLM gives no usable design). The designer is shown the model with only the inputs chat can
+                  give it as they are (sense.models.takes_as_is), so route "images" is offered only for a model
+                  that takes images in chat, never for a local model. When agent.detect named the file's modality
+                  video, 3d, molecule, geo or image, the design takes that modality (designed_modality keeps the
+                  LLM's own name), so the sense is installed under the name chat looks it up by. For any other file
+                  (agent.detect's "other") the design keeps the LLM's name unless it is one of agent.detect's own
+                  (agent.detect.MODALITIES), which is renamed "<name>-<format>" ("audio-m4a"): an adapter verified
+                  on M4A voice memos never replaces the audio sense
         [install_request]  only when the design asks to install packages (and code may run here): start with
                   requested; agent.installer.plan checks them; a plan refused by the checks (always in fake mode,
                   where the installer reaches nothing) is not put to the user: fail with the verdict. Otherwise
@@ -105,16 +115,29 @@ Public surface (do not rename):
                   (attempt, error); ok with attempts, libraries, code_sha256, code, preview (the first 300
                   characters of the output on the file, or the image sizes), output_kind, notes, seconds (fail,
                   then done, when no attempt works)
-        [data]    probe files: a user examples folder when `examples` is given (only files with the user's file's
-                  extension; MIN_PER_LABEL (5) per label; the set is named <modality>-examples-<hash>), else
-                  generated files when the design's probe_plan is "generate" (info per failed generator attempt),
-                  else no probes: info, then done with needs_user=True, saying which examples to provide (wanted:
-                  labels, label_hint, format, min_per_label, question). An unusable examples folder or no working
-                  generator: fail, then the same needs_user done. ok with name, provenance, source, licence,
-                  labels, counts, n, split, meta, label_leaks (warnings: labels written in their own files'
-                  content, extensions that differ between labels), and for generated files generator_sha256,
-                  generator_code and caveat. With `unseen`: info with unseen (name, source, labels, per_label, n),
-                  or info with the reason when the folder cannot be used (the card then says so)
+        [data]    probe files, from the first of these that gives some: a user examples folder when `examples` is
+                  given (only files with the user's file's extension; MIN_PER_LABEL (5) per label; the set is named
+                  <modality>-examples-<hash>); with `web`, a public dataset (_web_probes: find_probes(goal,
+                  design.modality, <SENSE_HOME>/fetched/probes/<modality>), provenance "dataset", the set named
+                  <modality>-dataset-<hash>, any extension the dataset has; each event find_probes emits is said
+                  here with its own status and facts, action "search" | "candidate" | "inspect" | "fetch", plus
+                  purpose "probes" and provenance "dataset"; files that probe_folder cannot use: fail with action
+                  "build"); generated files when the design's probe_plan is "generate" (info per failed generator
+                  attempt); else no probes: info (with web_reason when the web was searched), then done with
+                  needs_user=True, saying which examples to provide (wanted: labels, label_hint, format,
+                  min_per_label, question). An unusable examples folder or no working generator: fail, then the
+                  same needs_user done. ok with name, provenance, source, licence, labels, counts, n, split, meta,
+                  label_leaks (warnings: labels written in their own files' content, extensions that differ between
+                  labels), for generated files generator_sha256, generator_code and caveat, and for a public dataset
+                  fetched (find_probes' hub_id, url, title, kind, source, licence, licence_source, label_values,
+                  counts, mapping, rows_seen, skipped, notes, tried). Then the unseen categories: with `unseen`,
+                  info with unseen (name, source, labels, per_label, n), or info with the reason when the folder
+                  cannot be used; with `web` and no `unseen`, a second find_probes into
+                  <SENSE_HOME>/fetched/probes/<modality>-unseen with exclude_sources the first dataset's source and
+                  disjoint_from its labels (the examples' or generated labels when the probes came from there),
+                  its events said with purpose "unseen", then the same info with unseen, or info "Unseen categories
+                  not measured: <why>." with purpose "unseen" and reason. Whenever unseen categories are not
+                  measured for such a reason, the card's reason says so too
         [verify]  sense.adapters.verify_files on every probe file (the adapter was written before any existed, so
                   all are held out; an API model scores at most config.api_verify_items() of them), with native and
                   the unseen set: start with native and unseen; ok with the card dict ("card"), its controls and
@@ -130,8 +153,11 @@ Public surface (do not rename):
         [error]   fail: step, error, after a fail event at the step that raised; the exception is re-raised
       The bridge is a sense.adapters.AdapterBridge; its code (adapter.py) and manifest (bridge.json: modality,
       format, route, description, libraries, written_by, attempts, question, goal, code_sha256, design, probes
-      with label_leaks and, for generated probes, caveat; install, the install_request record, when the design
-      asked for packages; unseen (name, source, labels, per_label) when that control ran) are saved with it.
+      with label_leaks and, for generated probes, caveat, and for a public dataset fetched; detected, what
+      agent.detect said about the user's file ({modality, format, suffix}) and formats, the sorted agent.detect
+      formats of that file and of the probe files of the same modality: server/app.py gives the sense only files
+      agent.detect describes alike; install, the install_request record, when the design asked for packages;
+      unseen (name, source, labels, per_label) when that control ran) are saved with it.
       Returns ([card], installed name or None); ([], None) when the run stopped before a card.
 
 Labels never reach an adapter through a file name or a folder: the adapter is written from the user's file alone,
@@ -168,9 +194,9 @@ from typing import Any, Callable
 import numpy as np
 
 from agent import llm
-from agent.detect import detect
+from agent.detect import MODALITIES as DETECT_MODALITIES, detect, words
 from agent.planner import RulePlanner, pct
-from sense import adapters, models, registry
+from sense import adapters, config, models, registry
 from sense.adapters import AdapterBridge, AdapterError, ProbeSet
 from sense.contracts import FitRequest, ReportCard, TraceEvent
 
@@ -208,7 +234,7 @@ _MASKED_FIELDS = ("question", "label_hint", "description")  # free text where a 
 _MASK = "[answer]"
 # agent.detect's names for the modalities adapters are written for: an adapter for such a file is installed under
 # that name, which is the one chat looks a sense up by.
-_DETECTED_MODALITIES = ("video", "3d", "molecule", "geo")
+_DETECTED_MODALITIES = ("video", "3d", "molecule", "geo", "image")
 _STDLIB = set(sys.stdlib_module_names)
 _ALIASES = {
     "pillow": "PIL", "pil": "PIL", "opencv": "cv2", "opencv-python": "cv2", "opencv_python": "cv2",
@@ -1261,6 +1287,22 @@ def _mostly_text(paths: list[Path]) -> bool:
     return bool(paths) and 2 * sum(_reads_as_text(p) for p in paths) >= len(paths)
 
 
+def _verified_formats(detection: dict, paths: list[Path]) -> list[str]:
+    """The agent.detect formats the adapter is verified on: the user's file's, and those of the probe files
+    agent.detect gives the same modality (a set of JPEG photos for an adapter built from a PNG). Chat gives the
+    sense only files of these formats (server/app.py)."""
+    modality = detection.get("modality")
+    formats = {str(detection.get("format") or "")}
+    for path in paths:
+        try:
+            found = detect(Path(path))
+        except (OSError, ValueError):
+            continue
+        if found.modality == modality:
+            formats.add(found.format)
+    return sorted(f for f in formats if f)
+
+
 def _folder_labels(folder: Path | ProbeSet | None) -> list[str]:
     """The labels a labelled folder (its sub-folder names, read as sense.adapters.probe_folder reads them) or a
     ProbeSet holds, to mask in what the adapter's author sees; [] when there are none or it cannot be read."""
@@ -1307,6 +1349,97 @@ def _unseen_probes(
     return found, ""
 
 
+_FETCHED_KEYS = ("hub_id", "url", "title", "kind", "source", "licence", "licence_source", "label_values", "counts",
+                 "mapping", "rows_seen", "skipped", "notes", "tried")
+
+
+def _fetched_facts(info: dict) -> dict[str, Any]:
+    """What the trace and the manifest keep of agent.hub_probes.find_probes' info: where the files came from."""
+    return {k: info[k] for k in _FETCHED_KEYS if k in info}
+
+
+def _web_message(event: dict, unseen: bool) -> str:
+    """One sentence for an event agent.hub_probes.find_probes emits ({"action", "status", ...})."""
+    what = "labelled files of other categories" if unseen else "labelled probe files"
+    action, status = event.get("action"), event.get("status")
+    source = event.get("source") or event.get("hub_id") or "a candidate"
+    reason = _one_line(str(event.get("reason") or ""), 300)
+    if action == "search":
+        if status == "start":
+            return f"Searching the Hugging Face Hub and the web for {what}."
+        if status == "ok":
+            n = event.get("found") or 0
+            return f"Found {n} candidate dataset{'' if n == 1 else 's'} for {what}."
+        return f"The search for {what} failed: {reason}"
+    if action == "candidate":
+        if status == "start":
+            return f"Trying {source}."
+        if status == "ok":
+            labels = [str(label) for label in event.get("labels") or []]
+            return f"Using {source}: {len(labels)} labels ({_one_line(', '.join(labels), 200)})."
+        return f"Could not use {source}: {reason}"
+    if action == "inspect":
+        if status == "start":
+            return f"Reading the columns of {source}."
+        if status == "ok":
+            mapping = event.get("mapping") or {}
+            inputs = ", ".join(str(c) for c in mapping.get("input_columns") or []) or "?"
+            return f"{source} fits: input {inputs}, label {mapping.get('label_column') or 'its 0/1 columns'}."
+        return f"{source} does not fit: {reason}"
+    if action == "fetch":
+        if status == "start":
+            return f"Fetching labelled files from {source}."
+        if status == "ok":
+            counts = event.get("counts") or {}
+            total = sum(v for v in counts.values() if isinstance(v, int))
+            return f"Fetched {total} files in {len(counts)} labels from {source}."
+        return f"Fetching from {source} failed: {reason}"
+    return f"{action or 'search'} {status or ''}: {reason}".strip(" :")
+
+
+def _web_probes(
+    goal: str, design_: Design, say: Callable[..., None], *, purpose: str, exclude_sources: list[str] | tuple = (),
+    disjoint_from: list[str] | tuple = (),
+) -> tuple[ProbeSet | None, dict | None, str]:
+    """Labelled files of the design's modality from a public dataset: agent.hub_probes.find_probes(goal,
+    design.modality, <SENSE_HOME>/fetched/probes/<modality>[-unseen]), read with sense.adapters.probe_folder as a
+    ProbeSet of provenance "dataset" (named <modality>-dataset-<hash>, or <modality>-unseen-<hash> for purpose
+    "unseen"). Every event find_probes emits is said at the data step with its own facts (action, ...) plus purpose
+    ("probes" | "unseen") and provenance "dataset". Returns (probe set, find_probes' info, "") or (None, info or
+    None, why there is none)."""
+    from agent import hub_probes
+
+    unseen = purpose == "unseen"
+    root = config.home() / "fetched" / "probes" / (f"{design_.modality}-unseen" if unseen else design_.modality)
+
+    def forward(event: dict) -> None:
+        status = event.get("status")
+        facts = {k: v for k, v in event.items() if k != "status"}
+        say(status if status in ("start", "ok", "fail") else "info", _web_message(event, unseen), purpose=purpose,
+            provenance="dataset", **facts)
+
+    options = {"min_per_label": MIN_UNSEEN_PER_LABEL} if unseen else {}
+    try:
+        folder, info = hub_probes.find_probes(goal, design_.modality, root, emit=forward,
+                                              exclude_sources=list(exclude_sources),
+                                              disjoint_from=list(disjoint_from), **options)
+    except hub_probes.ProbesUnavailable as exc:
+        return None, None, str(exc) or type(exc).__name__
+    source = str(info.get("source") or info.get("url") or "")
+    hashed = hashlib.sha256(source.encode("utf-8")).hexdigest()[:10]
+    try:
+        found = adapters.probe_folder(
+            folder, name=f"{design_.modality}-{'unseen' if unseen else 'dataset'}-{hashed}", question=design_.question,
+            modality=design_.modality, provenance="dataset", source=str(info.get("url") or source),
+            licence=str(info.get("licence") or "unknown"), min_per_label=MIN_UNSEEN_PER_LABEL if unseen else MIN_PER_LABEL,
+        )
+    except ValueError as exc:
+        why = f"the files fetched from {source} cannot be used: {exc}"
+        say("fail", why[:1].upper() + why[1:], action="build", purpose=purpose, provenance="dataset", reason=str(exc))
+        return None, info, why
+    return found, info, ""
+
+
 def _card_summary(card: ReportCard) -> str:
     names = {"swapped": "swapped input", "no_input": "no input", "native": "the raw file",
              "unseen_categories": "unseen categories"}
@@ -1330,9 +1463,12 @@ def run_synth(
     detection: dict | None = None,
     native: bool | None = None,
     unseen: Path | ProbeSet | None = None,
+    web: bool = False,
+    on_request: Callable[[FitRequest], None] | None = None,
+    t0: float | None = None,
 ) -> tuple[list[ReportCard], str | None]:
     """Design, write, verify and install (or refuse) an agent-written adapter for `file` (module docstring)."""
-    t0 = time.monotonic()
+    t0 = time.monotonic() if t0 is None else t0
     step = "design"
 
     def say(status: str, message: str, **facts: Any) -> None:
@@ -1356,7 +1492,10 @@ def run_synth(
             detection = detection.to_dict()
         head = file_head(file)
         box = adapters.toolbox()
-        found = design(detection, goal, head, box, [info.to_dict()], name=file.name, size=file.stat().st_size)
+        # the designer may choose route "images" only for a model chat can show images to (models.takes_as_is): a
+        # local model's ModelInfo.native lists "image", but chat gives it text and vector inputs only
+        seen = info.to_dict() | {"native": [m for m in info.native if models.takes_as_is(info, m)]}
+        found = design(detection, goal, head, box, [seen], name=file.name, size=file.stat().st_size)
         if found is None:
             say("fail", "The LLM gave no usable adapter design (none came back, or it failed the checks twice).",
                 detection=detection)
@@ -1369,7 +1508,13 @@ def run_synth(
             # chat finds an installed sense by agent.detect's modality name, not by the designer's ("3d-model")
             renamed["designed_modality"] = d.modality
             d.modality = detected
-        say("ok", f"A {d.route} adapter for {d.modality} ({d.format}) files: {d.description}", **d.to_dict(),
+        elif detected not in _DETECTED_MODALITIES and d.modality in DETECT_MODALITIES:
+            # A file agent.detect calls "other" (an M4A voice memo, a TIFF, a CSV of SMILES) keeps the designer's
+            # name, but never one of agent.detect's own: an "audio" adapter verified on M4A files would replace the
+            # verified audio sense, which every WAV then went through.
+            renamed["designed_modality"] = d.modality
+            d.modality = _modality_slug(f"{d.modality}-{d.format}")
+        say("ok", f"A {d.route} adapter for {words(d.modality)} ({d.format}) files: {d.description}", **d.to_dict(),
             **renamed, detection=detection, toolbox=box, head_preview=_one_line(head, PREVIEW_CHARS))
 
         install_record: dict[str, Any] | None = None
@@ -1388,7 +1533,7 @@ def run_synth(
         refusal = adapters.sandbox_problem()
         if refusal is not None:
             say("fail", refusal, sandboxed=False)
-            finish(f"No {d.modality} sense was installed: agent-written code cannot run safely here. {refusal}")
+            finish(f"No {words(d.modality)} sense was installed: agent-written code cannot run safely here. {refusal}")
             return [], None
         if not sandboxed:
             say("info", "Warning: there is no sandbox here, so the code the agent writes runs with network and file "
@@ -1405,7 +1550,7 @@ def run_synth(
                                                hide=_folder_labels(examples) + _folder_labels(unseen))
         except AdapterError as err:
             say("fail", err.reason, attempts=ADAPTER_ATTEMPTS, error=err.to_dict())
-            finish(f"No {d.modality} sense was installed: no adapter the agent wrote ran on {file.name}.")
+            finish(f"No {words(d.modality)} sense was installed: no adapter the agent wrote ran on {file.name}.")
             return [], None
         code_sha = hashlib.sha256(code.encode("utf-8")).hexdigest()
         libraries = _used_libraries(code, d, box)
@@ -1417,6 +1562,9 @@ def run_synth(
 
         step = "data"
         generator_code: str | None = None
+        fetched: dict | None = None  # agent.hub_probes.find_probes' info for probe files found on the web
+        web_reason = ""  # why the web gave no probe files
+        probes: ProbeSet | None = None
         suffix = file.suffix.lower() if re.fullmatch(r"\.[A-Za-z0-9]{1,10}", file.suffix) else ""
         if examples is not None:
             examples = Path(examples)
@@ -1435,7 +1583,9 @@ def run_synth(
                 finish(f"I could not use the examples in {examples}: {exc} {_ask_for_examples(d)}",
                        needs_user=True, wanted=_wanted(d))
                 return [], None
-        elif d.probe_plan == "generate":
+        elif web:  # labelled files from a public dataset come first: their labels are independent of the agent
+            probes, fetched, web_reason = _web_probes(goal, d, say, purpose="probes")
+        if probes is None and d.probe_plan == "generate":
             say("start", f"Writing a generator of {GENERATED_PER_LABEL} {d.format} files per label, each built to "
                 f"have its label: {', '.join(d.labels)}.", provenance="generated", labels=d.labels,
                 n_per_label=GENERATED_PER_LABEL, caveat=GENERATED_CAVEAT)
@@ -1453,17 +1603,25 @@ def run_synth(
                 )
             except AdapterError as err:
                 say("fail", err.reason, provenance="generated", error=err.to_dict())
-                finish(f"No {d.modality} sense was installed: no generated probe files. {_ask_for_examples(d)}",
+                finish(f"No {words(d.modality)} sense was installed: no generated probe files. {_ask_for_examples(d)}",
                        needs_user=True, wanted=_wanted(d))
                 return [], None
-        else:
-            why = {
-                "user": "only the user can supply labelled examples for this goal",
-                "dataset": "a public labelled dataset fits this goal, but fetching one is not wired into this run",
-            }[d.probe_plan]
+        elif probes is None:
+            if web:
+                why = f"the search for labelled {d.format} files found none ({_one_line(web_reason, 300)})"
+                if d.probe_plan == "user":
+                    why += ", and only the user can supply labelled examples for this goal"
+            else:
+                why = {
+                    "user": "only the user can supply labelled examples for this goal",
+                    "dataset": "a public labelled dataset fits this goal, but fetching one is not wired into this run",
+                }[d.probe_plan]
+            web_facts = {"web_reason": web_reason} if web else {}
             say("info", f"No probe files: {why}. {d.probe_reason}".strip(), probe_plan=d.probe_plan,
-                probe_reason=d.probe_reason, wanted=_wanted(d))
-            finish(_ask_for_examples(d), needs_user=True, wanted=_wanted(d), probe_plan=d.probe_plan)
+                probe_reason=d.probe_reason, wanted=_wanted(d), **web_facts)
+            searched = "I found no labelled examples on the web. " if web else ""
+            finish(searched + _ask_for_examples(d), needs_user=True, wanted=_wanted(d), probe_plan=d.probe_plan,
+                   **web_facts)
             return [], None
         summary = probes.to_dict()
         leaks = label_leaks({lab: [p for p, c in probes.items if c == k] for k, lab in enumerate(probes.labels)})
@@ -1476,6 +1634,8 @@ def run_synth(
         if generator_code is not None:
             facts.update(generator_sha256=hashlib.sha256(generator_code.encode("utf-8")).hexdigest(),
                          generator_code=generator_code, caveat=GENERATED_CAVEAT)
+        if fetched is not None:
+            facts["fetched"] = _fetched_facts(fetched)
         warning = f" Warning: {'; '.join(leaks)}." if leaks else ""
         # The adapter was written from the user's file before any probe file existed, so it was fitted on none of
         # them: every probe file is held out, and every one is scored (the 60/20/20 split is not needed here).
@@ -1484,6 +1644,16 @@ def run_synth(
             f"({', '.join(probes.labels)}); all are held out, since the adapter was written before they existed."
             f"{warning}", **facts)
         unseen_set, unseen_note = _unseen_probes(unseen, d, suffix, say)
+        if unseen is None and web:  # categories the adapter was not built around, from another public source
+            exclude = [fetched["source"]] if fetched and fetched.get("source") else []
+            disjoint = list(dict.fromkeys([*((fetched or {}).get("label_values") or {}).values(), *probes.labels]))
+            found_unseen, _, why = _web_probes(goal, d, say, purpose="unseen", exclude_sources=exclude,
+                                               disjoint_from=disjoint)
+            if found_unseen is not None:
+                unseen_set, unseen_note = _unseen_probes(found_unseen, d, suffix, say)
+            else:
+                unseen_note = f"Unseen categories not measured: {_one_line(why, 300)}."
+                say("info", unseen_note, purpose="unseen", reason=why)
 
         step = "verify"
         notes = []
@@ -1502,16 +1672,25 @@ def run_synth(
             "libraries": libraries, "written_by": os.environ.get("SENSE_LLM_MODEL") or llm.DEFAULT_MODEL,
             "attempts": used, "question": d.question, "goal": goal, "code_sha256": code_sha, "design": d.to_dict(),
             "probes": probe_facts,
+            # which files chat sends to this sense: those agent.detect describes like the files it was verified on
+            "detected": {"modality": detection.get("modality"), "format": detection.get("format"), "suffix": suffix,
+                         "formats": _verified_formats(detection, probes.files)},
         }
         if generator_code is not None:
             manifest["generator_sha256"] = facts["generator_sha256"]
+        if fetched is not None:
+            probe_facts["fetched"] = facts["fetched"]
         if install_record is not None:
             manifest["install"] = install_record
         if unseen_set is not None:
             manifest["unseen"] = {k: unseen_set.to_dict()[k] for k in ("name", "source", "labels", "per_label")}
+        # a modality renamed "<name>-<format>" already says the format: adapter:audio-m4a, not adapter:audio-m4a-m4a
+        slug = d.modality if d.modality.endswith(f"-{d.format}") else None
         bridge = AdapterBridge(kind=d.kind, modality=d.modality, model_name=model_name, code=code,
-                               manifest=_jsonable(manifest), timeout=ADAPTER_TIMEOUT)
+                               manifest=_jsonable(manifest), slug=slug, timeout=ADAPTER_TIMEOUT)
         request = FitRequest(model=model_name, dataset=probes.name, modality=d.modality, scope="closed")
+        if on_request is not None:  # agent.jobs keeps it as the job's request, which sense.runs records
+            on_request(request)
         model = models.load_model(model_name)
         if native is None:  # the native control needs files the model can be given as they are
             native = _reads_as_text(file) or _mostly_text(probes.files)
@@ -1525,7 +1704,7 @@ def run_synth(
             card = adapters.verify_files(model, bridge, probes, request, idx=scored, native=native, unseen=unseen_set)
         except AdapterError as err:
             say("fail", err.reason, bridge=bridge.name, error=err.to_dict())
-            finish(f"No {d.modality} sense was installed: {err.reason}")
+            finish(f"No {words(d.modality)} sense was installed: {err.reason}")
             return [], None
         seconds = round(time.monotonic() - started, 2)
         say("ok", _card_summary(card), card=card.to_dict(), controls=card.controls,
@@ -1557,7 +1736,7 @@ def run_synth(
             if generator_code is not None:
                 (directory / "generator.py").write_text(generator_code, encoding="utf-8")
             installed = bridge.name
-            say("ok", f"Installed {bridge.name}; {info.label} can now take {d.modality} files in chat.",
+            say("ok", f"Installed {bridge.name}; {info.label} can now take {words(d.modality)} files in chat.",
                 bridge=bridge.name, replaced=earlier, directory=str(directory))
         elif ok:
             card.verdict = "candidate"
@@ -1570,12 +1749,12 @@ def run_synth(
             say("info", f"Installed nothing; {bridge.name} did not pass its checks.", bridge=bridge.name)
 
         if installed:
-            message = (f"{info.label} can now take {d.modality} files through {installed}: it scored "
+            message = (f"{info.label} can now take {words(d.modality)} files through {installed}: it scored "
                        f"{pct(card.accuracy)} on {card.n} probe files, against {pct(card.chance)} chance.")
         elif ok:
-            message = f"No {d.modality} sense was installed for {info.label}: {sentence} But {blocked}."
+            message = f"No {words(d.modality)} sense was installed for {info.label}: {sentence} But {blocked}."
         else:
-            message = f"No {d.modality} sense was installed for {info.label}: {sentence}"
+            message = f"No {words(d.modality)} sense was installed for {info.label}: {sentence}"
         finish(message, installed=installed, bridge=bridge.name)
         return [card], installed
 

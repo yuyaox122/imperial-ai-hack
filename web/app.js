@@ -9,6 +9,7 @@
 
 const POLL_MS = 700;
 const MAX_POLL_RETRIES = 5;
+const OUTCOME_MS = 2000; // an answered request's card shows its outcome at least this long
 
 const CONTROL_LABELS = {
   swapped: "Swapped audio",
@@ -17,6 +18,9 @@ const CONTROL_LABELS = {
   text_bridge: "Text bridge",
   unseen_classes: "Unseen categories",
   specialist_alone: "Specialist alone, no LLM",
+  // An agent-written adapter's card (sense.adapters.verify_files) may add these two.
+  native: "Model reads the raw file",
+  unseen_categories: "Unseen categories",
 };
 /* How each control is drawn in the report card, as in the Figma screens: the lookup and the specialist
    alone are references, the text bridge a fallback, the rest controls. Unknown controls are controls. */
@@ -25,7 +29,7 @@ const CONTROL_ROLES = {
   specialist_alone: { kind: "reference", tag: "reference" },
   text_bridge: { kind: "candidate", tag: "fallback" },
 };
-const CONTROL_ORDER = ["lookup", "specialist_alone", "text_bridge", "unseen_classes", "no_input", "swapped"];
+const CONTROL_ORDER = ["lookup", "specialist_alone", "text_bridge", "unseen_classes", "unseen_categories", "native", "no_input", "swapped"];
 const KIND_LABELS = { native: "Native", text: "Text", tool: "Tool", image: "Image", vector: "Vector" };
 /* What each bridge kind is, from the bridge table in README.md; shown as a node subtitle. */
 const KIND_NOTES = {
@@ -51,10 +55,14 @@ const SCOPE_HINTS = {
 /* The rule agent/planner.py applies; the other controls are reported on the card, not used to decide. */
 const RULE_TEXT =
   "The agent scores each candidate bridge on held-out clips with controls: swapped audio, no audio, a nearest-example lookup and the specialist alone. It installs a bridge only if it clears chance and swapped audio by a fixed margin (for any sound, the vector bridge must also hold up on categories it was not fitted on), preferring the most accurate one; otherwise it installs nothing and says why.";
+/* The bars agent/planner.py (RulePlanner.assess) and agent/synth.py apply to an agent-written adapter's card. */
+const ADAPTER_RULE_TEXT =
+  "The adapter is scored on labelled probe files it never saw: it was written from your file alone, before any probe existed. It is installed only if it scores at least 15 points above chance and 10 points above swapped input; at least 10 points above the model reading the raw file, when that can be measured; at least 15 points above its own chance on categories it was not built around, when those were found; on at least 10 probe files, with the 95% interval clear of chance. Otherwise nothing is installed and the card says why.";
 const STATUS_WORDS = { start: "started", ok: "succeeded", fail: "failed", info: "note" };
 const JOB_WORDS = { running: "Running", done: "Finished", failed: "Failed", lost: "Disconnected" };
 
-/* Auto-discovery steps surround the original fit loop. Legacy runs show only their own steps. */
+/* Auto-discovery steps surround the original fit loop. Legacy runs show only their own steps. An adapter run
+   (agent/auto.py's adapter flow, agent.synth.run_synth) has steps of its own: ADAPTER_STEPS. */
 const STEPS = [
   { key: "detect", title: "Detect the input", idle: "Identify what kind of file the model needs to understand.", auto: true },
   { key: "research", title: "Research the task", idle: "Find a suitable specialist and approach for the goal.", auto: true },
@@ -67,8 +75,31 @@ const STEPS = [
   { key: "decide", title: "Install or refuse", idle: "Pick the bridge that beats the controls, or refuse." },
   { key: "install", title: "Install", idle: "Add it to the model's senses, ready for chat." },
 ];
-const STEP_INDEX = Object.fromEntries(STEPS.map((s) => [s.key, s]));
-const STEP_WORDS = { done: "Done", running: "Running", pending: "Pending", refused: "Refused", failed: "Failed", stopped: "Stopped" };
+/* The adapter flow, in agent.synth.run_synth's order. The two optional steps appear when the design asks to
+   install packages (or the run reached them). */
+const ADAPTER_STEPS = [
+  { key: "detect", title: "Detect the input", idle: "Identify what kind of file the model needs to understand." },
+  { key: "design", title: "Design an adapter", idle: "Plan code that turns the file into text or images the model reads." },
+  { key: "install_request", title: "Check requested packages", idle: "Vet the packages the design asks for before asking you.", optional: true },
+  { key: "approval", title: "Your approval", idle: "Wait for you to approve or decline installing them.", optional: true },
+  { key: "build", title: "Write and run the adapter", idle: "Write adapt(path) and run it on your file in the sandbox, repairing it on errors." },
+  { key: "data", title: "Find labelled probe files", idle: "Your examples folder, else a public dataset, else generated files." },
+  { key: "verify", title: "Verify on probe files", idle: "Score the adapter against swapped input, no input and the raw file." },
+  { key: "decide", title: "Install or refuse", idle: "Install the adapter only if it clears the bars, or refuse." },
+  { key: "install", title: "Install", idle: "Add it to the model's senses, ready for chat." },
+];
+const STEP_INDEX = Object.fromEntries([...ADAPTER_STEPS, ...STEPS].map((s) => [s.key, s]));
+const STEP_WORDS = { done: "Done", running: "Running", pending: "Pending", refused: "Refused", failed: "Failed", stopped: "Stopped", declined: "Declined" };
+/* An info event that ends these steps' open start: install_request ends with info when you decline. */
+const INFO_CLOSES = new Set(["install_request"]);
+/* Readable names for modalities agent.detect names, and for names designers give; others are capitalised. A
+   designer's name for a file agent.detect calls "other" ("3d-model" for an unknown binary) keeps its own name, so
+   that its sense is never shown as the same "3D model" as agent.detect's 3d sense. */
+const MODALITY_NAMES = {
+  "3d": "3D model", "point-cloud": "Point cloud", molecule: "Molecule",
+  geo: "Coordinates", video: "Video", audio: "Audio", text: "Text", image: "Image", table: "Table",
+  timeseries: "Time series", "time-series": "Time series", "medical-image": "Medical image", other: "Other file",
+};
 
 const state = {
   models: [],
@@ -290,6 +321,24 @@ const seconds = (t) => (toNumber(t) === null ? "" : `${t < 0.1 ? t.toFixed(2) : 
 const capitalise = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : "");
 const humanise = (key) => capitalise(String(key).replace(/_/g, " "));
 const kindLabel = (kind) => KIND_LABELS[kind] || capitalise(kind || "unknown");
+/** A modality as people say it: "3D model", "Coordinates", "Molecule"; an unknown name is capitalised. */
+function modalityName(modality) {
+  const key = String(modality || "").toLowerCase().trim();
+  return MODALITY_NAMES[key] || capitalise(key.replace(/[-_]+/g, " ")) || "Sense";
+}
+/** An adapter run's probe set: agent.synth names it <modality>-dataset-<hash>, <modality>-examples-<hash> or generated-<modality>-<hash>. */
+const isProbeSet = (name) => typeof name === "string" && /^generated-.+-[0-9a-f]{6,}$|-(dataset|examples)-[0-9a-f]{6,}$/.test(name);
+/** A labelled set's title for subtitles; an adapter's probe set, named by a hash, by where its files came from
+    (the name says that much; the run's data step, when it is at hand, says more: probeSourceText). */
+function setTitle(name) {
+  if (!isProbeSet(name)) return datasetTitle(name);
+  if (name.startsWith("generated-")) return "generated probe files";
+  return /-examples-[0-9a-f]+$/.test(name) ? "probe files from your examples" : "probe files from a public dataset";
+}
+/** An agent-written adapter's bridge is named "adapter:<slug>" (sense.adapters.AdapterBridge). */
+const isAdapter = (bridge) => typeof bridge === "string" && bridge.startsWith("adapter:");
+/** What a card's bridge is, for subtitles: "Agent-written adapter (text)" or "Vector bridge". */
+const bridgeLabel = (card) => (isAdapter(card.bridge) ? `Agent-written adapter (${card.kind === "image" ? "images" : "text"})` : `${kindLabel(card.kind)} bridge`);
 /** How a card is drawn. The API's verdict, except that a rejected bridge that passed its checks and lost to
     the installed one was not needed rather than refused: screen 02 draws it as a plain candidate. */
 function shownVerdict(card) {
@@ -643,18 +692,18 @@ function renderBrain() {
     if (!r.level || BRAIN_RANK[entry.level] > BRAIN_RANK[r.level]) r.level = entry.level;
   };
   const model = currentModel();
-  for (const m of model ? model.native || [] : []) add(m, { level: "native", title: capitalise(m), sub: "Native" });
+  for (const m of model ? model.native || [] : []) add(m, { level: "native", title: modalityName(m), sub: "Native" });
   for (const sense of state.senses) {
     const card = senseCard(sense);
     const acc = toNumber(card.accuracy);
-    add(sense.modality, { level: "installed", title: capitalise(sense.modality), sub: [`${kindLabel(card.kind)} bridge`, acc !== null ? pct(acc) : ""].filter(Boolean).join(" · "), bridge: sense.bridge });
+    add(sense.modality, { level: "installed", title: modalityName(sense.modality), sub: [bridgeLabel(card), acc !== null ? pct(acc) : ""].filter(Boolean).join(" · "), bridge: sense.bridge });
   }
   const refused = refusedRun();
-  if (refused) add(refused.modality, { level: "refused", title: capitalise(refused.modality), sub: `Refused for ${datasetTitle(refused.dataset)}` });
+  if (refused) add(refused.modality, { level: "refused", title: modalityName(refused.modality), sub: `Refused for ${setTitle(refused.dataset)}` });
   const job = modelJob();
   const target = jobModality(job);
   if (job && job.status === "running" && target && !(model ? model.native || [] : []).includes(target)) {
-    add(target, { level: "running", title: capitalise(target), sub: "Agent run in progress" });
+    add(target, { level: "running", title: modalityName(target), sub: "Agent run in progress" });
   }
   brainRegions = regions;
   const levels = {};
@@ -709,16 +758,16 @@ function renderChips() {
   const chip = (cls, modality, meta, extra, title) =>
     h("li", { class: `chip ${cls}`.trim(), title, style: `--swatch: ${modalityColour(modality)}` },
       modalityIcon(modality, 13),
-      h("span", { class: "chip-label", text: capitalise(modality) }),
+      h("span", { class: "chip-label", text: modalityName(modality) }),
       h("span", { class: "chip-meta", text: meta }),
       extra);
-  const chips = (model.native || []).map((m) => chip("", m, "native", null, `${capitalise(m)}: native`));
+  const chips = (model.native || []).map((m) => chip("", m, "native", null, `${modalityName(m)}: native`));
   for (const sense of state.senses) {
     const card = senseCard(sense);
     const fresh = !state.usedBridges.has(sense.bridge);
     const acc = toNumber(card.accuracy);
-    const meta = [kindLabel(card.kind).toLowerCase(), acc !== null ? pct(acc) : null].filter(Boolean).join(" · ");
-    chips.push(chip("", sense.modality, meta, fresh ? tag("New", "new") : null, `${capitalise(sense.modality)}: ${sense.bridge}`));
+    const meta = [isAdapter(sense.bridge) ? "adapter" : kindLabel(card.kind).toLowerCase(), acc !== null ? pct(acc) : null].filter(Boolean).join(" · ");
+    chips.push(chip("", sense.modality, meta, fresh ? tag("New", "new") : null, `${modalityName(sense.modality)}: ${sense.bridge}`));
   }
   const job = modelJob();
   const target = jobModality(job) || null;
@@ -727,7 +776,7 @@ function renderChips() {
   }
   const refused = refusedRun();
   if (refused && !state.senses.some((s) => s.modality === refused.modality)) {
-    chips.push(chip("chip--refused", refused.modality, "refused", null, `${capitalise(refused.modality)}: the agent installed no bridge`));
+    chips.push(chip("chip--refused", refused.modality, "refused", null, `${modalityName(refused.modality)}: the agent installed no bridge`));
   }
   list.replaceChildren(...chips);
 }
@@ -739,7 +788,7 @@ function renderDropModalities() {
   const modalities = [...new Set([...(model ? model.native || [] : []), ...state.senses.map((s) => s.modality)])];
   list.replaceChildren(
     ...modalities.map((m) =>
-      h("li", { class: "mod", style: `--mod: ${modalityColour(m)}`, title: capitalise(m) }, modalityIcon(m, 14), h("span", { class: "sr-only", text: m })),
+      h("li", { class: "mod", style: `--mod: ${modalityColour(m)}`, title: modalityName(m) }, modalityIcon(m, 14), h("span", { class: "sr-only", text: modalityName(m) })),
     ),
   );
 }
@@ -821,7 +870,7 @@ function renderSenses(senses) {
     rows.push(
       h("li", { class: "sense-row sense-row--native" },
         modalityMark(m),
-        h("span", { class: "sense-text" }, h("span", { class: "sense-title", text: capitalise(m) }), h("span", { class: "sense-sub", text: "Read by the model as is" })),
+        h("span", { class: "sense-text" }, h("span", { class: "sense-title", text: modalityName(m) }), h("span", { class: "sense-sub", text: "Read by the model as is" })),
         h("span"),
         tag("Native")),
     );
@@ -837,8 +886,8 @@ function renderSenses(senses) {
       h("li", { class: "sense-row sense-row--refused" },
         modalityMark(refused.modality),
         h("button", { type: "button", class: "sense-text", "data-bridge": refused.best ? refused.best.bridge : "", onclick: () => selectReport(refused.best && refused.best.bridge) },
-          h("span", { class: "sense-title", text: capitalise(refused.modality) }),
-          h("span", { class: "sense-sub", text: `Nothing installed for ${datasetTitle(refused.dataset)}` })),
+          h("span", { class: "sense-title", text: modalityName(refused.modality) }),
+          h("span", { class: "sense-sub", text: `Nothing installed for ${setTitle(refused.dataset)}` })),
         acc !== null ? h("span", { class: "sense-value", text: pct(acc) }) : h("span"),
         tag("Refused", "danger")),
     );
@@ -864,13 +913,13 @@ function senseItem(sense) {
     "aria-label": `Remove the ${sense.modality || ""} sense ${sense.bridge || ""}`.replace(/\s+/g, " "),
   });
   remove.addEventListener("click", () => removeSense(sense, remove, errorEl));
-  const sub = [`${kindLabel(card.kind)} bridge`, datasetTitle(card.dataset)].filter(Boolean).join(" · ");
+  const sub = [bridgeLabel(card), setTitle(card.dataset)].filter(Boolean).join(" · ");
   return h(
     "li",
     { class: "sense-row sense-row--on" },
     modalityMark(sense.modality),
     h("button", { type: "button", class: "sense-text", "data-bridge": sense.bridge, title: `Show the report card of ${sense.bridge}`, onclick: () => selectReport(sense.bridge) },
-      h("span", { class: "sense-title", text: capitalise(sense.modality) }),
+      h("span", { class: "sense-title", text: modalityName(sense.modality) }),
       h("span", { class: "sense-sub", text: sub })),
     acc !== null ? h("span", { class: "sense-value", text: pct(acc) }) : h("span"),
     remove,
@@ -935,14 +984,15 @@ function renderReport() {
         h("p", {
           class: "report-sub",
           text: [
-            jobModality(job) ? `${capitalise(jobModality(job))} → ${modelLabel(state.model)}` : modelLabel(state.model),
+            jobModality(job) ? `${modalityName(jobModality(job))} → ${modelLabel(state.model)}` : modelLabel(state.model),
             job.goal || null,
-            kinds.length ? `candidates: ${kinds.map((k) => `${k} bridge`).join(", ")}` : null,
+            kinds.length && isAdapterFlow(job) ? `candidate: an agent-written adapter (${kinds[0] === "image" ? "images" : "text"})` : null,
+            kinds.length && !isAdapterFlow(job) ? `candidates: ${kinds.map((k) => `${k} bridge`).join(", ")}` : null,
           ]
             .filter(Boolean)
             .join(" · "),
         }),
-        callout("info", "Install rule", RULE_TEXT, { iconName: "info" }),
+        callout("info", "Install rule", isAdapterFlow(job) ? ADAPTER_RULE_TEXT : RULE_TEXT, { iconName: "info" }),
       );
       return;
     }
@@ -970,14 +1020,17 @@ function renderReport() {
   const chance = toNumber(card.chance);
   const n = toNumber(card.n);
   const acc = toNumber(card.accuracy);
+  const adapter = isAdapter(card.bridge);
   const dataset = state.datasets.find((d) => d.name === card.dataset);
   const nLabels = dataset && Array.isArray(dataset.labels) ? dataset.labels.length : null;
   const layer = job ? fitData(job, card.bridge).layer : null;
+  // An adapter's probe set is named by a hash; the run's data step says where its files came from.
+  const probes = adapter && job && job.cards.get(card.bridge) === card ? probeFacts(job) : null;
   const context = [
-    `${capitalise(card.modality)} → ${modelLabel(card.model || state.model)}`,
-    `${kindLabel(card.kind).toLowerCase()} bridge`,
+    `${modalityName(card.modality)} → ${modelLabel(card.model || state.model)}`,
+    adapter ? bridgeLabel(card).toLowerCase() : `${kindLabel(card.kind).toLowerCase()} bridge`,
     toNumber(layer) !== null ? `block ${layer}` : null,
-    datasetTitle(card.dataset),
+    probes ? `probe files: ${probeSourceText(probes)}` : setTitle(card.dataset),
   ].filter(Boolean);
   const interval = Array.isArray(card.interval) && card.interval.length === 2 ? card.interval.map(toNumber) : null;
   const headlineNote = [
@@ -987,8 +1040,12 @@ function renderReport() {
       ? `95% CI ${(interval[0] * 100).toFixed(1)}–${(interval[1] * 100).toFixed(1)}`
       : null,
   ].filter(Boolean);
-  const scope =
-    card.scope === "closed"
+  const unseenMeasured = toNumber((card.controls || {}).unseen_categories) !== null;
+  const scope = adapter
+    ? unseenMeasured
+      ? "Scored on probe files the adapter never saw, and on categories it was not built around."
+      : "Scored on probe files the adapter never saw while it was written."
+    : card.scope === "closed"
       ? `Scope: ${nLabels ? `the ${nLabels} categories it was fitted on` : "the categories it was fitted on"}.`
       : card.scope === "open"
         ? toNumber((card.controls || {}).unseen_classes) !== null
@@ -999,18 +1056,23 @@ function renderReport() {
   const controls = Object.entries(card.controls || {}).sort(
     ([a], [b]) => (CONTROL_ORDER.indexOf(a) + 1 || 99) - (CONTROL_ORDER.indexOf(b) + 1 || 99),
   );
+  // A control scored on another set of labels (unseen categories) has its own chance: card.control_chance.
+  const ownChance = card.control_chance && typeof card.control_chance === "object" ? card.control_chance : {};
   el.replaceChildren(...[
     h("p", { class: "report-sub", text: context.join(" · "), title: card.bridge }),
     h("div", { class: "readout brackets" },
       h("div", { class: "display" },
         h("span", { class: "display-value", text: acc === null ? "n/a" : pct(acc) }),
-        h("span", { class: "display-caption", text: n !== null ? `on ${n} held-out questions` : "held-out accuracy" })),
+        h("span", { class: "display-caption", text: n !== null ? `on ${n} held-out ${adapter ? "probe files" : "questions"}` : "held-out accuracy" })),
       headlineNote.length ? h("p", { class: "report-chance", text: headlineNote.join(" · ") }) : null),
     h("div", { class: "metrics" },
-      metricRow(`${kindLabel(card.kind)} bridge`, acc, kind, chance, shown.tag),
+      metricRow(adapter ? bridgeLabel(card) : `${kindLabel(card.kind)} bridge`, acc, kind, chance, shown.tag),
       controls.map(([key, value]) => {
         const role = CONTROL_ROLES[key] || { kind: "control", tag: "control" };
-        return metricRow(CONTROL_LABELS[key] || humanise(key), value, role.kind, chance, role.tag);
+        const own = toNumber(ownChance[key]);
+        const label = adapter && key === "swapped" ? "Swapped input" : CONTROL_LABELS[key] || humanise(key);
+        return metricRow(label, value, role.kind, own !== null ? own : chance, role.tag,
+          own !== null && own !== chance ? `own chance ${pct(own)}` : null);
       })),
     chance !== null ? h("p", { class: "chance-key", text: `chance ${pct(chance)}` }) : null,
     callout(
@@ -1018,11 +1080,13 @@ function renderReport() {
       kind === "refused" ? "Why it was refused" : kind === "installed" ? "Why it was installed" : "Agent's reason",
       [scope, card.reason].filter(Boolean).join(" ") || "The agent gave no reason for this card.",
     ),
+    adapter ? callout("neutral", "Install rule for adapters", ADAPTER_RULE_TEXT, { iconName: "info" }) : null,
   ].filter(Boolean)); // native replaceChildren would print a null child as the text "null"
 }
 
-/** Metric row: label and badge, value, a bar, and the chance tick. */
-function metricRow(label, value, kind, chance, tagLabel) {
+/** Metric row: label and badge, value, a bar, and the chance tick (at the control's own chance when it has one,
+    named in `note`). */
+function metricRow(label, value, kind, chance, tagLabel, note = null) {
   const v = toNumber(value);
   const tone = kind === "installed" ? "success" : kind === "refused" ? "danger" : "neutral";
   return h(
@@ -1031,7 +1095,8 @@ function metricRow(label, value, kind, chance, tagLabel) {
     h("div", { class: "metric-head" },
       h("span", { class: "metric-label-group" },
         h("span", { class: "metric-label", text: label, title: label }),
-        tagLabel ? tag(tagLabel, tone) : null),
+        tagLabel ? tag(tagLabel, tone) : null,
+        note ? h("span", { class: "metric-chance", text: note }) : null),
       h("span", { class: "metric-value", text: v === null ? "n/a" : pct(v) })),
     h("div", { class: "track", "aria-hidden": "true" },
       h("div", { class: "fill", style: `width: ${v === null ? 0 : clamp01(v) * 100}%` }),
@@ -1057,6 +1122,9 @@ function exportReport() {
 /** Bridge kinds the planner chose, then any kind that shows up in fit events or cards. */
 function planKinds(job) {
   const kinds = [];
+  const design = job.steps.get("design");
+  const designed = design ? design.events.findLast((e) => e.status === "ok" && e.data && e.data.route) : null;
+  if (designed) kinds.push(designed.data.route === "images" ? "image" : "text");
   const plan = job.steps.get("plan");
   if (plan) for (const e of plan.events) if (Array.isArray((e.data || {}).kinds)) kinds.splice(0, kinds.length, ...e.data.kinds);
   const fit = job.steps.get("fit");
@@ -1134,7 +1202,7 @@ function renderGraph() {
   const datasetName = job && job.request ? job.request.dataset : state.dataset;
   const dataset = state.datasets.find((d) => d.name === datasetName) || null;
   const modality = jobModality(job) || (dataset && dataset.modality) || "audio";
-  $("graph-sub").textContent = model ? `${capitalise(modality)} → ${model.label}` : "";
+  $("graph-sub").textContent = model ? `${modalityName(modality)} → ${model.label}` : "";
   if (!model) {
     canvas.replaceChildren(h("p", { class: "graph-empty", text: "Choose a base model to see how a sense reaches it." }));
     return;
@@ -1147,7 +1215,9 @@ function renderGraph() {
   const n = cards.length ? toNumber(cards[0].n) : null;
   const scopeInput = document.querySelector('input[name="scope"]:checked');
   const scope = job && job.request ? job.request.scope : scopeInput ? scopeInput.value : "closed";
-  const dataNode = dataset
+  const adapterRun = isAdapterFlow(job);
+  // An adapter run's probe files stand where a labelled set would.
+  const dataNode = adapterRun ? probeNode(job, n, nextIdx) : dataset
     ? graphNode({
         idx: nextIdx(),
         iconEl: icon("database"),
@@ -1180,6 +1250,10 @@ function renderGraph() {
       const fd = fitData(job, kind);
       const card = cards.find((c) => c.kind === kind) || null;
       const bridge = (card && card.bridge) || fd.bridge;
+      // An adapter run has one candidate, its design; it is written at the build step and scored at verify.
+      const designed = adapterRun ? ((job.steps.get("design")?.events.findLast((e) => e.status === "ok") || {}).data || {}) : null;
+      const build = designed ? job.steps.get("build") : null;
+      const buildState = build ? stepStatus("build", build, job) : "pending";
       let nodeState = "default";
       let status = "queued";
       let tone = "var(--mcs-gray-600)";
@@ -1187,6 +1261,15 @@ function renderGraph() {
         nodeState = SHOWN[shownVerdict(card)].node;
         status = pct(card.accuracy);
         tone = nodeState === "refused" ? "var(--mcs-red-500)" : nodeState === "installed" ? "var(--mcs-green-500)" : "var(--mcs-gray-400)";
+      } else if (designed && job.status === "running" && (buildState === "running" || (buildState === "done" && job.steps.has("verify")))) {
+        nodeState = "running";
+        status = buildState === "running" ? "writing" : "testing";
+        tone = "var(--mcs-blue-500)";
+      } else if (designed && buildState === "done") {
+        status = job.status === "running" ? "built" : "not verified";
+      } else if (designed && job.status !== "running") {
+        nodeState = "skipped";
+        status = buildState === "refused" ? "did not run" : "not built";
       } else if (job.status === "running" && ((fd.started && !fd.built) || verifying(job, bridge))) {
         nodeState = "running";
         status = fd.built ? "testing" : "fitting";
@@ -1210,8 +1293,8 @@ function renderGraph() {
           nodeState,
           idx: nextIdx(),
           iconEl: icon("plug"),
-          title: `${kindLabel(kind)} bridge`,
-          subtitle: [KIND_NOTES[kind], fd.layer !== null ? `block ${fd.layer}` : null].filter(Boolean).join(" · "),
+          title: designed ? `Adapter (${kind === "image" ? "images" : "text"})` : `${kindLabel(kind)} bridge`,
+          subtitle: designed ? designed.description || "Agent-written code in the sandbox" : [KIND_NOTES[kind], fd.layer !== null ? `block ${fd.layer}` : null].filter(Boolean).join(" · "),
           ports: [portRow(ports[0], ports[1], { in: `bridge-in-${kind}`, out: `bridge-out-${kind}` }, { in: wireColour("data"), out: wireColour(KIND_WIRE[kind]) })],
           footer: fd.seconds !== null ? `fit ${seconds(fd.seconds)}` : bridge || kind,
           status,
@@ -1277,6 +1360,27 @@ function renderGraph() {
     h("div", { class: "graph-col" }, modelNode),
   );
   drawWires();
+}
+
+/** The graph's first column for an adapter run: its probe files, all held out, or why there are none yet. */
+function probeNode(job, n, nextIdx) {
+  const probes = probeFacts(job);
+  if (!probes) {
+    return h("p", { class: "graph-empty", text: job.status === "running" ? "The agent has not found probe files yet." : "This run found no probe files." });
+  }
+  return graphNode({
+    idx: nextIdx(),
+    iconEl: icon("database"),
+    title: probeSourceText(probes),
+    subtitle: `${(probes.labels || []).length} labels · ${probes.n} ${probes.provenance} probe files`,
+    ports: [
+      portRow("", "never seen by the adapter", { out: "data-fit" }, { out: wireColour("data") }),
+      portRow("", n !== null ? `${n} scored` : "all scored", { out: "data-held" }, { out: wireColour("data") }),
+    ],
+    footer: probes.licence || probes.name,
+    status: "all held out",
+    statusTone: "var(--mcs-gray-600)",
+  });
 }
 
 /** Draw the wires between ports at right angles, coloured by the data that flows. */
@@ -1510,7 +1614,7 @@ function renderAttachments() {
   const list = $("attachments");
   const chips = [
     ...state.files.map((file) =>
-      attachmentChip(file.name, fileModality(file), "upload", () => {
+      attachmentChip(file.name, fileModality(file), `${fileKindName(file)} · upload`, () => {
         state.files = state.files.filter((f) => f !== file);
         renderAttachments();
       }),
@@ -1523,11 +1627,27 @@ function renderAttachments() {
   list.hidden = chips.length === 0;
 }
 
-/** The modality an upload's MIME type suggests, for its icon only; the server decides from the file's bytes. */
+/* File extensions for the icons of modalities browsers give no MIME type for. Icons only. */
+const EXTENSION_MODALITIES = {
+  "3d": ["glb", "gltf", "obj", "stl", "ply", "fbx", "off", "3mf", "dae", "usdz"],
+  molecule: ["sdf", "mol", "mol2", "pdb", "xyz", "smi", "smiles", "cif", "mmcif"],
+  geo: ["geojson", "gpx", "kml", "kmz", "shp"],
+  table: ["csv", "tsv", "parquet"],
+  genome: ["fasta", "fa", "fastq", "fna"],
+};
+
+/** The modality an upload's MIME type or extension suggests, for its icon and label only; the server decides
+    from the file's bytes (agent.detect). */
 function fileModality(file) {
   const type = (file && file.type) || "";
-  return ["audio", "image", "text"].find((m) => type.startsWith(`${m}/`)) || "other";
+  const ext = String((file && file.name) || "").toLowerCase().split(".").slice(1).pop() || "";
+  const byExt = Object.keys(EXTENSION_MODALITIES).find((m) => EXTENSION_MODALITIES[m].includes(ext));
+  if (byExt) return byExt;
+  if (type.startsWith("model/")) return "3d";
+  return ["audio", "image", "video", "text"].find((m) => type.startsWith(`${m}/`)) || "other";
 }
+/** How a sent file is labelled under its name: "3D model", "Audio", or "File" when nothing suggests more. */
+const fileKindName = (file) => (fileModality(file) === "other" ? "File" : modalityName(fileModality(file)));
 
 /** A file attached to the next message, as a compact Attachment (Figma 22:234). */
 function attachmentChip(name, modality, meta, onRemove) {
@@ -1764,7 +1884,7 @@ function appendTurn(model, message, files, samples) {
         h("span", { class: "tile", style: `color: ${modalityColour(modality)}` }, modalityIcon(modality, 16)),
         h("span", { class: "attachment-text" },
           h("span", { class: "attachment-name", text: s.name || s.id }),
-          h("span", { class: "attachment-meta", text: `${capitalise(modality)} · sample · ${s.label || ""}`.replace(/ · $/, "") })),
+          h("span", { class: "attachment-meta", text: `${modalityName(modality)} · sample · ${s.label || ""}`.replace(/ · $/, "") })),
         h("button", {
           type: "button",
           class: "icon-button",
@@ -1779,7 +1899,7 @@ function appendTurn(model, message, files, samples) {
         h("span", { class: "tile", style: `color: ${modalityColour(fileModality(f))}` }, modalityIcon(fileModality(f), 16)),
         h("span", { class: "attachment-text" },
           h("span", { class: "attachment-name", text: f.name }),
-          h("span", { class: "attachment-meta", text: `${f.type ? capitalise(f.type.split("/")[0]) : "File"} · upload` }))),
+          h("span", { class: "attachment-meta", text: `${fileKindName(f)} · upload` }))),
     ),
   ];
   const reply = h("div", { class: "msg-body" }, h("p", { class: "msg-text pending", text: "Waiting for the model" }));
@@ -1807,11 +1927,11 @@ const toolNotCalled = (u) => u.kind === "tool" && /\bcould call \S+ but did not\
 function fillReply(turn, result) {
   const used = Array.isArray(result.used) ? result.used : [];
   const heard = used.filter((u) => u.kind !== "none" && !toolNotCalled(u));
-  const kinds = [...new Set(heard.map((u) => u.kind))];
+  const ways = [...new Set(heard.map(usedTag))];
   const missing = used.some((u) => u.kind === "none");
   const uncalled = used.some(toolNotCalled);
   turn.tags.replaceChildren(
-    ...kinds.map((k) => tag(k === "native" ? "Read as is" : `Heard via ${kindLabel(k).toLowerCase()} bridge`, "info")),
+    ...ways.map((label) => tag(label, "info")),
     ...(uncalled ? [tag("Tool not called", "warning")] : []),
     ...(missing ? [tag("File not received", "danger")] : []),
   );
@@ -1837,11 +1957,21 @@ function fillReply(turn, result) {
   scrollToEnd($("thread"));
 }
 
+/** The name-line tag for a file that reached the model: read as is, through an agent-written adapter, or a bridge. */
+function usedTag(used) {
+  if (used.kind === "native") return "Read as is";
+  if (isAdapter(used.bridge)) return "Read via adapter";
+  return `Heard via ${kindLabel(used.kind).toLowerCase()} bridge`;
+}
+
 /** One line per file: how it reached the model, or a warning when it did not. */
 function usedItem(used) {
   const missing = used.kind === "none";
-  // Kind "native" (bridge ""): the model took the file as it is, a text file's text or an image.
-  const how = used.kind === "native" ? "Read as is" : `${kindLabel(used.kind)} bridge ${used.bridge || ""}`.trim();
+  // Kind "native" (bridge ""): the model took the file as it is, a text file's text or an image. An agent-written
+  // adapter (bridge "adapter:<slug>", kind "text" or "image") ran its code on the file in the sandbox.
+  const how = used.kind === "native" ? "Read as is"
+    : isAdapter(used.bridge) ? `Read via ${used.bridge}`
+    : `${kindLabel(used.kind)} bridge ${used.bridge || ""}`.trim();
   const detail = missing
     ? used.detail || "No sense for this kind of file is installed, so the model did not receive it."
     : [how, used.detail].filter(Boolean).join(" · ");
@@ -1856,7 +1986,7 @@ function usedItem(used) {
 /** The agent's verdict in the chat when a run ends, as a callout. */
 function postAgentResult(job, data) {
   const cards = [...job.cards.values()];
-  const modality = capitalise(jobModality(job) || (cards[0] && cards[0].modality) || "sense");
+  const modality = modalityName(jobModality(job) || (cards[0] && cards[0].modality) || "sense");
   const installedCard = cards.find((c) => c.bridge === data.installed) || null;
   const fallback = fallbackRun(job);
   const done = job.doneData || {};
@@ -1889,7 +2019,7 @@ function postAgentResult(job, data) {
   } else if (data.installed) {
     const c = installedCard;
     const facts = c
-      ? [`${kindLabel(c.kind)} bridge`, datasetTitle(c.dataset), toNumber(c.n) !== null ? `${c.n} held-out questions` : null, toNumber(c.chance) !== null ? `chance ${pct(c.chance)}` : null]
+      ? [bridgeLabel(c), isAdapter(c.bridge) && probeFacts(job) ? `probe files: ${probeSourceText(probeFacts(job))}` : setTitle(c.dataset), toNumber(c.n) !== null ? `${c.n} held-out ${isAdapter(c.bridge) ? "probe files" : "questions"}` : null, toNumber(c.chance) !== null ? `chance ${pct(c.chance)}` : null]
       : [data.installed];
     result = resultCard(job, "installed", `${modality} installed`, c && toNumber(c.accuracy) !== null ? pct(c.accuracy) : "", facts.filter(Boolean).join(" · "), data.installed, null);
   } else {
@@ -2026,6 +2156,7 @@ async function runAgent(event) {
       err = new Error("Automatic discovery is not available on this server yet. Choose a labelled set, or update the server.");
     }
     showError(errorEl, err);
+    if (err.status === 409 && !state.job) followRunElsewhere(); // a run from another tab holds the slot: show it
   } finally {
     state.starting = false;
     syncControls();
@@ -2041,6 +2172,8 @@ function startJob(id, request, resumed) {
     status: "running",
     seen: 0,
     elapsed: null,
+    lastT: null, // the newest event's t, and when this page first saw it (Date.now()), for the clock while waiting
+    lastAt: 0,
     failures: 0,
     timer: null,
     steps: new Map(), // step -> {events, open}: what each Agent step card shows
@@ -2053,6 +2186,11 @@ function startJob(id, request, resumed) {
     // so the goal and the detected modality are kept here (from the request, then the detect event).
     goal: (request && typeof request.goal === "string" && request.goal) || "",
     detected: "",
+    flow: "", // the detect event's data.flow: "native", "specialist" or "adapter"
+    approval: null, // the open request (pending_approval) the card shows, with what the user answered here
+    approvalNote: null, // the agent's line in the chat thread about that request
+    stepEls: new Map(), // step key -> {sig, el}: unchanged steps keep their element, focus and open details
+    openDetails: new Set(), // step keys whose code block the user opened
     cancelled: false, // ended "failed" with error "Cancelled.": the user stopped it
   };
   state.reportBridge = null;
@@ -2061,6 +2199,7 @@ function startJob(id, request, resumed) {
   $("log-count").textContent = "";
   $("log-button").disabled = false;
   $("trace-outcome").replaceChildren();
+  $("approval").replaceChildren();
   showError($("trace-error"), null);
   if (!resumed) setTab("run");
   renderTraceHead();
@@ -2119,6 +2258,7 @@ function applyJob(job, data) {
     job.steps.clear();
     job.cards.clear();
     job.cardJson.clear();
+    job.stepEls.clear();
   }
   const logView = $("log-view");
   const follow = !logView.hidden && nearEnd(logView);
@@ -2129,7 +2269,15 @@ function applyJob(job, data) {
     if (card) cardsChanged = upsertCard(job, card) || cardsChanged;
   }
   job.seen = events.length;
-  if (events.length) job.elapsed = toNumber(events[events.length - 1].t);
+  const lastT = events.length ? toNumber(events[events.length - 1].t) : null;
+  if (lastT !== job.lastT) {
+    job.lastT = lastT;
+    job.lastAt = Date.now();
+  }
+  // No event comes while the run waits for your approval (up to 10 minutes), so its clock goes on from the last
+  // event by this page's clock rather than standing still.
+  const waiting = job.status === "running" && !job.replay && Boolean(data.pending_approval) && lastT !== null;
+  if (events.length) job.elapsed = waiting ? lastT + (Date.now() - job.lastAt) / 1000 : lastT;
   // agent.jobs and server.replay end a stopped run "failed" with error "Cancelled."; a replay's last event says so too.
   const last = events[events.length - 1];
   job.cancelled = job.status === "failed"
@@ -2141,8 +2289,10 @@ function applyJob(job, data) {
     job.datasetsReloaded = dataset;
     loadDatasets();
   }
+  trackApproval(job, data.pending_approval);
   renderTraceHead();
   renderSteps();
+  renderApproval(job);
   renderGraph();
   if (cardsChanged || job.status === "running") renderReport();
   if (follow) scrollToEnd(logView);
@@ -2176,6 +2326,7 @@ function appendEvent(job, event) {
   if (step === "detect" && event.status === "ok" && event.data) {
     if (typeof event.data.goal === "string" && event.data.goal) job.goal = event.data.goal;
     if (typeof event.data.modality === "string") job.detected = event.data.modality;
+    if (typeof event.data.flow === "string") job.flow = event.data.flow;
   }
   let s = job.steps.get(step);
   if (!s) {
@@ -2184,7 +2335,7 @@ function appendEvent(job, event) {
   }
   s.events.push(event);
   if (status === "start") s.open += 1;
-  else if (status === "ok" || status === "fail") s.open = Math.max(0, s.open - 1);
+  else if (status === "ok" || status === "fail" || (status === "info" && INFO_CLOSES.has(step))) s.open = Math.max(0, s.open - 1);
 }
 
 const isCard = (x) => Boolean(x && typeof x === "object" && typeof x.bridge === "string" && "accuracy" in x);
@@ -2227,12 +2378,20 @@ function finishJob(job, data) {
   const installedCard = cards.find((c) => c.bridge === job.installed);
   const best = bestCard(cards);
   state.reportBridge = fallback ? fallback.refused.bridge : installedCard ? installedCard.bridge : best ? best.bridge : null;
+  trackApproval(job, null, true);
+  renderApproval(job);
   renderTraceHead();
   renderSteps();
   renderReport();
   renderGraph();
   postAgentResult(job, data);
-  if (state.tab === "run") setTab("report");
+  if (state.tab === "run") {
+    // The Run tab is hidden for the report: a reader whose focus was in it (the approval card's outcome, a step,
+    // Stop) goes on at the report's heading, not at the start of the page.
+    const hadFocus = $("run-view").contains(document.activeElement);
+    setTab("report");
+    if (hadFocus) $("report-heading").focus({ preventScroll: true });
+  }
   syncControls();
   loadSenses();
   renderRuns();
@@ -2242,11 +2401,15 @@ function finishJob(job, data) {
 /** A step's state from its own events. Only the step's last outcome counts: a sub-step it recovered from (a
     dataset search that was unavailable, a candidate set that could not be used, then the prewired set) leaves
     the step done. A step left unfinished, or whose last outcome is a failure, is where the run stopped, failed
-    or needed the user. */
+    or needed the user. An adapter run's search for unseen categories (data sub-steps with purpose "unseen") comes
+    after the data step's own outcome and never decides it: a candidate it rejects is not a failure of the step,
+    and a search that found nothing is said by its "not measured" line and the card. */
 function stepStatus(key, s, job) {
   if (!s || !s.events.length) return "pending";
-  const outcome = s.events.findLast((e) => e.status === "ok" || e.status === "fail");
+  const counts = (e) => !(key === "data" && e.data && e.data.purpose === "unseen");
+  const outcome = s.events.findLast((e) => (e.status === "ok" || e.status === "fail") && counts(e));
   const failedLast = Boolean(outcome && outcome.status === "fail");
+  if (declined(key, s) && !job.cancelled) return "declined"; // your choice, not a failure: the run goes on
   if (job.status === "running") {
     // The newest step may still recover from its failed sub-step.
     if (s.open > 0 || (failedLast && [...job.steps.keys()].at(-1) === key)) return "running";
@@ -2287,44 +2450,252 @@ function stepCode(key, s) {
     return `install: ${pick("install") || "none"}`;
   }
   if (key === "install") return String(pick("bridge") || key);
+  if (key === "design") {
+    const route = pick("route");
+    const libs = pick("libraries");
+    return route ? `${route} · ${Array.isArray(libs) && libs.length ? libs.join(", ") : "standard library"}` : key;
+  }
+  if (key === "build") {
+    const attempts = pick("attempts");
+    const sha = pick("code_sha256");
+    return toNumber(attempts) !== null ? [`${attempts} attempt${attempts === 1 ? "" : "s"}`, sha ? `sha256 ${String(sha).slice(0, 12)}` : null].filter(Boolean).join(" · ") : key;
+  }
+  if (key === "data") {
+    const summary = s.events.findLast((e) => e.status === "ok" && e.data && !e.data.action && e.data.provenance);
+    return summary ? `${summary.data.provenance} · n=${summary.data.n}` : key;
+  }
+  if (key === "install_request") {
+    const verdict = pick("verdict");
+    return verdict ? `checks: ${verdict}` : key;
+  }
+  if (key === "approval") {
+    const reason = pick("reason");
+    return reason ? String(reason) : "waiting";
+  }
   return key;
 }
 
 function visibleSteps(job = state.job) {
+  if (job && isAdapterFlow(job)) {
+    const asks = job.steps.has("install_request") || job.steps.has("approval") || designAsksInstall(job);
+    return ADAPTER_STEPS.filter((s) => !s.optional || asks);
+  }
   const auto = !job || Boolean(job.goal) || STEPS.some((s) => s.auto && job.steps.has(s.key));
   return STEPS.filter((s) => auto || !s.auto);
 }
 
-/** Known steps in execution order, followed by any newly introduced server steps. */
+/** Whether a run took the adapter flow: its detect event says so, or (a record from before that field) it has
+    the adapter's own steps. */
+function isAdapterFlow(job) {
+  return Boolean(job) && (job.flow === "adapter" || job.steps.has("design") || job.steps.has("build"));
+}
+
+/** Whether the adapter's design asked to install packages (agent.synth: design.install). */
+function designAsksInstall(job) {
+  const design = job.steps.get("design");
+  const ok = design ? design.events.findLast((e) => e.status === "ok") : null;
+  return Boolean(ok && ok.data && Array.isArray(ok.data.install) && ok.data.install.length);
+}
+
+/** A request you declined (or left unanswered): the approval step's last event fails with that reason, and the
+    install_request step ends with info. */
+function declined(key, s) {
+  const last = s.events[s.events.length - 1];
+  if (!last) return false;
+  if (key === "approval") return last.status === "fail" && Boolean(last.data) && ["declined", "timed out"].includes(last.data.reason);
+  if (key === "install_request") return last.status === "info" && Boolean(last.data) && last.data.approved === false;
+  return false;
+}
+
+/** Known steps in execution order, followed by any newly introduced server steps. A step whose events and state
+    have not changed keeps its element, so a reader's focus and an open code block survive the next poll. */
 function renderSteps() {
   const job = state.job;
-  const extra = job ? [...job.steps.keys()].filter((k) => !STEP_INDEX[k]) : [];
-  const keys = [...visibleSteps(job).map((s) => s.key), ...extra];
-  $("steps").style.setProperty("--steps", String(keys.length));
-  $("steps").replaceChildren(
-    ...keys.map((key, i) => {
-      const def = STEP_INDEX[key] || { title: humanise(key), idle: "" };
-      const s = job ? job.steps.get(key) : null;
-      const status = job ? stepStatus(key, s, job) : "pending";
-      const word = status === "refused" && job && (job.status === "failed" || job.status === "lost") ? STEP_WORDS.failed : STEP_WORDS[status];      const events = s ? s.events : [];
-      const last = events[events.length - 1];
-      let desc = last && last.message ? last.message : def.idle;
-      if (!events.length && job && job.status !== "running") desc = key === "install" && job.status === "done" ? "Nothing to install." : "Not reached.";
-      const time = events.length > 1 ? toNumber(last.t) - toNumber(events[0].t) : null;
-      const code = stepCode(key, s);
-      return h(
-        "li",
-        { class: `step step--${status}`, title: last && last.message ? last.message : undefined },
-        h("div", { class: "step-head" },
-          h("span", { class: "step-idx", text: String(i + 1).padStart(2, "0"), "aria-hidden": "true" }),
-          h("span", { class: "step-state" }, h("span", { class: "led", "aria-hidden": "true" }), word),
-          h("span", { class: "step-time", text: time !== null && Number.isFinite(time) ? seconds(time) : "" })),
-        h("p", { class: "step-title", text: def.title }),
-        h("p", { class: "step-desc", text: desc }),
-        h("p", { class: "step-code", text: code, title: code }),
+  const defs = visibleSteps(job);
+  const byKey = Object.fromEntries(defs.map((d) => [d.key, d]));
+  const extra = job ? [...job.steps.keys()].filter((k) => !byKey[k]) : [];
+  const keys = [...defs.map((d) => d.key), ...extra];
+  const list = $("steps");
+  list.style.setProperty("--steps", String(keys.length));
+  const items = keys.map((key, i) => {
+    const def = byKey[key] || STEP_INDEX[key] || { title: humanise(key), idle: "" };
+    const s = job ? job.steps.get(key) : null;
+    const status = job ? stepStatus(key, s, job) : "pending";
+    const word = status === "refused" && job && (job.status === "failed" || job.status === "lost") ? STEP_WORDS.failed
+      : status === "running" && key === "approval" ? "Waiting"
+      : STEP_WORDS[status];
+    const events = s ? s.events : [];
+    const sig = [i, def.title, status, word, events.length, job ? job.status : "", job ? job.installed : ""].join("|");
+    const kept = job ? job.stepEls.get(key) : null;
+    if (kept && kept.sig === sig) return kept.el;
+    const last = events[events.length - 1];
+    let desc = last && last.message ? last.message : def.idle;
+    if (!events.length && job && job.status !== "running") desc = key === "install" && job.status === "done" ? "Nothing to install." : "Not reached.";
+    const time = events.length > 1 ? toNumber(last.t) - toNumber(events[0].t) : null;
+    const code = stepCode(key, s);
+    const el = h(
+      "li",
+      { class: `step step--${status}`, title: last && last.message ? last.message : undefined },
+      h("div", { class: "step-head" },
+        h("span", { class: "step-idx", text: String(i + 1).padStart(2, "0"), "aria-hidden": "true" }),
+        h("span", { class: "step-state" }, h("span", { class: "led", "aria-hidden": "true" }), word),
+        h("span", { class: "step-time", text: time !== null && Number.isFinite(time) ? seconds(time) : "" })),
+      h("p", { class: "step-title", text: def.title }),
+      h("p", { class: "step-desc", text: desc }),
+      job && s ? stepDetail(key, s, job) : null,
+      h("p", { class: "step-code", text: code, title: code }),
+    );
+    if (job) job.stepEls.set(key, { sig, el });
+    return el;
+  });
+  // Move only what changed: replacing every child would drop the focus of a reader inside a step.
+  items.forEach((el, i) => {
+    const current = list.children[i];
+    if (current !== el) list.insertBefore(el, current || null);
+  });
+  while (list.children.length > items.length) list.lastElementChild.remove();
+}
+
+// ---------------------------------------------------------------- adapter run details
+
+/** The data step's own summary of an adapter run's probe files (its ok event without an action): name,
+    provenance (user | dataset | generated), source, licence, labels, counts, n, fetched, label_leaks, caveat. */
+function probeFacts(job) {
+  const s = job ? job.steps.get("data") : null;
+  const summary = s ? s.events.findLast((e) => e.status === "ok" && e.data && !e.data.action && e.data.provenance) : null;
+  return summary ? summary.data : null;
+}
+
+/** The unseen categories of an adapter run, from the data step: {measured: true, name, source, labels, per_label,
+    n, licence, url} when a second set was scored, {measured: false, note} when it was not, or null. */
+function unseenFacts(job) {
+  const s = job ? job.steps.get("data") : null;
+  if (!s) return null;
+  const info = s.events.findLast((e) => e.status === "info" && e.data
+    && (e.data.unseen || (e.data.purpose === "unseen" && !e.data.action)));
+  if (!info) return null;
+  if (info.data.unseen && typeof info.data.unseen === "object") {
+    const found = s.events.findLast((e) => e.status === "ok" && e.data && e.data.purpose === "unseen" && e.data.action === "candidate");
+    return {
+      measured: true, ...info.data.unseen, licence: found ? found.data.licence : null, url: found ? found.data.url : null,
+      title: found ? found.data.title || found.data.hub_id || found.data.source : null,
+    };
+  }
+  return { measured: false, note: info.message };
+}
+
+/** Where probe files came from, in a few words. */
+function probeSourceText(p) {
+  if (p.provenance === "generated") return "generated by the agent";
+  if (p.provenance === "user") return "your examples folder";
+  const fetched = p.fetched && typeof p.fetched === "object" ? p.fetched : {};
+  return String(fetched.title || fetched.hub_id || p.source || "a public dataset");
+}
+
+/** A source as a link when it is a web address, else as text (a folder on the server). */
+function sourceLink(text, url) {
+  const href = typeof url === "string" && /^https?:\/\//i.test(url) ? url : null;
+  return href ? h("a", { href, target: "_blank", rel: "noopener noreferrer", class: "step-link", text: text || href }) : h("span", { text: text || "" });
+}
+
+/** labels {label: count} as "ball 20, box 20". */
+const countsText = (labels, counts) => (labels || Object.keys(counts || {}))
+  .map((label) => (counts && toNumber(counts[label]) !== null ? `${label} ${counts[label]}` : String(label))).join(", ");
+
+/** One fact row of a step: a label and a value (text or nodes). */
+const fact = (label, ...value) => h("div", { class: "fact" }, h("dt", { text: label }), h("dd", {}, ...value));
+
+/** What an adapter run's step did, beyond its last message: the design, the attempts and the code, where the
+    probe files came from, the packages asked for. null for the other steps. */
+function stepDetail(key, s, job) {
+  const lastOk = s.events.findLast((e) => e.status === "ok");
+  const d = (lastOk && lastOk.data) || {};
+  if (key === "design" && lastOk) {
+    const libs = Array.isArray(d.libraries) && d.libraries.length ? d.libraries.join(", ") : "the standard library only";
+    const asked = Array.isArray(d.install) ? d.install : [];
+    return h("dl", { class: "facts" },
+      fact("Reads", `${modalityName(d.modality)}${d.format ? ` (${d.format})` : ""}`),
+      fact("Route", d.route === "images" ? "images, shown to the model" : "text, which the model reads"),
+      d.description ? fact("Extracts", d.description) : null,
+      fact("Libraries", libs),
+      d.question ? fact("Question", d.question) : null,
+      asked.length ? fact("Asks to install", asked.map((r) => `${r.name}${r.why ? ` (${r.why})` : ""}`).join("; ")) : null);
+  }
+  if (key === "build") {
+    const failures = s.events.filter((e) => e.status === "info" && e.data && toNumber(e.data.attempt) !== null);
+    const warning = s.events.find((e) => e.data && e.data.warning === "unsandboxed");
+    const ended = s.events.findLast((e) => e.status === "ok" || e.status === "fail");
+    const rows = [
+      ended ? fact("Attempts", `${ended.status === "ok" ? toNumber(d.attempts) ?? failures.length + 1 : failures.length || toNumber((ended.data || {}).attempts) || "?"}${ended.status === "fail" ? ", none worked" : ""}`) : null,
+      failures.length ? fact("Errors", h("ol", { class: "attempts" }, failures.map((e) => h("li", { text: shortError(e) })))) : null,
+      warning ? fact("Sandbox", h("span", { class: "fact-warn", text: "none here: the code ran with network and file access" })) : null,
+      lastOk && toNumber(d.seconds) !== null ? fact("Ran in", seconds(d.seconds)) : null,
+      lastOk && d.preview ? fact("Output", h("q", { text: d.preview })) : null,
+    ];
+    if (lastOk && typeof d.code === "string") {
+      const lines = d.code.replace(/\n+$/, "").split("\n").length;
+      rows.push(h("details", {
+        class: "code-block",
+        open: job.openDetails.has(key),
+        ontoggle: (e) => (e.currentTarget.open ? job.openDetails.add(key) : job.openDetails.delete(key)),
+      },
+        h("summary", { text: `The adapter's code · ${lines} line${lines === 1 ? "" : "s"}${d.code_sha256 ? ` · sha256 ${String(d.code_sha256).slice(0, 12)}` : ""}` }),
+        h("pre", { tabindex: "0", "aria-label": "The adapter's code" }, h("code", { text: d.code }))));
+    }
+    return rows.some(Boolean) ? h("dl", { class: "facts" }, rows) : null;
+  }
+  if (key === "data") {
+    const p = probeFacts(job);
+    const unseen = unseenFacts(job);
+    const asked = s.events.findLast((e) => e.status === "info" && e.data && e.data.wanted);
+    if (!p && !unseen && !asked) return null;
+    const rows = [];
+    if (p) {
+      const provenance = { user: "your examples (user)", dataset: "a public dataset", generated: "generated by the agent" }[p.provenance] || p.provenance;
+      const fetched = p.fetched && typeof p.fetched === "object" ? p.fetched : {};
+      rows.push(
+        fact("Provenance", provenance),
+        p.provenance !== "generated" ? fact("Source", sourceLink(probeSourceText(p) === "your examples folder" ? p.source : probeSourceText(p), fetched.url || p.source)) : null,
+        p.licence ? fact("Licence", `${p.licence}${fetched.licence_source ? ` (from ${fetched.licence_source})` : ""}`) : null,
+        fact("Labels", `${countsText(p.labels, p.counts)}${toNumber(p.n) !== null ? ` · ${p.n} files` : ""}`),
+        p.caveat ? fact("Caveat", h("span", { class: "fact-warn", text: p.caveat })) : null,
+        Array.isArray(p.label_leaks) && p.label_leaks.length ? fact("Warning", h("span", { class: "fact-warn", text: p.label_leaks.join("; ") })) : null,
       );
-    }),
-  );
+    }
+    if (unseen && unseen.measured) {
+      rows.push(fact("Unseen categories", sourceLink(unseen.title || unseen.source, unseen.url || unseen.source),
+        ` · ${countsText(unseen.labels, unseen.per_label)}${unseen.licence ? ` · ${unseen.licence}` : ""}`));
+    } else if (unseen) {
+      rows.push(fact("Unseen categories", h("span", { class: "fact-warn", text: unseen.note })));
+    }
+    if (!p && asked) {
+      const wanted = asked.data.wanted || {};
+      const labels = Array.isArray(wanted.labels) && wanted.labels.length ? wanted.labels.join(", ") : wanted.label_hint;
+      if (labels) rows.push(fact("Wanted", `${labels}${wanted.format ? ` · ${wanted.format} files` : ""}${toNumber(wanted.min_per_label) !== null ? ` · at least ${wanted.min_per_label} per label` : ""}`));
+    }
+    return rows.some(Boolean) ? h("dl", { class: "facts" }, rows) : null;
+  }
+  if (key === "install_request") {
+    const first = s.events[0];
+    const requested = (first && first.data && Array.isArray(first.data.requested)) ? first.data.requested : [];
+    const last = s.events[s.events.length - 1];
+    const ld = (last && last.data) || {};
+    const installed = Array.isArray(ld.installed) ? ld.installed : [];
+    return h("dl", { class: "facts" },
+      requested.length ? fact("Requested", requested.map((r) => `${r.name}${r.why ? ` (${r.why})` : ""}`).join("; ")) : null,
+      ld.verdict ? fact("Checks", String(ld.verdict)) : null,
+      installed.length ? fact("Installed", installed.map((p) => `${p.name} ${p.version || ""}`.trim()).join(", ")) : null,
+      ld.note ? fact("Outcome", String(ld.note)) : null);
+  }
+  return null;
+}
+
+/** A failed attempt in a few words: its error's first line, cut. */
+function shortError(event) {
+  const err = event.data && event.data.error && typeof event.data.error === "object" ? event.data.error : {};
+  const text = String(err.reason || event.message || "").replace(/^Attempt \d+ failed: /, "").replace(/ Asking the LLM for a repair\.$/, "");
+  const line = text.split("\n")[0].trim();
+  return `${event.data.attempt}: ${line.length > 140 ? `${line.slice(0, 139)}…` : line}`;
 }
 
 /** The run's progress as a one-pixel line along the band: the share of the six steps that have finished. */
@@ -2337,7 +2708,7 @@ function renderProgress() {
     return;
   }
   const steps = visibleSteps(job);
-  const finished = steps.filter((s) => ["done", "refused", "stopped"].includes(stepStatus(s.key, job.steps.get(s.key), job))).length;
+  const finished = steps.filter((s) => ["done", "refused", "stopped", "declined"].includes(stepStatus(s.key, job.steps.get(s.key), job))).length;
   bar.style.width = `${(job.status === "running" ? finished / steps.length : 1) * 100}%`;
   bar.dataset.state = job.status === "running" ? "running" : job.status === "done" ? "done" : job.cancelled ? "stopped" : "failed";
 }
@@ -2374,14 +2745,15 @@ function renderTraceHead() {
   else setTag(pill, JOB_WORDS[job.status] || job.status, "neutral");
   const req = job.request;
   const reached = [...job.steps.keys()].filter((k) => STEP_INDEX[k]).length;
+  const probes = isAdapterFlow(job) ? probeFacts(job) : null;
   // An auto run's request has no labelled set (dataset "") until its data step, and so no scope yet either.
   const text = req
     ? [
         job.replay ? "Recorded run" : null,
         modelLabel(req.model),
         job.goal || null,
-        req.dataset ? datasetTitle(req.dataset) : null,
-        req.dataset ? (SCOPE_LABELS[req.scope] || req.scope || "").toLowerCase() : null,
+        probes ? `probe files: ${probeSourceText(probes)}` : req.dataset && !isProbeSet(req.dataset) ? datasetTitle(req.dataset) : null,
+        req.dataset && !isProbeSet(req.dataset) ? (SCOPE_LABELS[req.scope] || req.scope || "").toLowerCase() : null,
         job.status === "running" ? `step ${Math.max(1, reached)} of ${visibleSteps(job).length}` : `${reached} step${reached === 1 ? "" : "s"}`,
       ].filter(Boolean).join(" · ")
     : "Resuming the last run…";
@@ -2407,6 +2779,201 @@ async function cancelJob() {
   if (state.job === job) renderTraceHead();
 }
 
+// ---------------------------------------------------------------- approvals
+
+/** Follow the run's open request (GET /api/jobs/<id> pending_approval; agent.jobs). A new request opens its card
+    and the Run tab, and the agent says so in the chat. A request that closes with no answer from here (timed out,
+    cancelled) closes the card; one answered here shows its outcome until the run has moved on past it (and at least
+    OUTCOME_MS). `final`: the run has ended, so the card goes. */
+function trackApproval(job, pending, final = false) {
+  const open = pending && typeof pending === "object" && typeof pending.id === "string" ? pending : null;
+  if (open && !final && (!job.approval || job.approval.id !== open.id)) {
+    job.approval = { ...open, answer: null, sending: false, closed: false, answeredAt: 0 };
+    job.approvalNote = null;
+    noteApproval(job);
+    if (state.tab !== "run") setTab("run");
+    return;
+  }
+  const a = job.approval;
+  if (!a || a.closed || (open && !final)) return;
+  if (a.sending && !final) return; // the answer is on its way: its outcome decides
+  if (final || a.answer === null) {
+    a.closed = true;
+    noteApproval(job);
+    return;
+  }
+  const past = ["detect", "design", "install_request", "approval"];
+  const movedOn = job.status !== "running" || [...job.steps.keys()].some((k) => !past.includes(k));
+  if (movedOn && Date.now() - a.answeredAt >= OUTCOME_MS) a.closed = true;
+}
+
+/** The packages a request names, for sentences: "meshkit" or "trimesh, pygltflib". */
+function approvalNames(a) {
+  const plan = a && a.payload && typeof a.payload.plan === "object" && a.payload.plan ? a.payload.plan : {};
+  const requested = Array.isArray(plan.requested) ? plan.requested.map((r) => r && r.name).filter(Boolean) : [];
+  return requested.join(", ") || "the packages";
+}
+
+/** Draw the open request's card in the Run tab, or clear it. Redrawn only when the request or its answer
+    changes, so the buttons keep their focus while the run is polled. */
+function renderApproval(job) {
+  const slot = $("approval");
+  const a = job && state.job === job ? job.approval : null;
+  if (!a || a.closed) {
+    // The card goes with the focus in it (its outcome line, after Approve or Decline): the keyboard stays in the
+    // run, at its heading, rather than falling back to the start of the page.
+    const hadFocus = slot.contains(document.activeElement);
+    if (slot.firstChild) slot.replaceChildren();
+    delete slot.dataset.sig;
+    if (hadFocus) $("trace-heading").focus({ preventScroll: true });
+    return;
+  }
+  const sig = `${a.id}|${a.answer}`;
+  if (slot.dataset.sig === sig && slot.firstChild) return;
+  slot.dataset.sig = sig;
+  slot.replaceChildren(approvalCard(job, a));
+}
+
+const VERDICT_TONES = { ok: "success", caution: "warning", refuse: "danger" };
+
+/** The card: what the checks found (agent.installer's plan: one row per package to install, the ones already
+    installed folded away), the LLM's opinion apart from them, and Approve / Decline; then the answer. */
+function approvalCard(job, a) {
+  const payload = a.payload && typeof a.payload === "object" ? a.payload : {};
+  const plan = payload.plan && typeof payload.plan === "object" ? payload.plan : {};
+  const packages = Array.isArray(plan.packages) ? plan.packages.filter((p) => p && typeof p.name === "string") : [];
+  const requested = Array.isArray(plan.requested) ? plan.requested.filter((r) => r && r.name) : [];
+  const fresh = packages.filter((p) => !(p.facts && p.facts.already_installed));
+  const have = packages.filter((p) => p.facts && p.facts.already_installed);
+  const names = approvalNames(a);
+  const answered = a.answer !== null;
+  const titleId = `approval-title-${a.id}`;
+  const install = a.kind === "install";
+  const summary = typeof payload.summary === "string" && payload.summary ? payload.summary : plan.summary;
+  const minutes = toNumber(a.timeout) !== null ? (a.timeout >= 120 ? `${Math.round(a.timeout / 60)} minutes` : `${Math.round(a.timeout)} seconds`) : null;
+  const error = h("div", { class: "error", role: "alert", hidden: true });
+  const approve = h("button", { type: "button", class: "btn btn--primary", "aria-describedby": titleId }, icon("check", 15), "Approve");
+  const decline = h("button", { type: "button", class: "btn", "aria-describedby": titleId }, icon("ban", 15), "Decline");
+  const refs = { approve, decline, error };
+  approve.addEventListener("click", () => answerApproval(job, true, refs));
+  decline.addEventListener("click", () => answerApproval(job, false, refs));
+  const table = fresh.length ? h("table", { class: "approval-table" },
+    h("caption", { class: "sr-only", text: "Packages this plan would install, with what the checks found" }),
+    h("thead", {}, h("tr", {}, ["Package", "Version", "Checks", "Reasons"].map((label) => h("th", { scope: "col", text: label })))),
+    h("tbody", {}, fresh.map((p) => {
+      const facts = p.facts || {};
+      const via = Array.isArray(facts.via) && facts.via.length ? `needed by ${facts.via.join(", ")}` : facts.requested ? "requested" : "";
+      const reasons = Array.isArray(p.reasons) ? p.reasons.filter(Boolean) : [];
+      return h("tr", {},
+        h("th", { scope: "row" }, h("span", { class: "pkg-name", text: p.name }), via ? h("span", { class: "pkg-via", text: via }) : null),
+        h("td", { class: "num", text: p.version || "?" }),
+        h("td", {}, tag(String(p.verdict || "?"), VERDICT_TONES[p.verdict] || "neutral")),
+        h("td", {}, reasons.length ? h("ul", { class: "pkg-reasons" }, reasons.map((r) => h("li", { text: r }))) : h("span", { class: "pkg-none", text: "No concerns" })));
+    }))) : null;
+  const review = typeof payload.review === "string" && payload.review.trim() ? payload.review.trim() : null;
+  const outcome = answered ? h("p", {
+    class: "approval-outcome", role: "status", tabindex: "-1",
+    text: a.answer
+      ? `Approved. The agent installs ${names} into its toolbox, then writes the adapter; the run goes on.`
+      : `Declined. Nothing is installed: the agent writes the adapter without ${names}.`,
+  }) : null;
+  return h("section", { class: `approval callout callout--${!answered ? "warning" : a.answer ? "success" : "neutral"}`, "aria-labelledby": titleId },
+    h("div", { class: "callout-head" },
+      h("div", { class: "callout-title" }, icon(answered ? (a.answer ? "check-circle" : "ban") : "shield-check", 14),
+        h("h3", { id: titleId, class: "approval-title", tabindex: "-1", text: install ? `Install ${names}?` : `Approve this ${a.kind} request?` })),
+      plan.verdict ? tag(`checks: ${plan.verdict}`, VERDICT_TONES[plan.verdict] || "neutral") : null),
+    summary ? h("p", { class: "callout-body", text: summary }) : null,
+    requested.length ? h("p", { class: "approval-asked" },
+      h("span", { class: "approval-label", text: "The agent asked for " }),
+      requested.map((r) => `${r.name}${r.version ? ` ${r.version}` : ""}${r.why ? `: ${r.why}` : ""}`).join("; ")) : null,
+    table,
+    have.length ? h("details", { class: "approval-have" },
+      h("summary", { text: `${have.length} already installed: not vetted or installed again` }),
+      h("ul", {}, have.map((p) => h("li", { text: `${p.name} ${p.version || ""}`.trim() })))) : null,
+    install && !packages.length ? h("p", { class: "approval-note", text: "The checks listed no package details." }) : null,
+    review ? h("div", { class: "approval-review" },
+      h("p", { class: "approval-label", text: "The agent's opinion: an LLM's review, not one of the checks" }),
+      h("p", { text: review })) : null,
+    !answered && install ? h("p", { class: "approval-note", text: `Approved packages go into a toolbox folder apart from the main environment, which only the agent's adapters import.${minutes ? ` No answer within ${minutes} counts as declined.` : ""}` }) : null,
+    !answered ? h("div", { class: "approval-actions" }, approve, decline) : null,
+    outcome,
+    error);
+}
+
+/** POST /api/jobs/<id>/approval with your answer. The buttons wait in place (keeping focus); the card then shows
+    the outcome, which takes the focus. A request no longer open (409) says so and the next poll closes it. */
+async function answerApproval(job, approve, refs) {
+  const a = job.approval;
+  if (!a || a.answer !== null || a.sending) return;
+  a.sending = true;
+  refs.approve.disabled = true;
+  refs.decline.disabled = true;
+  (approve ? refs.approve : refs.decline).setAttribute("aria-busy", "true");
+  showError(refs.error, null);
+  let failure = null;
+  try {
+    await api(`/api/jobs/${enc(job.id)}/approval`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: a.id, approve }),
+    });
+    a.answer = approve;
+    a.answeredAt = Date.now();
+  } catch (err) {
+    failure = err;
+  } finally {
+    a.sending = false;
+  }
+  if (state.job !== job || job.approval !== a) return;
+  if (failure) {
+    refs.approve.removeAttribute("aria-busy");
+    refs.decline.removeAttribute("aria-busy");
+    const closed = failure.status === 409;
+    refs.approve.disabled = closed;
+    refs.decline.disabled = closed;
+    showError(refs.error, closed ? new Error(`${failure.message} The run's trace says how the request ended.`) : failure);
+    return;
+  }
+  noteApproval(job);
+  renderApproval(job);
+  const out = $("approval").querySelector(".approval-outcome");
+  if (out) out.focus({ preventScroll: true });
+}
+
+/** The agent's line in the chat about the request: asked, then answered or closed. */
+function noteApproval(job) {
+  const a = job.approval;
+  if (!a) return;
+  const names = approvalNames(a);
+  const text = a.answer === true ? `You approved installing ${names}.`
+    : a.answer === false ? `You declined installing ${names}; the agent writes the adapter without it.`
+    : a.closed ? `The request to install ${names} closed with no answer from here; the Run tab's trace says how it ended.`
+    : `The agent asks to install ${names} before it writes the adapter. Read what the checks found, then approve or decline in the Run tab.`;
+  if (!job.approvalNote) {
+    const textEl = h("p", { class: "msg-text" });
+    const action = h("button", { type: "button", class: "link-button", text: "Review the request →", onclick: focusApproval });
+    const msg = h("article", { class: "turn msg msg--agent" },
+      h("div", { class: "name-line" }, icon("agent", 13), h("span", { class: "name", text: "Agent" })),
+      textEl, action);
+    textEl.textContent = text;
+    $("thread").append(msg);
+    updateThreadEmpty();
+    scrollToEnd($("thread"));
+    job.approvalNote = { textEl, action };
+  }
+  job.approvalNote.textEl.textContent = text;
+  job.approvalNote.action.hidden = a.answer !== null || a.closed;
+}
+
+/** Show the open request's card and move the focus to its heading. */
+function focusApproval() {
+  setTab("run");
+  const heading = $("approval").querySelector(".approval-title");
+  if (!heading) return;
+  heading.focus({ preventScroll: true });
+  heading.scrollIntoView({ block: "nearest" });
+}
+
 function resetTrace() {
   if (state.job && state.job.timer) clearTimeout(state.job.timer);
   state.job = null;
@@ -2416,6 +2983,7 @@ function resetTrace() {
   $("log-button").disabled = true;
   if (state.tab === "log") setTab("run");
   $("trace-outcome").replaceChildren();
+  $("approval").replaceChildren();
   renderTraceHead();
   renderSteps();
   renderGraph();
@@ -2482,18 +3050,20 @@ function renderRuns() {
     rows.push(h("li", { class: "run-item run-item--live" },
       h("span", { class: "run-item-main" },
         h("span", { class: "run-item-title" }, h("span", { class: "led led--run" }), " Live run"),
-        h("span", { class: "run-item-meta", text: job.request ? [modelLabel(job.request.model), job.goal, datasetTitle(job.request.dataset)].filter(Boolean).join(" · ") : "" }))));
+        h("span", { class: "run-item-meta", text: job.request ? [modelLabel(job.request.model), job.goal, setTitle(job.request.dataset)].filter(Boolean).join(" · ") : "" }))));
   }
   for (const run of state.runs) {
     const r = run.request || {};
     const active = replayOf === run.id;
     const outcome = run.status === "failed" ? "failed" : run.installed ? `installed · ${run.installed}` : "nothing installed";
     // An auto run that ended before its data step (a native file, one that needed the user, or a stop) has no set.
-    const meta = [modelLabel(r.model), r.dataset ? (SCOPE_LABELS[r.scope] || r.scope || "").toLowerCase() : "", toNumber(run.seconds) !== null ? seconds(run.seconds) : "", clock(run.recorded), run.origin]
+    const meta = [modelLabel(r.model), r.dataset && !isProbeSet(r.dataset) ? (SCOPE_LABELS[r.scope] || r.scope || "").toLowerCase() : "", toNumber(run.seconds) !== null ? seconds(run.seconds) : "", clock(run.recorded), run.origin]
       .filter(Boolean).join(" · ");
     rows.push(h("li", { class: `run-item${active ? " is-active" : ""}` },
       h("span", { class: "run-item-main" },
-        h("span", { class: "run-item-title", text: `${capitalise(r.modality || "sense")} · ${r.dataset ? datasetTitle(r.dataset) : "no labelled set chosen"}` }),
+        h("span", { class: "run-item-title", text: r.modality || r.dataset
+          ? `${modalityName(r.modality || "sense")} · ${isProbeSet(r.dataset) ? "agent-written adapter" : r.dataset ? datasetTitle(r.dataset) : "no labelled set chosen"}`
+          : "Agent run · ended before it chose labelled files" }),
         h("span", { class: "run-item-meta", text: meta }),
         h("span", { class: `run-item-outcome run-item-outcome--${run.installed ? "ok" : run.status === "failed" ? "fail" : "none"}`, text: outcome })),
       h("button", {
@@ -3003,6 +3573,20 @@ function init() {
   if (store.get("localStorage", "sense.mode") === "term") setMode(true);
   const savedJob = store.get("sessionStorage", "sense.job");
   if (savedJob) startJob(savedJob, null, true);
+  else followRunElsewhere();
+}
+
+/** Follow an agent run started in another tab or window (GET /api/jobs/latest): its trace, its approval card,
+    which only one run at a time may hold open for up to 10 minutes, and Stop. */
+async function followRunElsewhere() {
+  try {
+    const latest = await api("/api/jobs/latest");
+    if (latest && typeof latest.job_id === "string" && latest.job_id && !state.job && !state.starting) {
+      startJob(latest.job_id, null, true);
+    }
+  } catch {
+    // An older server without the route, or none yet: nothing to follow.
+  }
 }
 
 init();

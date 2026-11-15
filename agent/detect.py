@@ -4,6 +4,10 @@ Public surface (do not rename):
   Detection                  modality, format, how, detail; to_dict() for the trace
   detect(path) -> Detection  ValueError (naming the path) for a missing path, a directory or an empty file
   is_text(path) -> bool      whether the file's first 4,096 bytes read as text, the way detect reads them
+  MODALITIES                 the modality names below, in that order. They are reserved: an agent-written adapter
+                             for a file detect calls "other" is never installed under one of them (agent.synth)
+  words(modality) -> str     a modality as people say it, for sentences: "3D model", "coordinates", "audio"; any
+                             other name with its dashes and underscores as spaces ("dna-sequence": "dna sequence")
 
 Modalities and their formats:
   audio     wav, aiff, au, flac, ogg, mp3
@@ -94,6 +98,10 @@ SDF_SCAN_BYTES = 1024 * 1024  # how far a MOL/SDF file is searched for a "$$$$" 
 MAX_LATLON_LINES = 5
 MAX_SMILES_LINES = 10
 
+MODALITIES = ("audio", "image", "video", "3d", "molecule", "geo", "text", "other")
+_WORDS = {"3d": "3D model", "geo": "coordinates"}
+_A_WORDS = {"image": "an image", "video": "a video", "3d": "a 3D model"}  # for "so it is ..."
+
 _SIGNATURES = [  # (prefix, modality, format, name used in the detail sentence)
     (b"fLaC", "audio", "flac", "a FLAC"),
     (b"OggS", "audio", "ogg", "an Ogg"),
@@ -133,6 +141,12 @@ class Detection:
 
     def to_dict(self) -> dict:
         return asdict(self)
+
+
+def words(modality: str) -> str:
+    """A modality name as people say it: "3D model" for 3d, "coordinates" for geo, else the name with spaces."""
+    name = str(modality or "").strip()
+    return _WORDS.get(name.lower()) or re.sub(r"[-_]+", " ", name)
 
 
 def detect(path: Path) -> Detection:
@@ -197,7 +211,7 @@ def _is_layer3_sync(b1: int) -> bool:
 
 
 def _magic(path: Path, modality: str, fmt: str, name: str) -> Detection:
-    detail = f"{path.name} starts with the bytes of {name} file, so it is {modality}."
+    detail = f"{path.name} starts with the bytes of {name} file, so it is {_A_WORDS.get(modality, modality)}."
     return Detection(modality, fmt, "magic bytes", detail)
 
 

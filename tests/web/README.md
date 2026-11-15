@@ -27,5 +27,14 @@ step), and cover: the stream's final `used` for a tool the model did or did not 
 refused versus not-needed bridges whatever the plan order, steps that recover from a
 failed sub-step, a run that needs an examples folder, a set built by a run, replays on
 the recorded model, a failed model list, and Stop shown as stopped rather than failed.
+For agent-written adapters they cover the install approval card (its checks apart from the
+LLM's opinion, Approve by keyboard with the focus kept in the run once the card goes,
+Decline, an answer to a request no longer open, the run's clock going on while it waits,
+a run another tab started found through `GET /api/jobs/latest`), an adapter run's design,
+attempts, code and probe-file provenance, a data step that stays done when the
+unseen-categories search rejects a candidate, a card with the native and unseen-categories
+controls each against its own chance, probe sets named by their source rather than their
+hash, and chat taking any file, with a `.glb` routed through an adapter sense. The API answers are intercepted per test in
+`smoke.spec.js`; `server.js` serves only the interface's files and one slow stream.
 These are UI contract checks; backend/model integration remains covered by the Python
 tests.

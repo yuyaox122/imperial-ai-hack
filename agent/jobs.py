@@ -1,7 +1,9 @@
 """Background agent runs, one at a time.
 
 Public surface (do not rename):
-  start_auto(model, file, goal, examples=None) -> str  detect and research, then fit in the same worker queue
+  start_auto(model, file, goal, examples=None) -> str  agent.auto.run_auto in the same worker queue: detect, then
+                                   the native, specialist (audio) or adapter flow; job.request becomes the run's
+                                   FitRequest once its data step has picked a set
   start(request) -> str            job id; runs agent.loop.run_fit in a worker thread
   cancel(job_id) -> bool          request cooperative stop; False for unknown or terminal jobs
   get(job_id) -> JobState | None   live state: events appended as they happen, cards and installed at the end

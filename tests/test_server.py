@@ -184,7 +184,7 @@ def test_only_formats_soundfile_reads_count_as_audio(env):
         ("files", ("clip.aiff", b"abc", "audio/aiff")),
     ])
     m4a, aiff = r.json()["used"]
-    assert m4a["kind"] == "none" and "in these formats" in m4a["detail"] and ".aiff" in m4a["detail"]
+    assert m4a["kind"] == "none" and "audio files (" in m4a["detail"] and ".aiff" in m4a["detail"]
     assert aiff["kind"] == "vector"
 
 

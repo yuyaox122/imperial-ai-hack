@@ -80,13 +80,15 @@
         <div id="auto-fields" class="field">
           <label class="label" for="fit-goal">What should the model understand?</label>
           <textarea id="fit-goal" class="goal-input" rows="3" placeholder="For example: recognise the sound in this clip"></textarea>
+          <!-- Any file: no accept filter. The server decides what it is from its bytes (agent.detect). -->
           <label id="fit-drop" class="fit-drop" for="fit-file">Drop a file here, or choose one
-            <input id="fit-file" type="file">
+            <span class="hint fit-drop-hint">Any file: audio, video, 3D models, molecules, coordinates or anything else.</span>
+            <input id="fit-file" type="file" aria-describedby="fit-file-name">
           </label>
-          <p id="fit-file-name" class="hint">The agent will choose examples and verify a bridge for your goal.</p>
+          <p id="fit-file-name" class="hint">The agent works out what the file is, then finds labelled examples and verifies a sense for your goal. For a file the model cannot take, it writes an adapter.</p>
           <label class="label" for="fit-examples">Labelled examples folder on the server (optional)</label>
           <input id="fit-examples" class="text-input" type="text" autocomplete="off" spellcheck="false" placeholder="For example: ~/data/bird-calls" aria-describedby="fit-examples-hint">
-          <p id="fit-examples-hint" class="hint">One sub-folder of files per label, with at least 10 files in each. Leave it empty and the agent looks for labelled examples itself.</p>
+          <p id="fit-examples-hint" class="hint">One sub-folder of files per label: at least 10 files in each for audio, at least 5 for any other file. Leave it empty and the agent looks for labelled examples itself.</p>
         </div>
         <div id="manual-fields" class="field" hidden>
           <div class="field">
@@ -148,7 +150,7 @@
           <div class="drop-zone brackets">
             <span class="drop-icon" data-icon="download"></span>
             <p class="drop-title">Drop a file here</p>
-            <p class="drop-sub">An audio clip, or a text file or image the model reads as is. Or press Samples next to the message box to attach a clip, then ask a question. Each reply says how every file reached the model, and warns when one did not.</p>
+            <p class="drop-sub">Any file: audio, video, 3D models, molecules, coordinates or anything else. Text, and images for a model that takes them, are read as is; other files go through an installed sense, such as an adapter the agent wrote. Or press Samples next to the message box to attach a clip, then ask a question. Each reply says how every file reached the model, and warns when one did not.</p>
             <ul id="drop-modalities" class="mods" aria-label="What the model can take in now"></ul>
           </div>
         </div>
@@ -176,8 +178,9 @@
             <label class="icon-button file-button" title="Attach a file">
               <span data-icon="paperclip"></span>
               <span class="sr-only">Attach a file</span>
-              <!-- Audio in the formats the server reads (sense.specialists.AUDIO_EXTENSIONS), text, and images. -->
-              <input id="file-input" class="sr-only" type="file" accept=".wav,.mp3,.flac,.ogg,.opus,.aif,.aiff,.au,.txt,.md,.png,.jpg,.jpeg" multiple>
+              <!-- Any file, no accept filter: the server decides each file's modality from its bytes and says in the
+                   reply how it reached the model (read as is, an installed sense, an agent-written adapter) or why not. -->
+              <input id="file-input" class="sr-only" type="file" multiple>
             </label>
             <button id="send-button" class="send" type="submit" disabled aria-label="Send"><span data-icon="arrow-up"></span></button>
             <button id="chat-stop" class="btn btn--small" type="button" hidden>Stop receiving</button>
@@ -225,12 +228,15 @@
       <div id="run-view" class="insp-view panel-scroll" role="tabpanel" aria-labelledby="run-tab" hidden>
       <section id="trace-panel" class="run" aria-labelledby="trace-heading">
         <div class="run-head">
-          <h2 id="trace-heading" class="pane-title"><span class="idx" aria-hidden="true">03</span>Agent run</h2>
+          <h2 id="trace-heading" class="pane-title" tabindex="-1"><span class="idx" aria-hidden="true">03</span>Agent run</h2>
           <span id="trace-status" class="tag" hidden></span>
           <span id="trace-request" class="run-meta">Not run yet.</span>
           <span id="trace-elapsed" class="run-elapsed num"></span>
           <button id="job-stop" class="btn btn--small" type="button" hidden>Stop</button>
         </div>
+        <!-- An open request from the run (GET /api/jobs/<id> pending_approval), answered with POST .../approval.
+             Not a live region: the chat thread (role log) announces the request in one sentence instead. -->
+        <div id="approval" class="approval-slot"></div>
         <ol id="steps" class="steps" aria-label="Steps of the agent run"></ol>
         <div id="trace-outcome" aria-live="polite"></div>
         <div id="trace-error" class="error" role="alert" hidden></div>
