@@ -210,11 +210,13 @@ def test_search_rule_terms_order_dedupe_and_drop_gated(hub):
     assert all(not c.gated for c in found)
 
 
-def test_search_uses_llm_queries_and_ignores_nonsense(hub, monkeypatch):
+def test_search_puts_llm_queries_first_then_the_rules_and_ignores_nonsense(hub, monkeypatch):
+    # The rule's queries always follow: in a real run the model's terms alone ("shapenet ...") missed the one
+    # dataset with real meshes that the rule's words find.
     answer = {"queries": ["gtzan", " music  genre ", 7, "x" * 99]}
     monkeypatch.setattr(hub_probes.llm, "ask_json", lambda *a, **k: answer)
     search_hub("Make it recognise music genres", "audio")
-    assert searched(hub) == ["gtzan", "music genre"]
+    assert searched(hub) == ["gtzan", "music genre", "music", "genre"]
     hub.calls.clear()
     monkeypatch.setattr(hub_probes.llm, "ask_json", lambda *a, **k: {"queries": "gtzan"})
     search_hub("Make it recognise music genres", "audio")

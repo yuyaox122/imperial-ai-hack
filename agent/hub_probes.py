@@ -466,7 +466,7 @@ class Mapping:
     label_names: list[str] | None = None  # ClassLabel names, or the 0/1 columns of a multihot label
     label_separator: str | None = None  # a "list" label in one string: ";", "|", ",", "/" or LIST_LITERAL
     media_type: str | None = None  # "Audio" | "Image" | "Video" | "Mesh" for media inputs
-    origin: str = "rule"  # "llm" | "rule"
+    origin: str = "rule"  # "llm" | "rule" (a mapping's origin; search queries record "llm+rule" or "rule")
     reason: str = ""
 
     def to_dict(self) -> dict:
@@ -704,9 +704,11 @@ def _search(goal: str, modality: str, limit: int,
 
 def _hub_query(goal: str, modality: str, limit: int, deadline: float | None):
     """(found: hub_id -> HubCandidate, hits: how many queries found each, errors, queries, query origin)."""
-    queries = _llm_queries(llm.ask_json(_SEARCH_INSTRUCTION, {"goal": goal, "modality": modality}, SEARCH_SCHEMA))
-    origin = "llm" if queries else "rule"
-    queries = queries or _rule_queries(goal, modality)
+    # The model's queries come first, the rule's (goal words plus the modality's own words) after: in a real run the
+    # model's terms alone ("shapenet ...") missed the one dataset with real meshes that the rule's terms find.
+    asked = _llm_queries(llm.ask_json(_SEARCH_INSTRUCTION, {"goal": goal, "modality": modality}, SEARCH_SCHEMA))
+    origin = "llm+rule" if asked else "rule"
+    queries = list(dict.fromkeys([*asked, *_rule_queries(goal, modality)]))[:MAX_QUERIES + 5]
     if not queries:
         raise ProbesUnavailable(f"no search words could be taken from the goal {goal!r}")
     found: dict[str, HubCandidate] = {}
@@ -803,8 +805,13 @@ def _rule_queries(goal: str, modality: str) -> list[str]:
     return out[:MAX_QUERIES]
 
 
+MODALITY_TAG_BONUS = 4  # the Hub sets modality:<x> from the data's own feature types: the best sign of usable files
+
+
 def _tag_bonus(tags: list[str], profile: _Profile | None) -> int:
-    bonus = 1 if profile and profile.tag and f"modality:{profile.tag}" in tags else 0
+    # Worth more than a name word: in a real run, datasets named for ShapeNet (point clouds, npz) outranked the one
+    # tagged modality:3d that holds real meshes.
+    bonus = MODALITY_TAG_BONUS if profile and profile.tag and f"modality:{profile.tag}" in tags else 0
     return bonus + (1 if any(t.startswith("task_categories:") and t.endswith("-classification") for t in tags) else 0)
 
 
