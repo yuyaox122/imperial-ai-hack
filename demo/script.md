@@ -27,7 +27,7 @@ Do the rows in order.
 **0:00 – 0:15 · The gap.** Pick Qwen3.5 0.8B. Drop the rock track and ask "What genre is this?"
 > "This model reads text and images. It has no hearing. We're going to ask an agent to give it a new sense, and to prove that the sense works before installing it."
 
-**0:15 – 1:10 · Scenario 1: seen categories.** Ask for music genres (GTZAN, closed scope). In **New sense**, pick **Choose a labelled set**: the interface defaults to **Let the agent find them** (file and goal), but no real run of that flow is recorded yet, so do not demo it live. Let the trace run:
+**0:15 – 1:10 · Scenario 1: seen categories.** Ask for music genres (GTZAN, closed scope). In **New sense**, pick **Choose a labelled set**: the interface defaults to **Let the agent find them** (file and goal), but for audio its web fetch has not yet produced an install (the recorded run, `run_auto_qwen3.5-0.8b_music-genres.json`, fell back to the pre-wired GTZAN after HTTP 502s), so the labelled set is the reliable path here. Let the trace run:
 inspect, plan, fit, verify, decide, install. The fit takes about 25 s, so talk over it, or replay at 2x.
 > "It reads the model: open weights, so it can try a vector bridge that writes CLAP's embedding straight into the model's early layers, and a text bridge. It fits both, then scores each one on 200 held-out questions against controls."
 
@@ -65,7 +65,7 @@ Point at the report card:
 | How do you know it isn't memorising? | Held-out clips; a split where duplicate recordings stay together (GTZAN has 14 byte-identical tracks); swapped-audio and no-audio controls; and for open scope, a refit with a fifth of the sounds left out. |
 | Is it reproducible? | The GTZAN run gave identical cards when repeated (Michael, 19:30), and again through Databricks (run `bfe0e441afdf`). Cards carry 95% Wilson intervals. |
 | Free text? | Weaker. Asked open questions, the vector bridge names the right genre 37.0% of the time (swapped 6.0%) and the right sound at least 45.0% of the time on strict matching. We say so in the README. |
-| Does the agent find its own data? | It can: from one file and a goal it searches the web with Linkup, checks each model and dataset on the Hugging Face Hub, fetches a capped sample, verifies on it, and marks each web claim confirmed, refuted or not testable. It falls back to a pre-wired set, then asks for a folder. No real run of that flow is recorded yet, so we showed the labelled-set flow. |
+| Does the agent find its own data? | It can: from one file and a goal it searches the web with Linkup, checks each model and dataset on the Hugging Face Hub, fetches a capped sample, verifies on it, and marks each web claim confirmed, refuted or not testable. It falls back to a pre-wired set, then asks for a folder. For 3D, video, molecules and coordinates the agent found every labelled set itself (records `socket_pilot/artifacts/run_auto_*.json`); for audio the recorded run fell back to the pre-wired GTZAN when the dataset viewer returned HTTP 502. |
 | What's Databricks doing? | It holds every run, report card, trace event and triage flag in Delta tables, and logs one MLflow run per card. A sense install is the pass record in `report_cards`. |
 
 ## Backup

@@ -53,6 +53,6 @@ Backup slides: screenshots of the three report cards and the Databricks tables (
 ## Don't say
 
 - That the agent's `tool:esc50` card (96.0%, installed over `text:esc50` at 92.0%) was a fresh measurement: its answers came from the cache of the direct verify on the same questions. Saying the agent installed it is fine.
-- Any number from a real autonomous (file and goal) run: none is recorded yet.
+- An autonomous-run number as if it were stable: each is one run (`socket_pilot/artifacts/run_auto_*.json`), and the adapter is rewritten every time; the molecule adapter passed in one run and missed by 2 points in another.
 - That the bridge beats CLAP. It doesn't on ESC-50 (CLAP alone 99.0%), and the cards show it.
 - Any number that isn't on a card or in a record.
