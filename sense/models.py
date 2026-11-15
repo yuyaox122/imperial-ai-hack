@@ -620,6 +620,11 @@ class FakeModel:
 # API models, if a developer has added them. Imported last so that they can call register_model: openai-chat, then
 # claude-sonnet (sense.models_anthropic, which needs the anthropic package).
 for _module in ("sense.models_api", "sense.models_anthropic"):
+    _api = sys.modules.get("sense.models_api")
+    if _module == "sense.models_anthropic" and getattr(getattr(_api, "__spec__", None), "_initializing", False):
+        # sense.models_api was imported first and is importing this module: it loads sense.models_anthropic itself
+        # once it is complete (claude-sonnet builds on it), so it is not loaded half-made from here.
+        continue
     try:
         importlib.import_module(_module)
     except ModuleNotFoundError as err:
