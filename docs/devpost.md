@@ -3,15 +3,15 @@
 Draft by the lead's Claude, 14 November 19:55. Rewritten by Michael's Claude on 15 November for the omnimodal release. Submit by **Sun 11:30** (closes 12:00). Before submitting: make the repository public, attach the demo video, and fill in the two **[TODO]** items under Links. Every number here matches a record in `socket_pilot/artifacts/`; [reference.md](reference.md) gives each one with its source.
 
 - **Name:** Sensorium
-- **Tagline:** An agent that gives a model a sense it doesn't have, proves the sense works, and installs it. If the proof fails, it refuses.
+- **Tagline:** An agent that gives your AI model a sense it doesn't have, tests it, and refuses to install it if it doesn't help.
 - **Track:** Autonomous Agents. **Sponsor prizes:** Databricks, Figma, Linkup.
 - **Links:** GitHub `yuyaox122/imperial-ai-hack` (public by 10:30), demo video [TODO: upload `demo/sensorium_demo.mp4` (1:56, captions, no audio) to YouTube or Vimeo and paste the link], Figma pitch page https://www.figma.com/design/9DxXU1h0aHjw8Mc8vUwl8O/Imperial-AI-Hackathon?node-id=70-76 [TODO: the owner (Michael) sets "anyone with the link can view" before submitting].
 
 ## Elevator pitch (at most 200 characters)
 
-> Give a model a sense it lacks. Drop in a file it can't read: an agent writes the adapter, finds test data on the web, and installs the sense only if it beats the controls.
+> Your AI can't see 3D or smell molecules. Our agent builds it new senses, tests them, and refuses any that don't work.
 
-(171 characters.)
+(117 characters.)
 
 ## About the project
 
@@ -19,21 +19,26 @@ Paste everything below this line into Devpost's "About the project" field. It is
 
 ---
 
+Sensorium gives an AI model a sense it doesn't have. Drop in a file the model can't read, such as a 3D model, a video or a molecule, and say what you want to know. An agent works out how to get the file in, tests the result, and installs the new sense only if it helps. The model's own weights never change.
+
 ### Inspiration
 
-A language model reads text and, if you are lucky, images. Hand it a 3D mesh, a video, a molecule or a MIDI file and it guesses or gives up. The usual fix is a different model or a fine-tune. We wanted an agent that keeps the model you already use, writes whatever it takes to get the file in, and proves the result before trusting it. A new sense should come with a report card, not a promise.
+- Language models read text and images. A lot of useful data comes as sound, 3D models, molecules, video or MIDI, and a chat model given one of these guesses or gives up.
+- The usual fixes are expensive: switch to a specialist model and lose the assistant you already use, or fine-tune, which needs labelled data, GPUs and ML skills.
+- Confident wrong answers are dangerous, because people act on them. In our own tests, a small model asked to flag chainsaws in forest recordings answered "chainsaw" for all 400 clips when it got no audio at all.
+- So we built an agent that keeps your model, writes whatever it takes to get the file in, and proves the result before installing anything.
 
 ### What it does
 
-You pick a base model (local Qwen3.5-0.8B, GPT through the OpenAI API, or Claude Sonnet 5.5), drop in a file it cannot read, and say what you want to know. The agent then:
+Pick a base model (Qwen3.5-0.8B running locally, GPT through the OpenAI API, or Claude Sonnet 5.5), add a file and type a goal such as "What object is this?". The agent then:
 
-1. **Detects** the file from its bytes: audio, image, video, 3D, molecule, coordinates, text, or unknown. If the model already reads it, the run stops.
-2. **Builds a bridge.** For audio it fits a map from a frozen audio encoder (CLAP) into the model's early layers, or gives the model CLAP's output as text or as a tool. For anything else it **writes an adapter**: Python code, run in a sandbox, that turns the file into text or images the model reads. A package the adapter needs is vetted and installed only after you approve it.
-3. **Finds labelled probe data** on the Hugging Face Hub and the web (Linkup), plus a second source whose categories the adapter was not built around. If nothing usable exists, it asks you for examples.
-4. **Verifies** the bridge on held-out multiple-choice questions against controls: another file's input (swapped), no input, the model reading the raw file, and unseen categories.
-5. **Installs or refuses** by fixed rules. Then you keep chatting with the same model, and each reply names the sense that carried the file.
+1. Detects the file type from its bytes. If the model already reads that type, it stops.
+2. Builds a bridge. For audio, it fits a map from a frozen audio encoder (CLAP) into the model, or passes CLAP's output as text or a tool. For anything else, it writes an adapter: Python code, run in a sandbox, that turns the file into text or images the model can read.
+3. Finds labelled test data on the Hugging Face Hub and the web (Linkup). If nothing usable exists, it asks you for examples.
+4. Verifies the bridge on held-out questions against controls: another file's input (swapped), no input, the model reading the raw file, and categories it never saw.
+5. Installs the sense or refuses, by fixed rules. You keep chatting with the same model, and each reply says which sense handled the file.
 
-Measured, one run per row (five options, so chance is 20%; brackets are 95% Wilson intervals):
+Each row is one recorded run. Questions have five options, so guessing scores 20%. Brackets are 95% Wilson intervals.
 
 | File and goal | Base model | Score | The control that mattered | Outcome |
 |---|---|---|---|---|
@@ -45,62 +50,96 @@ Measured, one run per row (five options, so chance is 20%; brackets are 95% Wils
 | coordinates, "which country" | Claude Sonnet 5.5 | 100.0% | raw coordinates 98% | refused: the model already reads coordinates |
 | MIDI, "what genre" (blind test) | Claude Sonnet 5.5 | 32.0% [20.8, 45.8] | no input 20% | refused: below the bar |
 
-For the 3D, video, molecule and coordinate runs, the agent found every labelled set itself: ModelNet40 meshes, HMDB51 clips, an MIT-licensed odour dataset and a world-cities table. Two refusals matter as much as the installs. The ESC-50 bridge had the best score of its run but fell to 51.25% on sounds it was never fitted on. On coordinates, Claude already scored 98% on the raw numbers, so an adapter had nothing to add.
+- For the 3D, video, molecule and coordinate runs, the agent found every labelled set itself: ModelNet40 meshes, HMDB51 clips, an MIT-licensed odour dataset and a world-cities table.
+- The ESC-50 bridge had the best score of its run, then fell to 51.25% on sounds it was never fitted on. The agent refused it and installed a caption bridge at 80.5% instead.
+- On coordinates, Claude already scored 98% on the raw numbers, so the adapter had nothing to add and the agent left it out.
 
-The **blind test** used a format our code never mentions: a MIDI file with no metadata. The agent asked to install `mido` (the installer rated the pinned plan ok), and the adapter it wrote ran on the first attempt. Its Hub search returned one MIDI genre set, in a layout it could not read, so it asked for examples. Given 60 piano MIDI files in five genres, the adapter scored 32.0%, below the 35% bar, and the agent installed nothing.
+### Who it's for
+
+- Anyone with data their AI model can't read and no time or skills to train a new model: a fragrance chemist with molecules, a researcher labelling actions in video, a forest-monitoring team cutting down the clips a ranger has to listen to.
+- A run takes minutes. The fully autonomous music run went from one uploaded clip to an installed sense in 110 seconds; 3D takes about six minutes, video and molecules three to four. There's no training job, because the base model stays frozen.
+- A sense that fails on new data, or adds nothing over what the model already does, never reaches the user, and its report card says why.
+- When a simpler tool does better, the card says so. In the forest task, CLAP on its own caught 23 of 24 target sounds against 13 and 14 for the two chat models, so our write-up tells the ranger to use CLAP.
+- Every run, card and trace event is stored in Databricks, so anyone can check later why a sense was installed.
 
 ### How we built it
 
-**Verification is the core.** Every bridge answers held-out questions, and each card reports accuracy $\hat p$ on $n$ questions with a 95% Wilson interval:
+#### The install rule
+
+Each report card gives accuracy $\hat p$ on $n$ held-out questions with a 95% Wilson interval:
 
 $$\frac{\hat p + \frac{z^2}{2n}}{1 + \frac{z^2}{n}} \pm \frac{z}{1 + \frac{z^2}{n}} \sqrt{\frac{\hat p(1-\hat p)}{n} + \frac{z^2}{4n^2}}, \qquad z = 1.96$$
 
-A rule planner, not a language model, holds the bars. With accuracy $a$, chance $c$, swapped input $s$, the model on the raw file $r$, and unseen-category accuracy $u$ (chance $c_u$), a text or image bridge, adapters included, is installed only if
+With accuracy $a$, chance $c$, swapped input $s$, the model on the raw file $r$, and unseen-category accuracy $u$ (chance $c_u$), a text or image bridge, adapters included, is installed only if
 
 $$a \ge c + 0.15, \qquad a \ge s + 0.10, \qquad a \ge r + 0.10, \qquad u \ge c_u + 0.15$$
 
-where the last two apply when those controls are measured. A vector bridge needs $a \ge \max(c, s) + 0.25$, and for open scope its accuracy on held-out classes must reach $c + 0.25$ and stay within 20 points of $a$. An LLM planner may propose which bridge to install, but its choice is checked against these rules.
+In words, the bridge must:
 
-**The vector bridge** maps a CLAP embedding $x$ to the model's own representation $t$ of the label's text at an early block $\ell$, with a closed-form ridge fit
+- beat guessing by 15 points;
+- beat swapped input by 10 points, which shows the model is using this file;
+- beat the model reading the raw file by 10 points, which shows the bridge adds something;
+- beat guessing by 15 points on categories it never saw, which shows it generalises.
 
-$$W = (X^\top X + \lambda I)^{-1} X^\top (T - \bar t)$$
+The last two apply when those controls are measured. A vector bridge needs $a \ge \max(c, s) + 0.25$, and for open scope its accuracy on held-out classes must reach $c + 0.25$ and stay within 20 points of $a$. An LLM planner may propose which bridge to install, and rule code checks the choice against these bars.
 
-where $\lambda$ is chosen by 5-fold cross-validated $R^2$. The mapped vector is written into placeholder tokens after block $\ell$, with $\ell \in \{0, \dots, 4\}$ picked on dev questions. One block fits in 0.5 to 1.3 s.
+#### The audio vector bridge
 
-**Adapters** are designed and written by `gpt-6.1-terra` from the user's file alone, before any labelled file exists, so every probe file is held out. The code runs under macOS `sandbox-exec` with no network, a scrubbed environment, and time, disk and memory limits. Each error goes back to the model for a repair, up to three attempts in all. A helper kit gives the adapter mesh renders (trimesh and matplotlib), video frames (ffmpeg), RDKit descriptors and a Natural Earth gazetteer. A package outside the toolbox goes through our installer, which allows only hash-pinned PyPI wheels, checks OSV for known vulnerabilities, release history and look-alike names, and installs into a separate toolbox after the user approves.
+- It maps a CLAP embedding $x$ to the model's own representation $t$ of the label's text at an early block $\ell$, with a closed-form ridge fit $W = (X^\top X + \lambda I)^{-1} X^\top (T - \bar t)$.
+- $\lambda$ is chosen by 5-fold cross-validated $R^2$, and $\ell \in \{0, \dots, 4\}$ is picked on dev questions.
+- The mapped vector is written into placeholder tokens after block $\ell$. One block fits in 0.5 to 1.3 s.
 
-**Probe search** combines the model's and our own Hub queries, the Hugging Face dataset viewer, folder-labelled repositories and Linkup web search for data tables. Found sets must be fair tests: one file type, at least three labels, no file-format words as labels, and an LLM check that the labels answer the goal. For an unknown binary format, probe files must start with the same bytes as the user's file.
+#### Adapters for any other file
 
-**Around it:**
-- A FastAPI server and a no-build web interface with a live trace, report cards, an install-approval card and replay, designed in Figma.
-- Every run, card and trace event goes to Databricks Delta tables, with one MLflow run per card.
-- A fake mode runs 1,640 tests in about 80 seconds with no weights or network, plus 29 Playwright browser tests.
+- `gpt-6.1-terra` writes each adapter from the user's file alone, before any labelled file exists, so every test file is held out.
+- The code runs under macOS `sandbox-exec` with no network, a scrubbed environment, and limits on time, disk and memory. Errors go back to the model for repair, up to three attempts.
+- A helper kit gives adapters mesh renders (trimesh, matplotlib), video frames (ffmpeg), RDKit descriptors and a Natural Earth gazetteer.
+- Any other package goes through our installer: hash-pinned PyPI wheels only, checked on OSV for known vulnerabilities, release history and look-alike names, and installed into a separate toolbox after the user approves.
+
+#### Finding fair test data
+
+- Sources: the model's and our own Hub queries, the Hugging Face dataset viewer, folder-labelled repositories, and Linkup web search for data tables.
+- A found set must have one file type, at least three labels and no file-format words as labels, and an LLM checks that the labels answer the goal.
+- For an unknown binary format, test files must start with the same bytes as the user's file.
+
+#### Around it
+
+- A FastAPI server and a no-build web interface designed in Figma, with a live trace, report cards, an install-approval card and replay.
+- Databricks Delta tables for every run, card and trace event, with one MLflow run per card.
+- A fake mode that runs 1,640 tests in about 80 seconds with no weights or network, plus 29 Playwright browser tests.
 
 ### Challenges we ran into
 
-- **Our own data leaked.** GTZAN holds 14 byte-identical recordings. Once copies were kept in one split, the research run's 84.9% became 83.7%, and we re-measured everything.
-- **The model already knew.** On coordinates Claude scored 98% with no adapter, so we added the raw-file control. Without it the 100% adapter would have been installed for nothing.
-- **Single runs move.** The adapter is rewritten each time, so we ran the three installed adapter goals again from an empty sense folder. All three installed again: 3D at 100.0% on a different mesh, video at 86.0% (78.0% the first time), and molecule at 58.0%, 12 points over the raw file in both recorded runs. An earlier, unrecorded molecule run missed that bar by 2 points, so molecules remain the borderline case.
-- **The blind test broke three assumptions.** MP3 genre files reached the MIDI adapter as probes (it failed on all 50), so probes for an unknown format now have to match the file's first bytes. The word "music" mapped the format onto our audio profile, so unknown formats now get a temporary profile of their own. And "midi" and "genre" were searched apart, so the format word is now paired with the goal's words.
-- **Question wording.** In a forest-monitoring triage task, one phrase ("illegal logging") made the 0.8B answer "chainsaw" to silence. We caught it with the no-input control, and from then on chose wording on a dev fold and ran the choice once on the test fold.
+- Our own data leaked. GTZAN holds 14 byte-identical recordings; once we kept the copies in one split, 84.9% became 83.7%, and we re-measured everything.
+- The model already knew. Claude scored 98% on raw coordinates, so we added the raw-file control. Without it, a 100% adapter that added nothing would have been installed.
+- Single runs move, because the agent rewrites the adapter every time. Reruns from an empty folder all installed again: 3D at 100.0% on a different mesh, video at 86.0% (78.0% the first time), molecule at 58.0%. An unrecorded molecule run missed the bar by 2 points, so molecules remain borderline.
+- The MIDI blind test broke three assumptions. MP3 files reached the MIDI adapter as test data, so test files for an unknown format must now match its first bytes. The word "music" pulled MIDI into our audio profile, so unknown formats now get a profile of their own. "midi" and "genre" were searched separately, so the format word is now paired with the goal's words.
+- Question wording changed answers: "illegal logging" made the 0.8B say "chainsaw" with no audio. The no-input control caught it, and we now choose wording on a dev fold and run it once on the test fold.
+
+### Accomplishments that we're proud of
+
+- A format our code never names. Given a MIDI file with no metadata, the agent asked to install `mido`, wrote an adapter that ran first time, and asked us for examples when the one Hub set was unreadable. On 60 piano MIDI files in five genres it scored 32.0%, below the 35% bar, and refused to install its own work.
+- Every number on this page comes from a recorded run in the repository (`socket_pilot/artifacts/`), refusals included.
 
 ### What we learned
 
-- **The control that matters depends on the input.** On 3D, swapped input (12%) showed only that the model used the file; the raw-file control showed what the adapter added, 100% against 42%. On coordinates the same control showed it added nothing.
-- **Finding fair test data is harder than writing the adapter.** The MIDI adapter worked first time; usable labelled MIDI never turned up.
-- **A frozen specialist is often enough.** On ESC-50, CLAP alone scores 99.0%. The value of a bridge is a sense inside a model you can keep talking to, and the card should say what that costs.
-- **Small models carry priors.** Qwen3.5-0.8B could not use the coordinate adapter's text (24.4% against 23.8% on the raw file).
+- The control that matters depends on the input. On 3D, swapped input (12%) only showed the model used the file; the raw-file control showed what the adapter added, 100% against 42%.
+- Finding fair test data is harder than writing the adapter. The MIDI adapter worked first time; usable labelled MIDI never turned up.
+- A frozen specialist is often enough. CLAP alone scores 99.0% on ESC-50. A bridge adds a sense inside a model you can keep talking to, and the card should show what that costs.
+- A small model may not be able to use an adapter: Qwen3.5-0.8B scored 24.4% with the coordinate adapter's text and 23.8% on the raw file.
 
 ### What's next
 
-- Read datasets packed as an archive plus a label index, which would have opened the MIDI set, while still flagging labels that a classifier produced.
-- Repeat each run over several seeds and report the spread instead of single runs.
-- Learned bridges beyond audio: today CLAP is the only specialist the harness runs.
-- Larger local models (Qwen3.5-2B), and a second machine set up with `scripts/setup_machine.py`.
+- Read datasets packed as an archive plus a label index, which would have opened the MIDI set, while still flagging labels a classifier produced.
+- Repeat each run over several seeds and report the spread.
+- Learned bridges beyond audio. Today CLAP is the only specialist the harness runs.
+- Larger local models (Qwen3.5-2B).
 
 ---
 
 ## Built with
+
+**Tags (10):** python, javascript, pytorch, hugging-face, openai, anthropic, fastapi, databricks, linkup, figma
 
 Python, PyTorch, Hugging Face Transformers, NumPy, SciPy, soundfile, Pillow, trimesh, matplotlib, RDKit, ffmpeg, mido (installed by the agent during the blind test), FastAPI, Uvicorn, Databricks (Unity Catalog, Delta tables, SQL warehouse, Volumes, MLflow), the OpenAI API, the Anthropic API, Linkup, the Hugging Face Hub, Playwright, Figma.
 
