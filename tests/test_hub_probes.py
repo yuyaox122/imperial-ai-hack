@@ -9,9 +9,14 @@ Run: SENSE_FAKE=1 .venv/bin/python -m pytest -q tests/test_hub_probes.py
 
 from __future__ import annotations
 
+import hashlib
 import json
+import shutil
+import struct
+import subprocess
 import time
 import urllib.parse
+import zlib
 from pathlib import Path
 
 import pytest
@@ -25,6 +30,7 @@ from agent.hub_probes import (
     choose_mapping,
     fetch_probes,
     find_probes,
+    safe_label,
     search_hub,
 )
 
@@ -34,10 +40,12 @@ ASSETS = "https://datasets-server.huggingface.co/assets"
 
 class Dataset:
     def __init__(self, features, row, total, *, splits=(("default", "train"),), truncated=None, rows_error=None,
-                 first_rows=True):
+                 first_rows=True, flaky=None, sized=False):
         self.features, self.row, self.total = features, row, total
         self.splits, self.truncated, self.rows_error = splits, truncated or {}, rows_error
         self.first_rows = first_rows  # whether /first-rows answers (it does even when /rows fails, as on the Hub)
+        self.flaky = flaky or {}  # /rows offset -> HTTP codes its next requests fail with, one per request
+        self.sized = sized  # whether /size answers
 
     def page(self, offset, length):
         return [{"row_idx": i, "row": self.row(i), "truncated_cells": self.truncated.get(i, [])}
@@ -61,7 +69,8 @@ class FakeHub:
         if parts.netloc == "huggingface.co" and parts.path == "/api/datasets":
             assert query["full"] == "true"
             return json.dumps(self.search.get(query["search"], [])).encode()
-        if parts.netloc == "datasets-server.huggingface.co" and parts.path in ("/splits", "/rows", "/first-rows"):
+        if parts.netloc == "datasets-server.huggingface.co" and parts.path in ("/splits", "/rows", "/first-rows",
+                                                                               "/size"):
             ds = self.datasets.get(query["dataset"])
             if ds is None:
                 raise hub_probes._HttpError("http_404", "HTTP 404 from datasets-server.huggingface.co: not found")
@@ -73,9 +82,18 @@ class FakeHub:
                     raise hub_probes._HttpError("http_500", "HTTP 500 from the viewer: Unexpected error.")
                 return json.dumps({"dataset": query["dataset"], "features": ds.features, "rows": ds.page(0, 100),
                                    "truncated": ds.total > 100}).encode()
+            if parts.path == "/size":
+                if not ds.sized:
+                    raise hub_probes._HttpError("http_404", "HTTP 404 from datasets-server.huggingface.co")
+                splits = [{"dataset": query["dataset"], "config": c, "split": s, "num_rows": ds.total}
+                          for c, s in ds.splits]
+                return json.dumps({"size": {"splits": splits}, "pending": [], "failed": []}).encode()
             if ds.rows_error:
                 raise hub_probes._HttpError("http_500", f"HTTP 500 from the viewer: {ds.rows_error}")
             offset, length = int(query["offset"]), int(query["length"])
+            if ds.flaky.get(offset):
+                code = ds.flaky[offset].pop(0)
+                raise hub_probes._HttpError(f"http_{code}", f"HTTP {code} from datasets-server.huggingface.co")
             return json.dumps({"features": ds.features, "rows": ds.page(offset, length), "num_rows_total": ds.total,
                                "num_rows_per_page": 100, "partial": False}).encode()
         if url in self.files:
@@ -94,6 +112,7 @@ def hub(monkeypatch):
     fake = FakeHub()
     monkeypatch.setattr(hub_probes, "_http_get", fake)
     monkeypatch.setattr(hub_probes, "_sleep", lambda s: None)
+    monkeypatch.setattr(hub_probes, "_ffmpeg", lambda: None)  # the fake files are not real media
     return fake
 
 
@@ -236,18 +255,27 @@ def test_http_helper_refuses_other_hosts_and_redirects_before_any_io():
 GENRES = ["rock", "jazz", "pop"]
 
 
+def audio_src(hub_id, i):
+    return f"{ASSETS}/{hub_id}/--/default/train/{i}/audio/audio.wav?Expires=1&Signature=s"
+
+
+def unique_bytes(i, size):
+    """size bytes that differ for every i (identical files are deduplicated) and spell no label word."""
+    return f"{i:06d}".encode().ljust(size, b"R")
+
+
 def audio_dataset(hub, hub_id="o/music-genres", total=90, big=(), foreign=()):
     def src(i):
         if i in foreign:
             return "https://example.org/stolen.wav"
-        return f"{ASSETS}/{hub_id}/--/default/train/{i}/audio/audio.wav?Expires=1&Signature=s"
+        return audio_src(hub_id, i)
 
     def row(i):
         return {"audio": [{"src": src(i), "type": "audio/wav"}], "genre": i % 3}
 
     hub.datasets[hub_id] = Dataset([media("audio", "Audio"), class_label("genre", GENRES)], row, total)
     for i in range(total):
-        hub.files[src(i)] = b"R" * (5_000 if i in big else 100)
+        hub.files[src(i)] = unique_bytes(i, 5_000 if i in big else 100)
     return hub_id
 
 
@@ -417,7 +445,8 @@ def test_a_generic_label_counts_only_in_a_dataset_named_for_the_topic(hub):
 def sentence_dataset(hub, hub_id, leak_every):
     def row(i):
         country = COUNTRIES[i % 4]
-        text = f"A note about {country.lower()} food" if i % leak_every == 0 else f"A note number {i}"
+        named = country.upper() if i % 2 else country
+        text = f"A note about {named} food, number {i}" if i % leak_every == 0 else f"A note number {i}"
         return {"text": text, "country": country}
 
     hub.datasets[hub_id] = Dataset([value("text"), value("country")], row, 80)
@@ -450,7 +479,7 @@ def test_wanted_labels_match_the_dataset_values_case_insensitively(hub, tmp_path
                                    lambda i: {"audio": {"src": f"{ASSETS}/{hub_id}/{i}.mp3"},
                                               "genre": names[i % 3]}, 60)
     for i in range(60):
-        hub.files[f"{ASSETS}/{hub_id}/{i}.mp3"] = b"x" * 10
+        hub.files[f"{ASSETS}/{hub_id}/{i}.mp3"] = unique_bytes(i, 10)
     mapping = choose_mapping(cand(hub_id), "Make it recognise music genres", "audio")
     report = fetch_probes(cand(hub_id), mapping, tmp_path / "p", wanted_labels=["JAZZ", "hip-hop"], min_per_label=5)
     assert sorted(report.labels) == ["hip_hop", "jazz"]
@@ -553,7 +582,8 @@ def test_max_candidates_limits_fetch_attempts_not_inspections(hub, tmp_path):
 def test_placeholder_values_are_never_chosen_as_labels(hub, tmp_path):
     hub.datasets["o/world-cities"] = Dataset(
         [value("latitude", "float64"), value("longitude", "float64"), value("country")],
-        lambda i: {"latitude": 1.0, "longitude": 2.0, "country": ["Unknown", "Unknown", "France", "Japan"][i % 4]}, 80)
+        lambda i: {"latitude": 1.0 + i / 10, "longitude": 2.0,
+                   "country": ["Unknown", "Unknown", "France", "Japan"][i % 4]}, 80)
     mapping = choose_mapping(cand("o/world-cities"), "Which country is this place in?", "coordinates")
     report = fetch_probes(cand("o/world-cities"), mapping, tmp_path / "p", min_per_label=5)
     assert sorted(report.labels) == ["france", "japan"]
@@ -575,8 +605,8 @@ def test_dest_is_replaced_and_removed_on_failure(hub, tmp_path):
 
 def test_truncated_and_empty_cells_are_skipped(hub, tmp_path):
     hub_id = "o/odor-molecules"
-    rows = {i: {"smiles": None if i == 0 else "CCO", "descriptors": [] if i == 1 else [["fruity", "woody"][i % 2]]}
-            for i in range(40)}
+    rows = {i: {"smiles": None if i == 0 else "C" * (i + 1) + "O",
+                "descriptors": [] if i == 1 else [["fruity", "woody"][i % 2]]} for i in range(40)}
     hub.datasets[hub_id] = Dataset([value("smiles"), string_list("descriptors")], rows.__getitem__, 40,
                                    truncated={2: ["smiles"]})
     mapping = choose_mapping(cand(hub_id), "What does this molecule smell like?", "chemical")
@@ -584,3 +614,635 @@ def test_truncated_and_empty_cells_are_skipped(hub, tmp_path):
     assert report.skipped == {"no_input": 1, "no_label": 1, "truncated": 1, "multi_label": 0}
     assert sum(report.counts.values()) == 37
     assert isinstance(mapping, Mapping) and mapping.to_dict()["label_kind"] == "list"
+
+
+# ----------------------------------------------------------------------------- media metadata that names the label
+def filler(i, n=256):
+    """Deterministic bytes that look like compressed data and differ for every i."""
+    return b"".join(hashlib.sha256(f"{i}-{k}".encode()).digest() for k in range(n // 32))
+
+
+def video_dataset(hub, hub_id, labels, leaky, total=60):
+    def src(i):
+        return f"{ASSETS}/{hub_id}/--/default/train/{i}/video/video.mp4?Expires=1&Signature=s"
+
+    def row(i):
+        return {"video": {"src": src(i)}, "label": labels[i % len(labels)]}
+
+    hub.datasets[hub_id] = Dataset([media("video", "Video"), value("label")], row, total)
+    for i in range(total):
+        label = labels[i % len(labels)]
+        tag = f"JnameH:\\HumanActionDB\\MotionClips\\{label}\\clip{i}.avi" if leaky(i) else f"clip number {i}"
+        hub.files[src(i)] = b"\x00\x00\x00\x18ftypisom\x00\x00" + tag.encode() + b"\x00" + filler(i)
+    return hub_id
+
+
+def test_media_files_whose_metadata_names_their_label_are_dropped(hub, tmp_path):
+    hub_id = video_dataset(hub, "o/hmdb-actions", ["drink", "walk"], leaky=lambda i: i % 6 == 0)
+    mapping = choose_mapping(cand(hub_id), "What action is happening in this video?", "video")
+    report = fetch_probes(cand(hub_id), mapping, tmp_path / "p", n_per_label=30, min_per_label=5)
+    assert report.skipped["leak"] == 10 and report.counts == {"walk": 30, "drink": 20}
+    assert not any(b"HumanActionDB" in f.read_bytes() for f in (tmp_path / "p").rglob("*.mp4"))
+    assert any("metadata names their own label" in note for note in report.notes)
+    assert any("ffmpeg is not installed" in note for note in report.notes)  # the fixture hides ffmpeg
+
+
+def test_a_dataset_whose_media_mostly_name_their_label_is_refused_early(hub, tmp_path):
+    hub_id = video_dataset(hub, "o/hmdb-actions", ["drink", "walk"], leaky=lambda i: True)
+    mapping = choose_mapping(cand(hub_id), "What action is happening in this video?", "video")
+    with pytest.raises(ProbesUnavailable, match="name their own label in their metadata"):
+        fetch_probes(cand(hub_id), mapping, tmp_path / "p", n_per_label=30, min_per_label=5)
+    assert not (tmp_path / "p").exists()
+    assert len(hub.fetched(ASSETS)) <= hub_probes.LEAK_SAMPLE + hub_probes.DOWNLOAD_WORKERS
+
+
+@pytest.mark.parametrize("data, label, leaks", [
+    (b"\x00JnameH:\\HumanActionDB\\drink\\clip.avi\x00", "drink", True),
+    (b"\x00T\x00C\x00O\x00N" + "Rock music".encode("utf-16-le") + b"\x00\x00", "rock", True),
+    (b"\x00\x00" + "Rock music".encode("utf-16-be") + b"\x00", "rock", True),
+    (b"\x01\\sword_exercise\\x.avi\x01", "sword_exercise", True),
+    (b"\x01genre: Hip-Hop\x01", "hip hop", True),
+    (b"\x01genre: pop music\x01", "pop", True),
+    (b"\x01pop\x01", "pop", False),  # a three-letter word only counts inside a run of 6 or more
+    (b"\x01VideoHandler\x01", "video", False),  # part of a longer word
+    (b"\x01scene 1.5\x01", "1", False),  # digits only are never looked for
+    (b"\x00" * (hub_probes.SCAN_BYTES + 9) + b"\x01\\drink\\\x01" + b"\x00" * (hub_probes.SCAN_BYTES + 9), "drink",
+     False),  # the middle of a big file is media data, not metadata
+])
+def test_the_media_leak_scan(data, label, leaks):
+    assert hub_probes._names_label(data, label) is leaks
+
+
+def glb(doc: dict, binary: bytes) -> bytes:
+    body = json.dumps(doc).encode()
+    body += b" " * (-len(body) % 4)
+    binary += b"\x00" * (-len(binary) % 4)
+    chunks = struct.pack("<II", len(body), 0x4E4F534A) + body + struct.pack("<II", len(binary), 0x004E4942) + binary
+    return b"glTF" + struct.pack("<II", 2, 12 + len(chunks)) + chunks
+
+
+def glb_parts(data: bytes) -> tuple[dict, bytes]:
+    assert data[:4] == b"glTF" and struct.unpack_from("<II", data, 4) == (2, len(data))
+    size, kind = struct.unpack_from("<II", data, 12)
+    assert kind == 0x4E4F534A and size % 4 == 0
+    return json.loads(data[20:20 + size]), data[20 + size:]
+
+
+def mesh_doc(name: str) -> dict:
+    return {"asset": {"version": "2.0", "generator": "test", "extras": {"source": name}},
+            "scenes": [{"name": name, "nodes": [0]}], "nodes": [{"name": name, "mesh": 0}],
+            "meshes": [{"name": name, "primitives": [{"attributes": {"POSITION": 0}, "extras": {"part": name}}]}],
+            "materials": [{"name": "scan", "extensions": {"KHR_test": {"name": "kept"}}}],
+            "buffers": [{"byteLength": 36}]}
+
+
+def test_glb_names_and_extras_are_stripped_and_the_geometry_kept():
+    binary = struct.pack("<9f", *range(9))
+    data = glb(mesh_doc("ACE_Coffee_Mug_Kristen_16_oz_cup"), binary)
+    out, how = hub_probes._strip_metadata(data, ".glb", "Mesh", None, 30)
+    doc, rest = glb_parts(out)
+    assert how == "stripped" and b"Coffee" not in out
+    assert "name" not in json.dumps({k: v for k, v in doc.items() if k != "materials"})
+    assert "extras" not in json.dumps(doc)
+    assert doc["materials"] == [{"extensions": {"KHR_test": {"name": "kept"}}}]  # extension data is left alone
+    assert doc["meshes"][0]["primitives"][0]["attributes"] == {"POSITION": 0}
+    assert rest[8:8 + len(binary)] == binary
+
+
+def test_glb_probes_never_carry_the_object_names(hub, tmp_path):
+    hub_id = "o/scanned-objects"
+    products = {"kitchen": "ACE_Coffee_Mug", "electronics": "Asus_Wireless_Router"}
+
+    def row(i):
+        return {"mesh": {"src": f"{ASSETS}/{hub_id}/{i}.glb"}, "category": list(products)[i % 2]}
+
+    hub.datasets[hub_id] = Dataset([media("mesh", "Mesh"), value("category")], row, 40)
+    for i in range(40):
+        label = list(products)[i % 2]
+        name = f"{label}_bowl_{i}" if i % 4 == 0 else f"{products[label]}_{i}"  # some even name their label
+        hub.files[f"{ASSETS}/{hub_id}/{i}.glb"] = glb(mesh_doc(name), filler(i, 64))
+    mapping = choose_mapping(cand(hub_id), "Tell me what object this 3D model is", "3d")
+    report = fetch_probes(cand(hub_id), mapping, tmp_path / "p", n_per_label=20, min_per_label=5)
+    assert report.counts == {"kitchen": 20, "electronics": 20} and report.skipped.get("leak", 0) == 0
+    for f in (tmp_path / "p").rglob("*.glb"):
+        doc, _ = glb_parts(f.read_bytes())
+        assert b"Coffee" not in f.read_bytes() and b"Asus" not in f.read_bytes() and b"bowl" not in f.read_bytes()
+        assert "name" not in json.dumps(doc["meshes"]) + json.dumps(doc["scenes"]) + json.dumps(doc["nodes"])
+    assert any("stripped the metadata" in note for note in report.notes)
+
+
+def png_chunk(kind: bytes, data: bytes) -> bytes:
+    return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data))
+
+
+def test_png_text_chunks_are_stripped():
+    ihdr = png_chunk(b"IHDR", struct.pack(">IIBBBBB", 1, 1, 8, 0, 0, 0, 0))
+    idat, iend = png_chunk(b"IDAT", zlib.compress(b"\x00\x00")), png_chunk(b"IEND", b"")
+    data = (hub_probes._PNG_SIGNATURE + ihdr + png_chunk(b"tEXt", b"Title\x00golden retriever") + idat
+            + png_chunk(b"iTXt", b"Description\x00\x00\x00\x00\x00a retriever") + iend)
+    out, how = hub_probes._strip_metadata(data, ".png", "Image", None, 30)
+    assert how == "stripped" and out == hub_probes._PNG_SIGNATURE + ihdr + idat + iend
+
+
+def jpeg_segment(marker: int, payload: bytes) -> bytes:
+    return bytes((0xFF, marker)) + struct.pack(">H", len(payload) + 2) + payload
+
+
+def test_jpeg_metadata_segments_are_stripped_and_the_image_kept():
+    app0 = jpeg_segment(0xE0, b"JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00")
+    icc, dqt = jpeg_segment(0xE2, b"ICC_PROFILE\x00\x01\x01sRGB"), jpeg_segment(0xDB, b"\x00" + bytes(64))
+    scan = b"\xff\xda" + struct.pack(">H", 8) + b"\x01\x01\x00\x00\x3f\x00" + b"pixels\xff\x00more" + b"\xff\xd9"
+    data = (b"\xff\xd8" + app0 + jpeg_segment(0xE1, b"Exif\x00\x00golden retriever") + icc
+            + jpeg_segment(0xED, b"Photoshop 3.0\x00retriever") + jpeg_segment(0xFE, b"a golden retriever") + dqt
+            + scan)
+    out, how = hub_probes._strip_metadata(data, ".jpg", "Image", None, 30)
+    assert how == "stripped" and out == b"\xff\xd8" + app0 + icc + dqt + scan
+    assert hub_probes._strip_metadata(b"\xff\xd8\xff\xe0\x00", ".jpg", "Image", None, 30)[1] == "unstripped"
+
+
+FFMPEG = shutil.which("ffmpeg")
+
+
+@pytest.mark.skipif(not FFMPEG, reason="ffmpeg is not installed")
+def test_ffmpeg_remux_drops_video_and_audio_tags_and_keeps_the_streams(tmp_path):
+    video, sound = tmp_path / "v.mp4", tmp_path / "a.wav"
+    subprocess.run([FFMPEG, "-nostdin", "-v", "error", "-f", "lavfi", "-i", "color=c=red:s=16x16:d=0.2", "-c:v",
+                    "mpeg4", "-metadata", "title=ACE Coffee Mug", "-metadata:s:v:0",
+                    "handler_name=H:\\clips\\drink\\x.avi", str(video)], check=True)
+    subprocess.run([FFMPEG, "-nostdin", "-v", "error", "-f", "lavfi", "-i", "sine=frequency=440:duration=0.2",
+                    "-metadata", "genre=Rock", "-c:a", "pcm_s16le", str(sound)], check=True)
+    assert b"Coffee" in video.read_bytes() and b"drink" in video.read_bytes() and b"Rock" in sound.read_bytes()
+    out, how = hub_probes._strip_metadata(video.read_bytes(), ".mp4", "Video", FFMPEG, 30)
+    assert how == "stripped" and b"Coffee" not in out and b"drink" not in out and b"Lavf" not in out
+    probe = tmp_path / "out.mp4"
+    probe.write_bytes(out)
+    assert subprocess.run([FFMPEG, "-nostdin", "-v", "error", "-i", str(probe), "-f", "null", "-"]).returncode == 0
+    out, how = hub_probes._strip_metadata(sound.read_bytes(), ".wav", "Audio", FFMPEG, 30)
+    original = sound.read_bytes()
+    assert how == "stripped" and b"Rock" not in out
+    assert out[out.index(b"data") + 8:] == original[original.index(b"data") + 8:]  # the samples are untouched
+    assert hub_probes._strip_metadata(original, ".wav", "Audio", None, 30) == (original, "unstripped")
+
+
+# ----------------------------------------------------------------------------- the same input under two labels
+def test_the_same_input_under_two_labels_is_dropped_and_repeats_are_merged(hub, tmp_path):
+    def row(i):  # long format: two rows per molecule, one per odor
+        m = i // 2
+        if m < 10:  # fruity and green
+            odor = ["fruity", "green"][i % 2]
+        elif m < 30:  # one odor, twice
+            odor = ["fruity", "green"][m % 2]
+        else:  # fruity and sweet: sweet never stands alone, so it cannot be a label
+            odor = ["fruity", "sweet"][i % 2]
+        return {"smiles": "C" * (m + 1) + "O", "odor": odor}
+
+    hub.datasets["o/odor-pairs"] = Dataset([value("smiles"), value("odor")], row, 72)
+    mapping = choose_mapping(cand("o/odor-pairs"), "What does this molecule smell like?", "chemical")
+    assert mapping.label_kind == "string"
+    report = fetch_probes(cand("o/odor-pairs"), mapping, tmp_path / "p", n_per_label=30, min_per_label=5)
+    fruity = {f.read_text() for f in (tmp_path / "p" / "fruity").iterdir()}
+    green = {f.read_text() for f in (tmp_path / "p" / "green").iterdir()}
+    assert not fruity & green and report.counts == {"fruity": 16, "green": 10}
+    assert report.skipped["duplicate_input"] == 36 and report.skipped["conflicting_labels"] == 10
+    assert any("different labels" in note for note in report.notes)
+
+
+def test_identical_media_files_are_kept_once_and_never_under_two_labels(hub, tmp_path):
+    hub_id = audio_dataset(hub)
+    hub.files[audio_src(hub_id, 3)] = hub.files[audio_src(hub_id, 0)]  # rock twice
+    hub.files[audio_src(hub_id, 2)] = hub.files[audio_src(hub_id, 1)]  # jazz and pop
+    mapping = choose_mapping(cand(hub_id), "Make it recognise music genres", "audio")
+    report = fetch_probes(cand(hub_id), mapping, tmp_path / "p", n_per_label=40, min_per_label=5)
+    assert report.skipped["duplicate_input"] == 1 and report.skipped["conflicting_labels"] == 2
+    files = [f.read_bytes() for f in (tmp_path / "p").rglob("*.wav")]
+    assert len(files) == len(set(files)) == 87
+    assert not (tmp_path / "p" / "jazz" / "1.wav").exists() and not (tmp_path / "p" / "pop" / "2.wav").exists()
+    assert report.counts == {"rock": 29, "jazz": 29, "pop": 29}
+
+
+# ----------------------------------------------------------------------------- multi-label strings
+def test_a_comma_joined_descriptor_string_is_a_list_label(hub, tmp_path):
+    hub_id = smiles_dataset(hub, "o/odor-molecules", ["fruity", "green", "fruity, green"], column="odor",
+                            feature=value("odor"))
+    mapping = choose_mapping(cand(hub_id), "What does this molecule smell like?", "chemical")
+    assert (mapping.label_kind, mapping.label_separator) == ("list", ",")
+    report = fetch_probes(cand(hub_id), mapping, tmp_path / "p", n_per_label=40, min_per_label=5)
+    assert report.counts == {"fruity": 20, "green": 20} and report.skipped["multi_label"] == 20
+    assert any("exactly one of the chosen labels" in note for note in report.notes)
+
+
+def test_a_list_literal_label_is_a_list(hub, tmp_path):
+    hub_id = smiles_dataset(hub, "o/odor-molecules", ["['fruity']", '["green"]', "['fruity', 'green']"],
+                            column="odor", feature=value("odor"))
+    mapping = choose_mapping(cand(hub_id), "What does this molecule smell like?", "chemical")
+    assert (mapping.label_kind, mapping.label_separator) == ("list", hub_probes.LIST_LITERAL)
+    report = fetch_probes(cand(hub_id), mapping, tmp_path / "p", n_per_label=40, min_per_label=5)
+    assert report.counts == {"fruity": 20, "green": 20} and report.skipped["multi_label"] == 20
+
+
+def test_a_comma_inside_one_name_keeps_it_one_label(hub):
+    names = ["France", "Japan", "Korea, Republic of"]
+    hub.datasets["o/world-cities"] = Dataset(
+        [value("latitude", "float64"), value("longitude", "float64"), value("country")],
+        lambda i: {"latitude": i / 10, "longitude": 2.0, "country": names[i % 3]}, 60)
+    mapping = choose_mapping(cand("o/world-cities"), "Which country is this place in?", "coordinates")
+    assert (mapping.label_column, mapping.label_kind, mapping.label_separator) == ("country", "string", None)
+
+
+def test_a_value_combining_other_values_is_never_a_label(hub, tmp_path):
+    hub_id = smiles_dataset(hub, "o/odor-molecules", ["fruity", "fruity", "green", "green", "fruity, green"],
+                            column="odor", feature=value("odor"))
+    mapping = choose_mapping(cand(hub_id), "What does this molecule smell like?", "chemical")
+    assert mapping.label_kind == "string"  # too few joined cells to read the column as a list
+    report = fetch_probes(cand(hub_id), mapping, tmp_path / "p", n_per_label=40, min_per_label=5)
+    assert sorted(report.labels) == ["fruity", "green"]
+    assert any("'fruity, green': it combines other label values" in note for note in report.notes)
+
+
+# ----------------------------------------------------------------------------- an input that gives the label away
+CODES = {"FR": "France", "JP": "Japan", "BR": "Brazil", "KE": "Kenya"}
+
+
+def coded_cities(hub, hub_id="o/world-cities"):
+    def row(i):
+        code = list(CODES)[i % 4]
+        return {"text": f"Postcard number {i}", "city": f"{CODES[code]} town {i}", "country_name": CODES[code],
+                "country_code": code, "latitude": (10.5 + i) % 80, "longitude": -20.25 - i % 150}
+
+    hub.datasets[hub_id] = Dataset([value("text"), value("city"), value("country_name"), value("country_code"),
+                                    value("latitude", "float64"), value("longitude", "float64")], row, 80)
+    return hub_id
+
+
+def test_a_language_model_cannot_add_an_input_column_that_gives_the_label_away(hub, tmp_path, monkeypatch):
+    hub_id = coded_cities(hub)
+    answer = {"input_columns": ["latitude", "longitude", "country_name"], "label_column": "country_code",
+              "template": "{latitude}, {longitude} ({country_name})", "reason": "x"}
+    monkeypatch.setattr(hub_probes.llm, "ask_json", lambda *a, **k: answer)
+    mapping = choose_mapping(cand(hub_id), "Which country is this place in?", "coordinates")
+    assert (mapping.origin, mapping.input_columns, mapping.label_column) == ("rule", ["latitude", "longitude"],
+                                                                             "country_code")
+    report = fetch_probes(cand(hub_id), mapping, tmp_path / "p", n_per_label=5, min_per_label=4)
+    assert not any(name in f.read_text() for f in (tmp_path / "p").rglob("*.txt") for name in CODES.values())
+    assert report.counts == {"fr": 5, "jp": 5, "br": 5, "ke": 5}
+    # a city (every value distinct, so no column-determines-label check can see it) is not a coordinate slot
+    answer = {"input_columns": ["latitude", "longitude", "city"], "label_column": "country_code",
+              "template": "{latitude}, {longitude} ({city})", "reason": "x"}
+    mapping = choose_mapping(cand(hub_id), "Which country is this place in?", "coordinates")
+    assert (mapping.origin, mapping.input_columns) == ("rule", ["latitude", "longitude"])
+    # with no typed slots (plain text), the column-determines-label check still refuses it
+    answer = {"input_columns": ["text", "country_name"], "label_column": "country_code",
+              "template": "{text} ({country_name})", "reason": "x"}
+    mapping = choose_mapping(cand(hub_id), "Which country is this postcard from?", "text")
+    assert (mapping.origin, mapping.input_columns, mapping.label_column) == ("rule", ["text"], "country_code")
+
+
+def test_a_language_model_mapping_must_use_input_columns_of_the_right_kind(hub, monkeypatch):
+    hub.datasets["o/music-genres"] = Dataset(
+        [media("cover", "Image"), media("audio", "Audio"), value("genre")],
+        lambda i: {"cover": {"src": f"{ASSETS}/c/{i}.jpg"}, "audio": {"src": f"{ASSETS}/a/{i}.wav"},
+                   "genre": GENRES[i % 3]}, 30)
+    answer = {"input_columns": ["cover"], "template": "", "label_column": "genre", "reason": "x"}
+    monkeypatch.setattr(hub_probes.llm, "ask_json", lambda *a, **k: answer)
+    mapping = choose_mapping(cand("o/music-genres"), "Make it recognise music genres", "audio")
+    assert (mapping.origin, mapping.input_columns, mapping.media_type) == ("rule", ["audio"], "Audio")
+    hub.datasets["o/country-notes"] = Dataset(
+        [value("text"), string_list("keywords"), value("country")],
+        lambda i: {"text": f"A note number {i}", "keywords": [f"k{i % 7}"], "country": COUNTRIES[i % 4]}, 40)
+    answer = {"input_columns": ["keywords"], "template": "{keywords}", "label_column": "country", "reason": "x"}
+    mapping = choose_mapping(cand("o/country-notes"), "Which country is this sentence about?", "text")
+    assert (mapping.origin, mapping.input_columns) == ("rule", ["text"])
+
+
+# ----------------------------------------------------------------------------- which column is the label
+EMOTIONS = ["angry", "happy", "sad"]
+TRUTH = ("emotion", "emotion_label", "gold_emotion", "emotion_category")  # the other emotion columns are predictions
+
+
+def emotion_dataset(hub, hub_id, columns, classlabels=()):
+    def cell(column, i):
+        if column == "speaker":
+            return f"speaker {i % 4}"
+        index = i % 3 if column in TRUTH else (i + 1) % 3
+        return index if column in classlabels else EMOTIONS[index]
+
+    features = [class_label(c, EMOTIONS) if c in classlabels else value(c) for c in columns]
+    hub.datasets[hub_id] = Dataset([media("audio", "Audio")] + features,
+                                   lambda i: {"audio": {"src": f"{ASSETS}/{hub_id}/{i}.wav"}}
+                                   | {c: cell(c, i) for c in columns}, 30)
+    return hub_id
+
+
+SPEAKS = "What emotion is this speaker expressing?"
+
+
+@pytest.mark.parametrize("columns, classlabels, goal, label", [
+    (["qwen_emotion", "emotion", "kimi_emotion"], (), SPEAKS, "emotion"),  # nEMO's model columns, truth not first
+    (["qwen_emotion", "emotion"], ("qwen_emotion",), SPEAKS, "emotion"),  # a variant of a bare column loses points
+    (["predicted_emotion", "gold_emotion"], (), SPEAKS, "gold_emotion"),  # prediction words lose points
+    (["emotion_category_v2", "emotion_category"], (), SPEAKS, "emotion_category"),  # a tie goes to fewer words
+    (["speaker", "emotion"], (), SPEAKS, "emotion"),  # the goal's focus beats its later words
+    (["emotion", "speaker"], (), "Which speaker is expressing this emotion?", "speaker"),
+    (["speaker", "emotion"], (), "Listen to this speaker and say which emotion they express", "emotion"),
+])
+def test_the_rule_label_prefers_the_asked_ground_truth_column(hub, columns, classlabels, goal, label):
+    hub_id = emotion_dataset(hub, "o/nemo-speakers", columns, classlabels)
+    assert choose_mapping(cand(hub_id), goal, "audio").label_column == label
+
+
+def test_the_asked_word_outweighs_a_name_column_penalty(hub):
+    regions = ["Europe", "Asia", "Americas", "Africa"]
+    hub.datasets["o/world-cities"] = Dataset(
+        [value("latitude", "float64"), value("longitude", "float64"), value("region"), value("country_name")],
+        lambda i: {"latitude": i / 10, "longitude": 2.0, "region": regions[i % 4], "country_name": COUNTRIES[i % 4]},
+        40)
+    assert choose_mapping(cand("o/world-cities"), "Which country is this place in?",
+                          "coordinates").label_column == "country_name"
+
+
+CIFAR = ["airplane", "automobile", "bird", "cat", "deer", "dog", "frog", "horse", "ship", "truck"]
+
+
+def test_a_benchmark_class_label_is_trusted_when_its_names_fit_the_goal_or_wanted_labels(hub):
+    hub.datasets["o/cifar10"] = Dataset([media("img", "Image"), class_label("label", CIFAR)],
+                                        lambda i: {"img": {"src": f"{ASSETS}/o/cifar10/{i}.png"}, "label": i % 10}, 50)
+    mapping = choose_mapping(cand("o/cifar10"), "Is this a cat or a dog?", "image")
+    assert (mapping.label_column, mapping.label_kind) == ("label", "classlabel")
+    mapping = choose_mapping(cand("o/cifar10"), "Which animal is in this photo?", "image", wanted_labels=["Cat", "dog"])
+    assert mapping.label_column == "label"
+    with pytest.raises(ProbesUnavailable, match="present but not trusted: 'label' .a ClassLabel: airplane"):
+        choose_mapping(cand("o/cifar10"), "Which animal is in this photo?", "image")
+    hub.datasets["o/handwritten-digits"] = Dataset(
+        [media("image", "Image"), value("label", "int32")],
+        lambda i: {"image": {"src": f"{ASSETS}/d/{i}.png"}, "label": i % 10}, 50)
+    with pytest.raises(ProbesUnavailable, match="'label' hold numbers, not label names"):
+        choose_mapping(cand("o/handwritten-digits"), "What handwritten digit is this?", "image")
+
+
+# ----------------------------------------------------------------------------- word matching
+@pytest.mark.parametrize("label, text, found", [
+    ("1", "1.5, 20.25", False),
+    ("2", "-2.75, 31.0", False),
+    ("20", "20.25, 1.0", False),
+    ("5", "rated 5 stars", True),
+    ("5", "rated 5.", True),
+    ("France", "near FRANCE today", True),
+    ("hip hop", "a Hip-Hop beat", True),
+    ("hip hop", "hiphop", True),
+    ("rock", "rocket", False),
+    ("sword_exercise", "\\sword_exercise\\", True),
+])
+def test_the_label_word_pattern(label, text, found):
+    assert bool(hub_probes._word_pattern(label).search(text)) is found
+
+
+def test_numeric_labels_do_not_leak_into_decimal_coordinates(hub, tmp_path):
+    hub.datasets["o/zone-cities"] = Dataset(
+        [value("latitude", "float64"), value("longitude", "float64"), value("region")],
+        lambda i: {"latitude": 1.5 + i / 100, "longitude": -2.75 - i / 100, "region": str(1 + i % 3)}, 60)
+    mapping = choose_mapping(cand("o/zone-cities"), "Which region is this place in?", "coordinates")
+    report = fetch_probes(cand("o/zone-cities"), mapping, tmp_path / "p", n_per_label=20, min_per_label=5)
+    assert report.counts == {"1": 20, "2": 20, "3": 20} and "leak" not in report.skipped
+
+
+# ----------------------------------------------------------------------------- paths stay inside dest
+@pytest.mark.parametrize("label, folder", [("../../x", "x"), ("/etc/passwd", "etc_passwd"), ("..", "label_7"),
+                                           ("a/b", "a_b"), ("C:\\Windows\\System32", "c_windows_system32")])
+def test_safe_label_is_one_plain_folder_name(label, folder):
+    assert safe_label(label, 7) == folder
+
+
+def test_label_values_shaped_like_paths_stay_inside_dest(hub, tmp_path):
+    values = ["../../evil", "/etc/passwd", "...", "ok"]  # a ClassLabel, so the values reach safe_label whole
+    hub.datasets["o/world-cities"] = Dataset(
+        [value("latitude", "float64"), value("longitude", "float64"), class_label("country", values)],
+        lambda i: {"latitude": i / 10, "longitude": 2.0, "country": i % 4}, 80)
+    mapping = choose_mapping(cand("o/world-cities"), "Which country is this place in?", "coordinates")
+    report = fetch_probes(cand("o/world-cities"), mapping, tmp_path / "p", n_per_label=5, min_per_label=5)
+    assert sorted(report.labels) == ["etc_passwd", "evil", "ok"]
+    assert report.label_values["evil"] == "../../evil"
+    assert any("'...': its folder name would be empty" in note for note in report.notes)
+    assert [p.name for p in tmp_path.iterdir()] == ["p"]
+    assert all(len(f.relative_to(tmp_path / "p").parts) == 2 for f in (tmp_path / "p").rglob("*") if f.is_file())
+
+
+def test_search_drops_ids_that_are_not_plain_owner_and_name(hub):
+    hub.search = {"cities": [item(i, 10) for i in ("..", "a/..", "../x", "a/b/c", "./x", "a/.", "o/ok-cities")]}
+    assert [c.hub_id for c in search_hub("Which country is this place in?", "coordinates")] == ["o/ok-cities"]
+
+
+def test_licence_other_carries_the_cards_name_and_link():
+    card = {"license": "other", "license_name": "hmdb-research-only", "license_link": "https://example.org/terms"}
+    found = hub_probes._candidate({"id": "o/d", "cardData": card, "tags": ["license:other"]})
+    assert found.licence == "other (hmdb-research-only, https://example.org/terms)"
+    assert hub_probes._candidate({"id": "o/d", "cardData": {"license": "other"}}).licence == "other"
+
+
+# ----------------------------------------------------------------------------- the real HTTP helper
+class FakeResponse:
+    def __init__(self, body, length=None, clock=None):
+        self.body, self.pos, self.clock = body, 0, clock
+        self.headers = {"Content-Length": str(len(body)) if length is None else length}
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def read1(self, n):
+        if self.clock is not None:
+            self.clock[0] += 1.0  # each read takes a second
+        chunk = self.body[self.pos:self.pos + min(n, 1000)]
+        self.pos += len(chunk)
+        return chunk
+
+
+def fake_opener(monkeypatch, response):
+    seen = {}
+
+    class Opener:
+        def open(self, request, timeout):
+            seen["request"], seen["timeout"] = request, timeout
+            return response
+
+    def build_opener(*handlers):
+        seen["handlers"] = handlers
+        return Opener()
+
+    monkeypatch.setattr(hub_probes.urllib.request, "build_opener", build_opener)
+    return seen
+
+
+def test_the_real_http_helper_caps_bytes_and_time_and_guards_redirects(monkeypatch):
+    url = "https://huggingface.co/api/datasets?search=x"
+    seen = fake_opener(monkeypatch, FakeResponse(b"x" * 2500))
+    assert hub_probes._http_get(url, max_bytes=3000) == b"x" * 2500
+    assert hub_probes._Redirects in seen["handlers"] and seen["request"].get_header("User-agent") == "sense-harness"
+    for response in (FakeResponse(b"x" * 10, length="5000"), FakeResponse(b"x" * 5000, length="")):
+        fake_opener(monkeypatch, response)  # an announced size over the cap, then a body streamed past it
+        with pytest.raises(hub_probes._HttpError) as caught:
+            hub_probes._http_get(url, max_bytes=3000)
+        assert caught.value.reason == "too_large"
+    clock = [0.0]
+    monkeypatch.setattr(hub_probes, "_now", lambda: clock[0])
+    fake_opener(monkeypatch, FakeResponse(b"x" * 9000, clock=clock))
+    with pytest.raises(hub_probes._HttpError) as caught:
+        hub_probes._http_get(url, timeout=2.5)
+    assert caught.value.reason == "timeout" and clock[0] <= 3.0
+
+
+# ----------------------------------------------------------------------------- cleanup on any failure
+def test_dest_is_removed_when_writing_fails(hub, tmp_path, monkeypatch):
+    hub_id = cities_dataset(hub)
+    mapping = choose_mapping(cand(hub_id), "Which country is this place in?", "coordinates")
+    real, written = hub_probes._write, []
+
+    def full_disk(target, data):
+        written.append(target)
+        if len(written) > 3:
+            raise OSError(28, "No space left on device")
+        real(target, data)
+
+    monkeypatch.setattr(hub_probes, "_write", full_disk)
+    with pytest.raises(ProbesUnavailable, match="could not write probes"):
+        fetch_probes(cand(hub_id), mapping, tmp_path / "p", n_per_label=5, min_per_label=4)
+    assert len(written) == 4 and not (tmp_path / "p").exists()
+
+
+def test_dest_is_removed_when_a_download_is_interrupted(hub, tmp_path, monkeypatch):
+    hub_id = audio_dataset(hub)
+    mapping = choose_mapping(cand(hub_id), "Make it recognise music genres", "audio")
+    downloads = []
+
+    def interrupted(url, **kwargs):
+        if url.startswith(ASSETS):
+            downloads.append(url)
+            if len(downloads) > 6:
+                raise KeyboardInterrupt
+        return hub(url, **kwargs)
+
+    monkeypatch.setattr(hub_probes, "_http_get", interrupted)
+    with pytest.raises(KeyboardInterrupt):
+        fetch_probes(cand(hub_id), mapping, tmp_path / "p", n_per_label=20, min_per_label=5)
+    time.sleep(0.05)  # let any worker still running finish (workers never write into dest)
+    assert not (tmp_path / "p").exists()
+
+
+# ----------------------------------------------------------------------------- time budget
+def test_retry_waits_are_capped_and_never_run_past_the_deadline(monkeypatch):
+    clock, sleeps, timeouts = [0.0], [], []
+    monkeypatch.setattr(hub_probes, "_now", lambda: clock[0])
+
+    def sleep(seconds):
+        sleeps.append(seconds)
+        clock[0] += seconds
+
+    def busy(url, *, timeout, max_bytes):
+        timeouts.append(timeout)
+        clock[0] += 0.5
+        raise hub_probes._HttpError("http_503", "HTTP 503 from datasets-server.huggingface.co", 999.0)
+
+    monkeypatch.setattr(hub_probes, "_sleep", sleep)
+    monkeypatch.setattr(hub_probes, "_http_get", busy)
+    with pytest.raises(ProbesUnavailable, match="HTTP 503"):
+        hub_probes._get_json(hub_probes.VIEWER + "/rows", {}, what="rows")
+    assert sleeps == [hub_probes.MAX_RETRY_WAIT] * 2  # Retry-After 999 waits 30 s at most
+    clock[0], sleeps[:], timeouts[:] = 0.0, [], []
+    monkeypatch.setattr(hub_probes, "RETRY_WAITS", (5.0, 5.0))
+    monkeypatch.setattr(hub_probes, "MAX_RETRY_WAIT", 5.0)
+    with pytest.raises(ProbesUnavailable, match="HTTP 503"):
+        hub_probes._get_json(hub_probes.VIEWER + "/rows", {}, what="rows", deadline=12.0)
+    assert sleeps == [5.0] and timeouts == [12.0, 6.5] and clock[0] <= 12.0
+
+
+def test_a_fetch_stays_within_its_budget_when_the_viewer_is_busy(monkeypatch, tmp_path):
+    clock, sleeps, requests = [0.0], [], []
+    monkeypatch.setattr(hub_probes, "_now", lambda: clock[0])
+    monkeypatch.setattr(hub_probes, "_sleep", lambda s: (sleeps.append(s), clock.__setitem__(0, clock[0] + s)))
+
+    def busy(url, *, timeout, max_bytes):
+        requests.append(timeout)
+        clock[0] += min(timeout, 1.0)
+        raise hub_probes._HttpError("http_503", "HTTP 503 from datasets-server.huggingface.co")
+
+    monkeypatch.setattr(hub_probes, "_http_get", busy)
+    mapping = Mapping("default", "train", ["latitude", "longitude"], "text", "{latitude}, {longitude}", ".txt",
+                      "country", "string")
+    with pytest.raises(ProbesUnavailable):
+        fetch_probes(cand("o/world-cities"), mapping, tmp_path / "p", budget_s=3)
+    assert sleeps == [] and clock[0] <= 3.0 and all(t <= 3.0 for t in requests)
+
+
+def test_find_probes_keeps_one_deadline_over_search_inspection_and_fetch(hub, tmp_path, monkeypatch):
+    clock = [0.0]
+    monkeypatch.setattr(hub_probes, "_now", lambda: clock[0])
+
+    def slow(url, *, timeout=20.0, max_bytes=50_000_000):  # every request takes 10 s
+        if timeout < 10:
+            clock[0] += timeout
+            raise hub_probes._HttpError("timeout", f"took over {timeout:.0f} s")
+        clock[0] += 10.0
+        return hub(url, timeout=timeout, max_bytes=max_bytes)
+
+    monkeypatch.setattr(hub_probes, "_http_get", slow)
+    hub.search = {"cities": [item(f"o/cities-{n}", 100 - n) for n in range(8)]}
+    for n in range(8):  # coordinates but no label: every inspection fails
+        hub.datasets[f"o/cities-{n}"] = Dataset([value("latitude", "float64"), value("longitude", "float64")],
+                                                lambda i: {"latitude": i / 10, "longitude": 2.0}, 10)
+    with pytest.raises(ProbesUnavailable, match="the 100 s time budget ran out") as caught:
+        find_probes("Which country is this place in?", "coordinates", tmp_path, total_budget_s=100)
+    assert clock[0] <= 100 and "o/cities-0" in str(caught.value) and "o/cities-7" not in str(caught.value)
+    clock[0] = 0.0  # six search queries take 60 s: a 35 s budget cuts the search short too
+    with pytest.raises(ProbesUnavailable, match="none was tried; the 35 s time budget ran out"):
+        find_probes("Which country is this place in?", "coordinates", tmp_path, total_budget_s=35)
+    assert clock[0] <= 35
+
+
+def test_media_page_reading_leaves_half_the_budget_for_downloads(hub, tmp_path, monkeypatch):
+    clock = [0.0]
+    monkeypatch.setattr(hub_probes, "_now", lambda: clock[0])
+    hub_id = audio_dataset(hub, total=2400)
+
+    def slow(url, *, timeout=20.0, max_bytes=50_000_000):
+        clock[0] += 10.0 if "/rows" in url else 1.0 if url.startswith(ASSETS) else 0.0  # 10 s a page, 1 s a file
+        return hub(url, timeout=timeout, max_bytes=max_bytes)
+
+    monkeypatch.setattr(hub_probes, "_http_get", slow)
+    mapping = choose_mapping(cand(hub_id), "Make it recognise music genres", "audio")
+    report = fetch_probes(cand(hub_id), mapping, tmp_path / "p", n_per_label=12, min_per_label=5, budget_s=120)
+    assert len(hub.fetched(hub_probes.VIEWER + "/rows")) <= 7 and report.rows_seen <= 700
+    assert any("stopped reading rows at the time budget" in note for note in report.notes)
+    assert report.counts == {"rock": 12, "jazz": 12, "pop": 12}
+
+
+def test_a_passing_failure_of_the_first_page_still_reads_the_spread_pages(hub, tmp_path):
+    def row(i):
+        return {"latitude": (i * 0.037) % 80, "longitude": -(i * 0.011) % 150, "country": COUNTRIES[i % 4]}
+
+    hub.datasets["o/world-cities"] = Dataset(
+        [value("latitude", "float64"), value("longitude", "float64"), value("country")], row, 2400,
+        flaky={0: [502, 504, 502], 2300: [502]}, sized=True)
+    mapping = choose_mapping(cand("o/world-cities"), "Which country is this place in?", "coordinates")
+    report = fetch_probes(cand("o/world-cities"), mapping, tmp_path / "p", n_per_label=10, min_per_label=5)
+    assert report.rows_seen == 1200 and "page_failed" not in report.skipped  # offset 2300's 502 was retried
+    assert any("/size" in note for note in report.notes)
+    offsets = [urllib.parse.parse_qs(urllib.parse.urlsplit(u).query)["offset"][0]
+               for u in hub.fetched(hub_probes.VIEWER + "/rows")]
+    assert offsets.count("2300") == 2 and offsets.count("0") == 3
+
+
+def test_after_a_page_fails_when_retried_later_pages_get_one_try(hub, tmp_path):
+    def row(i):
+        return {"latitude": (i * 0.037) % 80, "longitude": -(i * 0.011) % 150, "country": COUNTRIES[i % 4]}
+
+    hub.datasets["o/world-cities"] = Dataset(  # pages at 0, 209, 418, 627, ... 2300
+        [value("latitude", "float64"), value("longitude", "float64"), value("country")], row, 2400,
+        flaky={209: [503, 503, 503], 418: [503], 627: [503]})
+    mapping = choose_mapping(cand("o/world-cities"), "Which country is this place in?", "coordinates")
+    report = fetch_probes(cand("o/world-cities"), mapping, tmp_path / "p", n_per_label=10, min_per_label=5)
+    offsets = [urllib.parse.parse_qs(urllib.parse.urlsplit(u).query)["offset"][0]
+               for u in hub.fetched(hub_probes.VIEWER + "/rows")]
+    assert (offsets.count("209"), offsets.count("418"), offsets.count("627")) == (3, 1, 1)
+    assert report.skipped["page_failed"] == 3 and report.rows_seen == 900
+    assert any("later pages get one try each" in note for note in report.notes)
