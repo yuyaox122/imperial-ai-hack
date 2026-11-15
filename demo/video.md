@@ -1,6 +1,6 @@
 # Demo video (2 minutes or less)
 
-A shot list for the Devpost video: one live run of the agent on a 3D model, then two refusals. Read every number off the screen. The live run's card can differ from the recorded one (`socket_pilot/artifacts/run_auto_claude-sonnet_3d.json`: 100.0%, swapped 12%, no input 20%, raw file 42%, unseen 64%), so the voice-over must say what the card on screen says.
+A shot list for the Devpost video: one live run of the agent on a 3D model, then two refusals. A cut of it is in this folder: `sensorium_demo.mp4` (1:56, 1440 by 900, captions instead of a voice-over). It was recorded on 15 November from the interface in headless Chromium against the real server, on an empty `SENSE_HOME`: the before and after chats, the start of the run and its report card come from the live run (`socket_pilot/artifacts/run_auto_claude-sonnet_3d-repeat.json`); the dataset search and verification are that same run replayed from its record at 16x, because the live trace kept the design step's long text in view; the two refusals are the recorded runs replayed. Each sped-up or replayed part says so on screen. Read every number off the screen. The live run's card can differ from the recorded one (`socket_pilot/artifacts/run_auto_claude-sonnet_3d.json`: 100.0%, swapped 12%, no input 20%, raw file 42%, unseen 64%), so the voice-over must say what the card on screen says.
 
 ## Before recording
 

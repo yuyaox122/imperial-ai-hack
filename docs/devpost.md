@@ -5,7 +5,7 @@ Draft by the lead's Claude, 14 November 19:55. Rewritten by Michael's Claude on 
 - **Name:** Sensorium
 - **Tagline:** An agent that gives a model a sense it doesn't have, proves the sense works, and installs it. If the proof fails, it refuses.
 - **Track:** Autonomous Agents. **Sponsor prizes:** Databricks, Figma, Linkup.
-- **Links:** GitHub `yuyaox122/imperial-ai-hack` (public by 10:30), demo video [TODO], Figma pitch page https://www.figma.com/design/9DxXU1h0aHjw8Mc8vUwl8O/Imperial-AI-Hackathon?node-id=70-76 [TODO: the owner (Michael) sets "anyone with the link can view" before submitting].
+- **Links:** GitHub `yuyaox122/imperial-ai-hack` (public by 10:30), demo video [TODO: upload `demo/sensorium_demo.mp4` (1:56, captions, no audio) to YouTube or Vimeo and paste the link], Figma pitch page https://www.figma.com/design/9DxXU1h0aHjw8Mc8vUwl8O/Imperial-AI-Hackathon?node-id=70-76 [TODO: the owner (Michael) sets "anyone with the link can view" before submitting].
 
 ## Elevator pitch (at most 200 characters)
 
