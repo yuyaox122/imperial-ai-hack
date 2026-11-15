@@ -1,8 +1,9 @@
 """Finding labelled probe files on the Hugging Face Hub (agent.hub_probes), offline.
 
-No test touches the network: hub_probes._http_get and _table_get are replaced by FakeHub, which answers the Hub
-search and dataset records, the dataset viewer's /splits and /rows, and media and table file URLs from small
-in-memory tables shaped like the real answers (the trimmed real responses in tests/fixtures/hub/ pin those shapes).
+No test touches the network: hub_probes._http_get, _http_get_page and _table_get are replaced by FakeHub, which
+answers the Hub search and dataset records, the dataset viewer's /splits and /rows, the Hub tree API (paged through
+a Link header) and media and table file URLs from small in-memory tables shaped like the real answers (the trimmed
+real responses in tests/fixtures/hub/ pin those shapes).
 The web search (agent.research.search_structured) is unavailable unless a test gives it canned answers. ask_json
 answers None in fake mode, so the rule fallbacks run unless a test replaces it.
 Run: SENSE_FAKE=1 .venv/bin/python -m pytest -q tests/test_hub_probes.py
@@ -15,6 +16,7 @@ import gzip
 import hashlib
 import io
 import json
+import re
 import shutil
 import struct
 import subprocess
@@ -29,6 +31,7 @@ import pytest
 from agent import hub_probes, research
 from agent.hub_probes import (
     FetchReport,
+    FolderCandidate,
     HubCandidate,
     Mapping,
     ProbesUnavailable,
@@ -45,6 +48,7 @@ ASSETS = "https://datasets-server.huggingface.co/assets"
 REAL_SEARCH_STRUCTURED = research.search_structured
 REAL_TABLE_GET = hub_probes._table_get
 REAL_HTTP_GET = hub_probes._http_get
+REAL_HTTP_GET_PAGE = hub_probes._http_get_page
 
 
 class Dataset:
@@ -62,14 +66,36 @@ class Dataset:
 
 
 class FakeHub:
-    """Stands in for _http_get: the Hub search, the viewer's /splits and /rows, and file URLs."""
+    """Stands in for _http_get: the Hub search, the viewer's /splits and /rows, and file URLs; and for
+    _http_get_page: the Hub tree API, paged through a Link header like the real one."""
 
     def __init__(self):
         self.search: dict[str, list] = {}
         self.records: dict[str, dict] = {}  # /api/datasets/<id>
         self.datasets: dict[str, Dataset] = {}
         self.files: dict[str, bytes] = {}
+        self.trees: dict[str, list[dict]] = {}  # hub id -> the tree API's entries (any revision)
+        self.tree_page = 1000  # entries per tree page
         self.calls: list[str] = []
+
+    def page(self, url, *, timeout=20.0, max_bytes=50_000_000):
+        assert timeout > 0
+        self.calls.append(url)
+        parts = urllib.parse.urlsplit(url)
+        query = {k: v[0] for k, v in urllib.parse.parse_qs(parts.query).items()}
+        bits = parts.path.split("/")  # /api/datasets/<owner>/<name>/tree/<revision>
+        assert parts.netloc == "huggingface.co" and bits[:3] == ["", "api", "datasets"] and bits[5] == "tree", url
+        assert query["recursive"] == "true"
+        entries = self.trees.get(f"{bits[3]}/{bits[4]}")
+        if entries is None:
+            raise hub_probes._HttpError("http_404", "HTTP 404 from huggingface.co: Repository not found")
+        start = int(query.get("cursor", 0))
+        end = start + self.tree_page
+        link = None
+        if end < len(entries):
+            link = (f'<https://huggingface.co{parts.path}?expand=false&recursive=true&limit={self.tree_page}'
+                    f'&cursor={end}>; rel="next"')
+        return json.dumps(entries[start:end]).encode(), link
 
     def __call__(self, url, *, timeout=20.0, max_bytes=50_000_000):
         assert timeout > 0
@@ -130,6 +156,7 @@ def no_web(*args, **kwargs):
 def hub(monkeypatch):
     fake = FakeHub()
     monkeypatch.setattr(hub_probes, "_http_get", fake)
+    monkeypatch.setattr(hub_probes, "_http_get_page", fake.page)
     monkeypatch.setattr(hub_probes, "_table_get", fake)
     monkeypatch.setattr(hub_probes.research, "search_structured", no_web)
     monkeypatch.setattr(hub_probes, "_WEB_MEMO", {})
@@ -1728,3 +1755,397 @@ def test_without_a_gazetteer_disjoint_labels_match_as_before(tmp_path, monkeypat
     keys = hub_probes._loose_keys(["CN", "Hip-Hop"])
     assert hub_probes._loose_hit("hip_hops", keys) and hub_probes._loose_hit("cn", keys)
     assert not hub_probes._loose_hit("China", keys)
+
+
+# ----------------------------------------------------------------------------- folder-labelled repositories
+SHA = "0123456789abcdef0123456789abcdef01234567"
+OBJECT = "Tell me what object this 3D model is"
+ACTION = "What action is happening in this video?"
+ANIMAL = "Which animal is in this photo?"
+
+
+def tree_entries(files: dict[str, bytes], sizes=None) -> list[dict]:
+    """The Hub tree API's entries for these files and their folders, sorted by path as the Hub lists them (LFS
+    files: the real size is lfs.size, size is the pointer's)."""
+    folders = {"/".join(p.split("/")[:i]) for p in files for i in range(1, p.count("/") + 1)}
+    entries = [{"type": "directory", "oid": "d", "size": 0, "path": f} for f in folders]
+    entries += [{"type": "file", "oid": "f", "size": 131, "path": p,
+                 "lfs": {"oid": "x", "size": (sizes or {}).get(p, len(data)), "pointerSize": 131}}
+                for p, data in files.items()]
+    return sorted(entries, key=lambda e: e["path"])
+
+
+def resolve(hub_id, path, revision=SHA):
+    return f"https://huggingface.co/datasets/{hub_id}/resolve/{revision}/{urllib.parse.quote(path)}"
+
+
+def folder_repo(hub, hub_id, files: dict[str, bytes], *, sizes=None, revision=SHA):
+    hub.trees[hub_id] = tree_entries(files | {"README.md": b"# a card", ".gitattributes": b"*.off lfs"}, sizes)
+    for path, data in files.items():
+        hub.files[resolve(hub_id, path, revision)] = data
+    return hub_id
+
+
+def off(ci, n):
+    """An OFF mesh that tells its class (ci) and number (n) apart and spells no label."""
+    return f"OFF\n3 1 0\n{ci}.{n:04d} 0 0\n0 1 0\n0 0 1\n3 0 1 2\n".encode()
+
+
+def modelnet_files(classes=("airplane", "chair", "lamp"), per_split=3):
+    """ModelNet's layout: <class>/<split>/<class>_<number>.off."""
+    return {f"{c}/{split}/{c}_{k + 100 * (split == 'test'):04d}.off": off(ci, 10 * k + (split == "test"))
+            for ci, c in enumerate(classes) for split in ("train", "test") for k in range(per_split)}
+
+
+def folder(hub_id, licence="mit", revision=SHA, title=None):
+    return FolderCandidate(hub_id, title or hub_id, licence, [], f"https://huggingface.co/datasets/{hub_id}",
+                           revision)
+
+
+def test_class_folders_under_train_and_test_become_label_folders(hub, tmp_path):
+    files = modelnet_files()
+    hub_id = folder_repo(hub, "o/modelnet-meshes", files)
+    mapping = choose_mapping(folder(hub_id), OBJECT, "3d", min_per_label=4)
+    assert (mapping.label_kind, mapping.folder_depth, mapping.media_type) == ("folder", 0, "Mesh")
+    assert (mapping.config, mapping.extension, mapping.input_kind) == (SHA, ".off", "media")
+    assert sorted(mapping.label_names) == ["airplane", "chair", "lamp"]
+    report = fetch_probes(folder(hub_id), mapping, tmp_path / "p", n_per_label=6, min_per_label=4)
+    got = files_in(tmp_path / "p")
+    assert sorted(got) == ["airplane", "chair", "lamp"] and all(len(v) == 6 for v in got.values())
+    for label, names in got.items():  # each folder holds that class's meshes, under plain numbered names
+        own = {data for path, data in files.items() if path.startswith(label + "/")}
+        for name in names:
+            assert re.fullmatch(r"\d+\.off", name) and (tmp_path / "p" / label / name).read_bytes() in own
+    assert report.label_values == {"airplane": "airplane", "chair": "chair", "lamp": "lamp"}
+    assert (report.hub_id, report.licence, report.licence_source) == (hub_id, "mit", "the Hub dataset card")
+    assert report.source_url == f"https://huggingface.co/datasets/{hub_id}/tree/{SHA}" and report.rows_seen == 18
+    downloads = [u for u in hub.calls if u.endswith(".off")]
+    assert len(downloads) == 18 and all(u.startswith(f"https://huggingface.co/datasets/{hub_id}/resolve/{SHA}/")
+                                        for u in downloads)
+    assert any("names of the folders the files sit in" in note for note in report.notes)
+
+
+def test_split_folders_above_the_class_folders_work_too(hub, tmp_path):
+    actions = ["ApplyEyeMakeup", "Basketball", "JumpingJack"]  # UCF101's layout: <split>/<Class>/v_<Class>_gNN.avi
+    files = {f"{split}/{a}/v_{a}_g{g:02d}_c01.avi": b"RIFF\x00\x00AVI " + filler(100 * i + g + 50 * (split == "test"))
+             for i, a in enumerate(actions) for split in ("train", "test") for g in range(4)}
+    hub_id = folder_repo(hub, "o/ucf101-clips", files)
+    mapping = choose_mapping(folder(hub_id), ACTION, "video", min_per_label=5)
+    assert (mapping.folder_depth, mapping.media_type, mapping.extension) == (1, "Video", ".avi")
+    report = fetch_probes(folder(hub_id), mapping, tmp_path / "p", n_per_label=8, min_per_label=5)
+    assert report.counts == {"applyeyemakeup": 8, "basketball": 8, "jumpingjack": 8}
+    assert report.label_values["applyeyemakeup"] == "ApplyEyeMakeup"
+    assert all(re.fullmatch(r"\d+\.avi", n) for names in files_in(tmp_path / "p").values() for n in names)
+
+
+@pytest.mark.parametrize("layout, depth", [
+    ("data/{split}/{c}/images/{n}.png", 2),  # generic folders on either side of the class folder
+    ("fold_{k}/{c}/{n}.jpg", 1),  # numbered folds
+    ("2019/{c}/{n}.jpg", 1),  # a number
+    ("{c}/{c}_{n:03d}/view.png", 0),  # one folder per numbered item: an id, passed over for the class above it
+])
+def test_split_generic_and_id_folders_are_passed_over_for_the_class_folder(hub, tmp_path, layout, depth):
+    files = {layout.format(split=split, c=c, n=n + 10 * s, k=n % 2 + 1): b"PNG-like " + filler(ci * 100 + n + 50 * s)
+             for ci, c in enumerate(["cat", "dog", "fox"]) for s, split in enumerate(["train", "test"])
+             for n in range(4)}
+    hub_id = folder_repo(hub, "o/animal-photos", files)
+    mapping = choose_mapping(folder(hub_id), ANIMAL, "image", min_per_label=3)
+    assert (mapping.folder_depth, sorted(mapping.label_names)) == (depth, ["cat", "dog", "fox"])
+    report = fetch_probes(folder(hub_id), mapping, tmp_path / "p", n_per_label=3, min_per_label=3)
+    assert sorted(report.labels) == ["cat", "dog", "fox"]
+
+
+def test_files_at_no_one_folder_depth_are_refused(hub):
+    files = {f"{c}/{n}.png": filler(n + 10 * ci) for ci, c in enumerate(["cat", "dog"]) for n in range(4)}
+    files |= {f"extra/{c}/more/{c}_set/{n}.png": filler(100 + n + 10 * ci) for ci, c in enumerate(["owl", "emu"])
+              for n in range(4)}  # as many files labelled by a deeper folder
+    hub_id = folder_repo(hub, "o/animal-photos", files)
+    with pytest.raises(ProbesUnavailable, match="at no one folder depth"):
+        choose_mapping(folder(hub_id), ANIMAL, "image", min_per_label=3)
+
+
+@pytest.mark.parametrize("paths", [
+    [f"02691156/{hashlib.sha1(str(n).encode()).hexdigest()}/models/model_normalized.obj" for n in range(8)]
+    + [f"03001627/{hashlib.sha1(str(n).encode()).hexdigest()}/models/model_normalized.obj" for n in range(8, 16)],
+    [f"n0144076{n % 2}/n0144076{n % 2}_{n:05d}.png" for n in range(16)],  # ImageNet synset ids
+])
+def test_id_like_folder_names_are_refused(hub, paths):
+    files = {p: b"v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n" + filler(i, 32) for i, p in enumerate(paths)}
+    hub_id = folder_repo(hub, "o/shapenet-objects", files)
+    modality = "3d" if paths[0].endswith(".obj") else "image"
+    with pytest.raises(ProbesUnavailable, match="the folder names look like ids"):
+        choose_mapping(folder(hub_id), OBJECT if modality == "3d" else ANIMAL, modality, min_per_label=3)
+
+
+def test_folder_names_are_trusted_only_when_the_repository_or_the_names_fit_the_goal(hub):
+    files = {f"{c}/{n}.jpg": filler(n + 10 * ci) for ci, c in enumerate(["cat", "dog", "fox"]) for n in range(5)}
+    for hub_id in ("o/misc-files", "o/animal-photos"):
+        folder_repo(hub, hub_id, files)
+    with pytest.raises(ProbesUnavailable, match="not trusted as labels"):
+        choose_mapping(folder("o/misc-files"), ANIMAL, "image", min_per_label=3)
+    assert choose_mapping(folder("o/animal-photos"), ANIMAL, "image", min_per_label=3).label_kind == "folder"
+    # the title counts as the repository's own name; the folder names count when they name the wanted labels or
+    # the goal's own words
+    assert choose_mapping(folder("o/misc-files", title="Animal pictures"), ANIMAL, "image", min_per_label=3)
+    assert choose_mapping(folder("o/misc-files"), ANIMAL, "image", wanted_labels=["Cat", "dog"], min_per_label=3)
+    assert choose_mapping(folder("o/misc-files"), "Is this a cat or a dog?", "image", min_per_label=3)
+    with pytest.raises(ProbesUnavailable, match="not trusted as labels"):
+        choose_mapping(folder("o/misc-files"), ANIMAL, "image", wanted_labels=["cat", "owl"], min_per_label=3)
+
+
+def test_folder_labels_honour_disjoint_from_and_wanted_labels(hub, tmp_path):
+    files = modelnet_files(("airplane", "chair", "lamp", "night_stand", "sofa"))
+    hub_id = folder_repo(hub, "o/modelnet-meshes", files)
+    mapping = choose_mapping(folder(hub_id), OBJECT, "3d", min_per_label=4)
+    report = fetch_probes(folder(hub_id), mapping, tmp_path / "p", n_per_label=6, min_per_label=4,
+                          disjoint_from=["Airplane", "chairs", "Night-Stand"])
+    assert sorted(report.labels) == ["lamp", "sofa"] and sorted(files_in(tmp_path / "p")) == ["lamp", "sofa"]
+    assert any("labels in disjoint_from were not chosen" in note for note in report.notes)
+    report = fetch_probes(folder(hub_id), mapping, tmp_path / "q", n_per_label=6, min_per_label=4,
+                          wanted_labels=["night stand", "Sofa"])
+    assert report.label_values == {"night_stand": "night_stand", "sofa": "sofa"}
+    with pytest.raises(ProbesUnavailable, match="fewer than 2 label values .* disjoint_from"):
+        fetch_probes(folder(hub_id), mapping, tmp_path / "r", min_per_label=4,
+                     disjoint_from=["airplane", "chair", "lamp", "sofa"])
+    assert not (tmp_path / "r").exists()
+
+
+def test_folder_picks_are_spread_over_each_label_from_a_seeded_start(hub, tmp_path):
+    assert hub_probes._spread(list(range(100)), 4)[:5] == [0, 25, 50, 75, 1]  # then the rest as spares
+    assert hub_probes._spread(list(range(100)), 4, 0.5)[:5] == [12, 37, 62, 87, 0]
+    files = modelnet_files(("airplane", "chair"), per_split=10)  # 20 meshes a class: 10 train, then 10 test
+    hub_id = folder_repo(hub, "o/modelnet-meshes", files)
+    mapping = choose_mapping(folder(hub_id), OBJECT, "3d", min_per_label=4)
+    picked = []
+    for run in ("p", "q"):
+        fetch_probes(folder(hub_id), mapping, tmp_path / run, n_per_label=4, min_per_label=4)
+        picked.append(files_in(tmp_path / run))
+    assert picked[0] == picked[1]  # the same repository and revision give the same files
+    for label in ("airplane", "chair"):
+        phase = hub_probes._phase(f"{hub_id}@{SHA}", label)
+        assert 0 < phase < 1 and phase != hub_probes._phase(f"{hub_id}@{'f' * 40}", label)
+        listed = sorted(p for p in files if p.startswith(label + "/"))
+        n = {p: i for i, p in enumerate(sorted(files))}  # files are numbered in path order
+        expected = [n[listed[int((k + phase) * 20 / 4)]] for k in range(4)]
+        assert sorted(picked[0][label]) == sorted(f"{i}.off" for i in expected)
+        assert {"train", "test"} == {listed[int((k + phase) * 20 / 4)].split("/")[1] for k in range(4)}
+
+
+def test_folder_downloads_keep_the_per_file_and_total_byte_caps(hub, tmp_path, monkeypatch):
+    monkeypatch.setattr(hub_probes, "FILE_MAX_BYTES", 1_000)
+    files = {f"{c}/{n}.wav": unique_bytes(n + 100 * ci, 100) for ci, c in enumerate(["rock", "jazz"])
+             for n in range(8)}
+    big, liar = "rock/0.wav", "jazz/0.wav"
+    files[liar] = unique_bytes(999, 2_000)  # the file list says 100 bytes, the download sends 2,000
+    hub_id = folder_repo(hub, "o/music-genres", files, sizes={big: 5_000, liar: 100})
+    mapping = choose_mapping(folder(hub_id), "Make it recognise music genres", "audio", min_per_label=4)
+    report = fetch_probes(folder(hub_id), mapping, tmp_path / "p", n_per_label=8, min_per_label=4)
+    assert report.skipped["too_large"] == 2 and report.counts == {"rock": 7, "jazz": 7}
+    assert resolve(hub_id, big) not in hub.calls  # refused from the file list's size, before any request
+    assert resolve(hub_id, liar) in hub.calls
+    report = fetch_probes(folder(hub_id), mapping, tmp_path / "q", n_per_label=8, min_per_label=2, max_bytes=500)
+    assert report.bytes == 500 and sum(f.stat().st_size for f in (tmp_path / "q").rglob("*.wav")) == 500
+    assert any("byte cap" in note for note in report.notes)
+
+
+def test_folder_files_have_their_names_stripped_and_leaking_files_dropped(hub, tmp_path):
+    def obj(label, n):
+        tail = f" {label}" if n % 4 == 0 else ""  # text the stripping cannot remove: a leak
+        return (f"# exported from {label}_{n:04d}.blend\nmtllib {label}.mtl\no {label}_body\n"
+                f"v 0 0 {n}{tail}\nv 1 0 0\nv 0 1 0\nusemtl {label}_paint\nf 1 2 3\n").encode()
+
+    files = {f"{c}/{c}_{n:04d}.obj": obj(c, n + 20 * ci) for ci, c in enumerate(["airplane", "chair"])
+             for n in range(8)}
+    hub_id = folder_repo(hub, "o/modelnet-meshes", files)
+    mapping = choose_mapping(folder(hub_id), OBJECT, "3d", min_per_label=4)
+    report = fetch_probes(folder(hub_id), mapping, tmp_path / "p", n_per_label=8, min_per_label=4)
+    assert report.skipped["leak"] == 4 and report.counts == {"airplane": 6, "chair": 6}
+    for f in (tmp_path / "p").rglob("*"):
+        if f.is_file():
+            data = f.read_bytes()
+            assert b"airplane" not in data and b"chair" not in data and data.count(b"\nv ") == 2
+            assert "airplane" not in f.name and "chair" not in f.name
+    assert any("stripped the metadata" in note and "OBJ" in note for note in report.notes)
+
+
+def test_the_tree_api_is_paged_through_its_link_header(hub, monkeypatch):
+    files = modelnet_files(("airplane", "chair", "lamp", "vase"))
+    hub_id = folder_repo(hub, "o/modelnet-meshes", files)
+    hub.tree_page = 5
+    pages = -(-len(hub.trees[hub_id]) // 5)
+    mapping = choose_mapping(folder(hub_id), OBJECT, "3d", min_per_label=4)
+    tree_calls = [u for u in hub.calls if "/tree/" in u]
+    assert len(tree_calls) == pages > 4
+    assert [urllib.parse.parse_qs(urllib.parse.urlsplit(u).query).get("cursor", ["0"])[0] for u in tree_calls] == [
+        str(5 * k) for k in range(pages)]
+    assert sorted(mapping.label_names) == ["airplane", "chair", "lamp", "vase"]  # vase is on the last pages
+    # a page cap ends the listing, and says so
+    monkeypatch.setattr(hub_probes, "TREE_MAX_PAGES", 2)
+    files_seen, notes = hub_probes._list_folder(folder(hub_id), None)
+    assert len(files_seen) < len(files) and any("listed only the first 2 pages" in n for n in notes)
+    # a next page anywhere else ends it too
+    monkeypatch.setattr(hub_probes, "TREE_MAX_PAGES", 25)
+    real_page = hub.page
+
+    def elsewhere(url, **kwargs):
+        body, link = real_page(url, **kwargs)
+        return body, link and link.replace(f"/datasets/{hub_id}/", "/datasets/o/other/")
+
+    monkeypatch.setattr(hub_probes, "_http_get_page", elsewhere)
+    hub.calls.clear()
+    files_seen, notes = hub_probes._list_folder(folder(hub_id), None)
+    assert len([u for u in hub.calls if "/tree/" in u]) == 1 and any("pointed elsewhere" in n for n in notes)
+
+
+def test_link_headers_and_the_real_page_helper(monkeypatch):
+    link = '<https://huggingface.co/a?cursor=1>; rel="prev", <https://huggingface.co/a?cursor=3>; rel="next"'
+    assert hub_probes._next_link(link) == "https://huggingface.co/a?cursor=3"
+    assert hub_probes._next_link('<https://huggingface.co/a>; rel="prev"') is None
+    assert hub_probes._next_link(None) is None
+    response = FakeResponse(b"[]")
+    response.headers["Link"] = link
+    seen = fake_opener(monkeypatch, response)
+    assert REAL_HTTP_GET_PAGE("https://huggingface.co/api/datasets/o/d/tree/main?recursive=true") == (b"[]", link)
+    assert seen["handlers"] == (hub_probes._Redirects,)
+    with pytest.raises(hub_probes._HttpError) as caught:
+        REAL_HTTP_GET_PAGE("https://example.org/api/datasets/o/d/tree/main")
+    assert caught.value.reason == "host_refused"
+
+
+def test_an_unpinned_folder_is_pinned_to_the_records_commit_else_main(hub, tmp_path):
+    other = "f" * 40
+    files = modelnet_files()
+    hub_id = folder_repo(hub, "o/modelnet-meshes", files, revision=other)
+    hub.records[hub_id] = item(hub_id, sha=other)
+    candidate = folder(hub_id, revision=None)
+    report = fetch_probes(candidate, choose_mapping(candidate, OBJECT, "3d", min_per_label=4), tmp_path / "p",
+                          n_per_label=4, min_per_label=4)
+    assert report.source_url.endswith(f"/tree/{other}") and sum(report.counts.values()) == 12
+    downloads = [u for u in hub.calls if u.endswith(".off")]
+    assert len(downloads) == 12 and all(u.startswith(resolve(hub_id, "", other)) for u in downloads)
+    folder_repo(hub, "o/modelnet-loose", files, revision="main")
+    candidate = folder("o/modelnet-loose", revision=None)
+    report = fetch_probes(candidate, choose_mapping(candidate, OBJECT, "3d", min_per_label=4), tmp_path / "q",
+                          n_per_label=4, min_per_label=4)
+    assert report.source_url.endswith("/tree/main")
+    assert any("commit could not be read" in note for note in report.notes)
+
+
+def test_folder_licence_notes_report_what_the_card_says(hub, tmp_path):
+    hub_id = folder_repo(hub, "o/modelnet-meshes", modelnet_files())
+    hub.files[resolve(hub_id, "README.md")] = (
+        b"---\nlicense: mit\npretty_name: ModelNet\n---\n# ModelNet meshes\nA copy of the "
+        b"[ModelNet](https://modelnet.cs.princeton.edu/) meshes; see also https://huggingface.co/datasets/o/x.\n"
+        b"The CAD models are for academic use only.\n\n## Licence\n\nMIT for the index; see the source for meshes\n"
+        b"\n## Terms\n\n## Citation\n")
+    mapping = choose_mapping(folder(hub_id), OBJECT, "3d", min_per_label=4)
+    notes = fetch_probes(folder(hub_id), mapping, tmp_path / "p", n_per_label=4, min_per_label=4).notes
+    licence = next(n for n in notes if n.startswith("licence 'mit'"))
+    assert "links to other sites (modelnet.cs.princeton.edu)" in licence and "huggingface" not in licence
+    assert [n for n in notes if n.startswith("the dataset card says")] == [
+        "the dataset card says: 'The CAD models are for academic use only.'",
+        "the dataset card says: 'Licence: MIT for the index; see the source for meshes'"]  # an empty section is not
+    assert not any("license: mit" in n for n in notes)  # the YAML front matter is not quoted
+    hub.files[resolve(hub_id, "README.md")] = b"---\r\nlicense: mit\r\n---\r\n# ModelNet\r\nMeshes in folders.\r\n"
+    notes = fetch_probes(folder(hub_id), mapping, tmp_path / "p", n_per_label=4, min_per_label=4).notes
+    assert not any(n.startswith("the dataset card says") for n in notes)  # with Windows line ends too
+    del hub.files[resolve(hub_id, "README.md")]
+    notes = fetch_probes(folder(hub_id, licence=None), mapping, tmp_path / "p", n_per_label=4, min_per_label=4).notes
+    assert any(n.startswith("the Hub dataset card states no licence") and "could not be read" in n for n in notes)
+
+
+def three_d_repos(hub):
+    """A repository the viewer reads without a Mesh column (like ModelNet40_Auto_aligned) and one with no viewer
+    at all, both with their meshes in class folders."""
+    first = folder_repo(hub, "o/modelnet-objects", modelnet_files(("airplane", "chair", "lamp")))
+    second = folder_repo(hub, "o/shapenet-meshes", modelnet_files(("airplane", "bench", "bottle", "car")))
+    hub.datasets[first] = Dataset([value("object_id"), value("class"), value("object_path")],
+                                  lambda i: {"object_id": f"x_{i}", "class": "airplane", "object_path": f"x/{i}.off"},
+                                  20)
+    hub.search = {"modelnet": [item(first, 50, sha=SHA, tags=["modality:3d"], cardData={"license": "mit"})],
+                  "shapenet": [item(second, 10, sha=SHA)]}
+    return first, second
+
+
+def test_a_viewer_failure_falls_through_to_the_folder_kind(hub, tmp_path):
+    first, second = three_d_repos(hub)
+    events = []
+    folder1, info = find_probes(OBJECT, "3d", tmp_path, emit=events.append, n_per_label=5, min_per_label=4)
+    assert (info["kind"], info["source"], info["hub_id"], info["revision"]) == ("folder", first, first, SHA)
+    assert folder1 == tmp_path / "o__modelnet-objects" and sorted(files_in(folder1)) == ["airplane", "chair", "lamp"]
+    assert info["mapping"]["label_kind"] == "folder" and info["licence"] == "mit"
+    assert "no Mesh column" in info["notes"][0] and "folders" in info["notes"][0]
+    steps = [(e["action"], e["status"], e["kind"]) for e in events if e["action"] != "search"]
+    assert steps == [("candidate", "start", "hub"), ("inspect", "start", "hub"), ("inspect", "fail", "hub"),
+                     ("inspect", "start", "folder"), ("inspect", "ok", "folder"), ("fetch", "start", "folder"),
+                     ("fetch", "ok", "folder"), ("candidate", "ok", "folder")]
+    json.dumps(info)
+    # the unseen-categories control: the first source excluded, its labels left out
+    hub.calls.clear()
+    folder2, unseen = find_probes(OBJECT, "3d", tmp_path, n_per_label=5, min_per_label=4,
+                                  exclude_sources=[info["source"]], disjoint_from=list(info["label_values"].values()))
+    assert (unseen["kind"], unseen["source"]) == ("folder", second)
+    assert sorted(unseen["labels"]) == ["bench", "bottle", "car"]  # airplane is in the first set
+    assert unseen["excluded"] == [{"source": first, "reason": "in exclude_sources"}]
+    assert not [u for u in hub.calls if f"/{first}/" in u or f"dataset={first.replace('/', '%2F')}" in u]
+    assert "HTTP 404" in unseen["notes"][0]  # the second has no viewer at all
+    # owner/name@revision excludes the repository too
+    _, again = find_probes(OBJECT, "3d", tmp_path, n_per_label=5, min_per_label=4, exclude_sources=[f"{first}@{SHA}"])
+    assert again["source"] == second
+
+
+def test_a_viewer_dataset_without_a_label_column_is_not_read_as_folders(hub, tmp_path):
+    hub_id = folder_repo(hub, "o/modelnet-scans", modelnet_files())
+    hub.datasets[hub_id] = Dataset([media("mesh", "Mesh"), value("note")],
+                                   lambda i: {"mesh": {"src": f"{ASSETS}/{hub_id}/{i}.glb"}, "note": f"scan {i}"}, 20)
+    hub.search = {"modelnet": [item(hub_id, 5, sha=SHA)]}
+    with pytest.raises(ProbesUnavailable, match="no label column"):
+        find_probes(OBJECT, "3d", tmp_path)
+    assert not [u for u in hub.calls if "/tree/" in u]
+
+
+def test_both_reasons_are_reported_when_the_folder_kind_fails_too(hub, tmp_path):
+    hub_id = folder_repo(hub, "o/modelnet-misc", {f"{n}.off": off(0, n) for n in range(10)})  # no folders at all
+    hub.search = {"modelnet": [item(hub_id, 5, sha=SHA)]}
+    with pytest.raises(ProbesUnavailable) as caught:
+        find_probes(OBJECT, "3d", tmp_path)
+    assert "inspect: the viewer" in str(caught.value) and "HTTP 404" in str(caught.value)
+    assert "folder: none of o/modelnet-misc's 10" in str(caught.value) and list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize("ext, data, gone, kept", [
+    (".obj", b"# made from airplane.blend\nmtllib airplane.mtl\no airplane\ng wing\nv 0 0 0 # airplane tip\n"
+             b"v 1 0 0\nv 0 1 0\nusemtl airplane_paint\nf 1 2 3\n", b"airplane",
+     b"v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n"),
+    (".off", b"OFF\n# airplane\n3 1 0 # airplane mesh\n0 0 0\n1 0 0\n0 1 0\n3 0 1 2\n", b"airplane",
+     b"OFF\n3 1 0\n0 0 0\n1 0 0\n0 1 0\n3 0 1 2\n"),
+    (".ply", b"ply\nformat binary_little_endian 1.0\ncomment made from airplane.obj\nobj_info airplane\n"
+             b"element vertex 1\nproperty float x\nend_header\n" + struct.pack("<f", 1.5), b"airplane",
+     b"ply\nformat binary_little_endian 1.0\nelement vertex 1\nproperty float x\nend_header\n"
+     + struct.pack("<f", 1.5)),
+    (".stl", b"solid airplane_wing\nfacet normal 0 0 1\nouter loop\nvertex 0 0 0\nvertex 1 0 0\nvertex 0 1 0\n"
+             b"endloop\nendfacet\nendsolid airplane_wing\n", b"airplane", b"solid\nfacet normal 0 0 1\n"),
+    (".stl", b"airplane part exported".ljust(80, b" ") + struct.pack("<I", 1) + struct.pack("<12fH", *range(12), 0),
+     b"airplane", b"\x00" * 80 + struct.pack("<I", 1) + struct.pack("<12fH", *range(12), 0)),
+    (".mol", b"fruity ester\n  RDKit          2D\nsmells fruity\n  1  0  0  0  0  0  0  0  0  0999 V2000\n"
+             b"    0.0000    0.0000    0.0000 C   0  0\nM  END\n> <odor>\nfruity\n", b"fruity",
+     b"\n\n\n  1  0  0  0  0  0  0  0  0  0999 V2000\n    0.0000    0.0000    0.0000 C   0  0\nM  END\n"),
+    (".sdf", b"fruity one\n\n\n  1  0  0  0  0  0  0  0  0  0999 V2000\nM  END\n> <odor>\nfruity\n\n$$$$\n"
+             b"second\n\n\n  1  0  0  0  0  0  0  0  0  0999 V2000\nM  END\n> <odor>\nfruity\n\n$$$$\n", b"fruity",
+     b"M  END\n$$$$\n\n\n\n  1  0  0  0  0  0  0  0  0  0999 V2000\nM  END\n$$$$\n"),
+    (".smi", b"CCO ethanol fruity\nCC(=O)OC fruity ester\n", b"fruity", b"CCO\nCC(=O)OC\n"),
+    (".geojson", json.dumps({"type": "FeatureCollection", "name": "France cities", "features": [
+        {"type": "Feature", "id": "France-1", "properties": {"country": "France"},
+         "geometry": {"type": "Point", "coordinates": [2.35, 48.85]}}]}).encode(), b"France", b"[2.35,48.85]"),
+    (".kml", b'<?xml version="1.0"?><kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>France</name>'
+             b"<!-- France --><Placemark><name>Paris, France</name><description>In France</description>"
+             b"<Point><coordinates>2.35,48.85</coordinates></Point></Placemark></Document></kml>", b"France",
+     b"<coordinates>2.35,48.85</coordinates>"),
+    (".gpx", b'<gpx version="1.1"><metadata><name>France trip</name></metadata><trk><name>France</name>'
+             b'<trkseg><trkpt lat="48.85" lon="2.35"/></trkseg></trk></gpx>', b"France",
+     b'<trkpt lat="48.85" lon="2.35"/>'),
+])
+def test_mesh_molecule_and_geometry_files_lose_their_names(ext, data, gone, kept):
+    out, how = hub_probes._strip_metadata(data, ext, None, None, 30)
+    assert how == "stripped" and gone not in out and kept in out
+    assert hub_probes._strip_metadata(b"\x00not a file of this kind", ext, None, None, 30)[1] == "unstripped"
