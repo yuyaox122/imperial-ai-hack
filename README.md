@@ -155,6 +155,14 @@ SENSE_FAKE=1 .venv/bin/python -m pytest -q tests/test_adapter_flow.py
 
 One run per row, so a single number moves between runs (the adapter is rewritten each time and the found data can differ); the intervals are on the cards.
 
+**Blind test: a format the code never names.** We gave Claude Sonnet 5.5 a MIDI file (written by a script: a waltz-like melody with no title or text events) and the goal "What genre of music is this?". MIDI appears nowhere in the detection code, the profiles or the toolbox. `agent/detect.py` reported unknown bytes, and the agent designed a text adapter. It asked to install `mido`; the installer rated the pinned plan ok, and the operator approved it. The adapter it wrote ran on the first attempt and reported tempo, meter, instruments, ranges and rhythm. Three runs followed (records in `socket_pilot/artifacts`):
+
+1. `run_auto_claude-sonnet_midi-first.json`: the search found only audio genre sets, and their MP3 files reached the adapter, which failed on all 50, so nothing was verified. Since then, probe files for an unknown binary format must start with the same bytes as your file (PR #103).
+2. `run_auto_claude-sonnet_midi.json`: the search now pairs the format's name with the goal's words ("midi genre") and ranks MIDI datasets first. It found the one MIDI genre set on the Hub, `projectlosangeles/lakh-clean-midi-genres`, and could not use it: the files sit in a tar archive with the labels in a separate index (the labels are also a genre classifier's predictions, not human ones). The run stopped and asked for labelled examples.
+3. `run_auto_claude-sonnet_midi-examples.json`: given an examples folder of 60 piano MIDI files in 5 genres from ADL Piano MIDI (classical, country, jazz, latin, rock; one file per artist, renamed so no title reaches the model; used locally, as the set states no licence), the adapter scored 32.0% [20.8, 45.8] on 50 held-out files (chance 20%, swapped 10%, no input 20%). That is below the 35% bar, so nothing was installed. ADL keeps only the piano tracks, so the instrumentation that most marks a genre is gone.
+
+The flow worked end to end on a format it had never seen: it wrote and sandboxed the code, vetted the install, refused unusable data and asked for examples. With those examples it measured a weak adapter and refused to install it.
+
 ## What works today
 
 Measured on 14 and 15 November 2026 on an M4 Pro with 24 GB, Qwen3.5-0.8B in float16 on MPS, through `scripts/demo_cli.py` and the HTTP server. Each card scores 200 held-out five-option questions (chance 20%) and carries a 95% Wilson interval for its accuracy. GTZAN numbers use the de-duplicated split (PR #43): GTZAN holds 14 byte-identical recordings, and copies now stay in one split. The run records are in `socket_pilot/artifacts/run_*.json`, and every run is also in Databricks (see [Databricks](#databricks)).

@@ -70,6 +70,9 @@ def test_every_record_is_described_in_the_socket_pilot_readme(record):
 @pytest.mark.parametrize("record", sorted(ARTIFACTS.glob("run_*.json")), ids=lambda path: path.name)
 def test_the_readme_quotes_the_card_each_recorded_run_installed(record):
     run = json.loads(read(record))
+    if not run["cards"]:  # a run that stopped before any card (no usable probe files) is named instead
+        assert record.name in read(README), f"README.md does not name {record.name}, a run with no card"
+        return
     # A refused run (installed None) is quoted by its best card: the score that was not enough.
     card = next((card for card in run["cards"] if card["bridge"] == run["installed"]), None) or max(
         run["cards"], key=lambda card: card["accuracy"])

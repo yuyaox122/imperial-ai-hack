@@ -1,0 +1,1104 @@
+{
+  "id": "0c9175ae7a02",
+  "origin": "server",
+  "recorded": "2026-11-15T05:39:16+00:00",
+  "request": {
+    "model": "claude-sonnet",
+    "dataset": "music-dataset-4f86fc01da",
+    "modality": "music",
+    "scope": "closed"
+  },
+  "status": "done",
+  "events": [
+    {
+      "step": "detect",
+      "status": "start",
+      "message": "Detecting the contents of mystery.mid.",
+      "data": {},
+      "t": 0.0
+    },
+    {
+      "step": "detect",
+      "status": "ok",
+      "message": "mystery.mid matches no known signature and is not UTF-8 or UTF-16 text. Since Claude Sonnet 5.5 does not read other files and no specialist is wired for them, the agent will write an adapter: code that turns the file into something Claude Sonnet 5.5 reads.",
+      "data": {
+        "file": "mystery.mid",
+        "goal": "What genre of music is this?",
+        "modality": "other",
+        "format": "unknown",
+        "how": "content",
+        "detail": "mystery.mid matches no known signature and is not UTF-8 or UTF-16 text.",
+        "flow": "adapter"
+      },
+      "t": 0.001
+    },
+    {
+      "step": "design",
+      "status": "start",
+      "message": "Designing an adapter that lets Claude Sonnet 5.5 sense mystery.mid: What genre of music is this?",
+      "data": {
+        "file": "mystery.mid",
+        "goal": "What genre of music is this?"
+      },
+      "t": 0.001
+    },
+    {
+      "step": "design",
+      "status": "ok",
+      "message": "A text adapter for music (midi) files: Parse the MIDI events and describe tempo, meter, instruments, note patterns, rhythm, harmony, and arrangement, including any embedded metadata. Report observable musical features without asserting a genre.",
+      "data": {
+        "modality": "music",
+        "format": "midi",
+        "route": "text",
+        "description": "Parse the MIDI events and describe tempo, meter, instruments, note patterns, rhythm, harmony, and arrangement, including any embedded metadata. Report observable musical features without asserting a genre.",
+        "libraries": [
+          "struct"
+        ],
+        "question": "Which music genre best describes this MIDI file?",
+        "label_hint": "Music genre categories.",
+        "labels": [
+          "classical",
+          "jazz",
+          "rock",
+          "pop",
+          "folk",
+          "electronic"
+        ],
+        "probe_plan": "dataset",
+        "probe_reason": "Genre is an interpretive label rather than a fact established by constructing MIDI events, so labelled examples should come from a public genre-labelled MIDI dataset.",
+        "install": [
+          {
+            "name": "mido",
+            "why": "Provides robust MIDI parsing, including running status, timing, and metadata."
+          }
+        ],
+        "detection": {
+          "modality": "other",
+          "format": "unknown",
+          "how": "content",
+          "detail": "mystery.mid matches no known signature and is not UTF-8 or UTF-16 text."
+        },
+        "toolbox": [
+          "numpy",
+          "scipy",
+          "PIL",
+          "json",
+          "csv",
+          "math",
+          "struct",
+          "zipfile",
+          "gzip",
+          "io",
+          "re",
+          "xml.etree",
+          "statistics",
+          "trimesh",
+          "rdkit",
+          "soundfile",
+          "matplotlib",
+          "ffmpeg (via subprocess)",
+          "ffprobe (via subprocess)",
+          "adapter_kit (this harness's helper module, on the adapter's path: import adapter_kit. video_frames(path, n=6) -> PIL frames and video_summary(path) -> dict, for video; contact_sheet(images) -> one PIL image; load_mesh(path), mesh_views(path, views=4) -> PIL renders and mesh_summary(path) -> dict with a plain description, for 3D meshes; read_molecule(path), molecule_summary(path) -> dict with a plain description and molecule_image(path), for molecules; read_coordinates(path) -> [(lat, lon)], coordinate_summary(lat, lon) -> dict and nearest_places(lat, lon), for coordinates; ValueError when a file cannot be read)"
+        ],
+        "head_preview": "[hex dump of the first 583 of 583 bytes] 00000000 4d 54 68 64 00 00 00 06 00 00 00 01 01 e0 4d 54 |MThd..........MT| 00000010 72 6b 00 00 02 31 00 ff 51 03 05 b8 d8 00 ff 58 |rk...1..Q......X| 00000020 04 03 02 18 08 00 c0 00 00 c1 00 00 91 30 46 00 |.............0F.| 00000030 90 48 5a 83 56 80 4..."
+      },
+      "t": 2.992
+    },
+    {
+      "step": "install_request",
+      "status": "start",
+      "message": "The design asks for mido, which the toolbox lacks: checking it before asking you.",
+      "data": {
+        "requested": [
+          {
+            "name": "mido",
+            "why": "Provides robust MIDI parsing, including running status, timing, and metadata."
+          }
+        ]
+      },
+      "t": 2.992
+    },
+    {
+      "step": "approval",
+      "status": "start",
+      "message": "Waiting for your approval (install): OK to install mido (1 new package for the toolbox, 1 already installed): every check passed.",
+      "data": {
+        "id": "5029963703da",
+        "kind": "install",
+        "payload": {
+          "plan": {
+            "requested": [
+              {
+                "name": "mido",
+                "version": null,
+                "why": "Provides robust MIDI parsing, including running status, timing, and metadata."
+              }
+            ],
+            "packages": [
+              {
+                "name": "mido",
+                "version": "1.3.3",
+                "verdict": "ok",
+                "reasons": [],
+                "facts": {
+                  "summary": "MIDI Objects for Python",
+                  "licence": "MIT",
+                  "home_page": "https://mido.readthedocs.io",
+                  "project_urls": {
+                    "documentation": "https://mido.readthedocs.io",
+                    "source": "https://github.com/mido/mido"
+                  },
+                  "first_release": "2013-07-20T12:24:22.328893+00:00",
+                  "latest_release": "2024-10-25T15:05:21.847843+00:00",
+                  "latest_version": "1.3.3",
+                  "n_releases": 45,
+                  "wheel_for_this_platform": true,
+                  "wheel_filename": "mido-1.3.3-py3-none-any.whl",
+                  "wheel_url": "https://files.pythonhosted.org/packages/fd/28/45deb15c11859d2f10702b32e71de9328a9fa494f989626916db39a9617f/mido-1.3.3-py3-none-any.whl",
+                  "wheel_sha256": "01033c9b10b049e4436fca2762194ca839b09a4334091dd3c34e7f4ae674fd8a",
+                  "yanked": false,
+                  "vulnerabilities": [],
+                  "similar_to": [],
+                  "already_installed": false,
+                  "requested": true,
+                  "via": [
+                    "requested"
+                  ]
+                }
+              },
+              {
+                "name": "packaging",
+                "version": "26.3",
+                "verdict": "ok",
+                "reasons": [
+                  "already installed in the main environment at 26.3; not vetted or reinstalled"
+                ],
+                "facts": {
+                  "summary": null,
+                  "licence": null,
+                  "home_page": null,
+                  "project_urls": {},
+                  "first_release": null,
+                  "latest_release": null,
+                  "latest_version": null,
+                  "n_releases": null,
+                  "wheel_for_this_platform": false,
+                  "wheel_filename": null,
+                  "wheel_url": null,
+                  "wheel_sha256": null,
+                  "yanked": false,
+                  "vulnerabilities": [],
+                  "similar_to": [],
+                  "already_installed": true,
+                  "requested": false,
+                  "via": [
+                    "mido",
+                    "-c constraints-txt"
+                  ]
+                }
+              }
+            ],
+            "verdict": "ok",
+            "requirements": "mido==1.3.3 \\\n    --hash=sha256:01033c9b10b049e4436fca2762194ca839b09a4334091dd3c34e7f4ae674fd8a\n",
+            "created": "2026-11-15T05:35:17.189792+00:00",
+            "problems": [],
+            "target": {
+              "python": "<repo>/.venv/bin/python",
+              "version": "3.12.12",
+              "platform": "aarch64-apple-darwin",
+              "macos": "27.0"
+            },
+            "summary": "OK to install mido (1 new package for the toolbox, 1 already installed): every check passed."
+          },
+          "summary": "OK to install mido (1 new package for the toolbox, 1 already installed): every check passed.",
+          "review": "Mido provides MIDI parsing and handling for the adapter. It is a long-established MIT-licensed project, with no vulnerabilities or suspiciously similar names reported in the supplied data. Before installing, verify the package source and check current vulnerability information."
+        },
+        "timeout": 600.0
+      },
+      "t": 5.977
+    },
+    {
+      "step": "approval",
+      "status": "ok",
+      "message": "Approved.",
+      "data": {
+        "id": "5029963703da",
+        "kind": "install",
+        "answer": true,
+        "reason": "approved"
+      },
+      "t": 6.034
+    },
+    {
+      "step": "install_request",
+      "status": "ok",
+      "message": "Installed mido 1.3.3 into the toolbox; the adapter may import it.",
+      "data": {
+        "seconds": 0.12,
+        "requested": [
+          {
+            "name": "mido",
+            "why": "Provides robust MIDI parsing, including running status, timing, and metadata."
+          }
+        ],
+        "verdict": "ok",
+        "summary": "OK to install mido (1 new package for the toolbox, 1 already installed): every check passed.",
+        "approved": true,
+        "installed": [
+          {
+            "name": "mido",
+            "version": "1.3.3",
+            "sha256": "01033c9b10b049e4436fca2762194ca839b09a4334091dd3c34e7f4ae674fd8a"
+          }
+        ],
+        "note": ""
+      },
+      "t": 6.156
+    },
+    {
+      "step": "build",
+      "status": "start",
+      "message": "Writing adapt(path) with struct, mido and running it on mystery.mid in the sandbox.",
+      "data": {
+        "libraries": [
+          "struct",
+          "mido"
+        ],
+        "sandboxed": true,
+        "max_attempts": 3
+      },
+      "t": 6.157
+    },
+    {
+      "step": "build",
+      "status": "ok",
+      "message": "The adapter ran on mystery.mid after 1 attempt (0.1 s).",
+      "data": {
+        "attempts": 1,
+        "libraries": [
+          "mido",
+          "statistics"
+        ],
+        "code_sha256": "87067048ca412a8fa2014e35ed44ec51fe6d15b001435ccfc0182b1e5190eb29",
+        "code": "import mido\nfrom collections import Counter, defaultdict, deque\nimport statistics\n\nGM = ('Acoustic Grand Piano,Bright Acoustic Piano,Electric Grand Piano,Honky-tonk Piano,Electric Piano 1,Electric Piano 2,Harpsichord,Clavinet,Celesta,Glockenspiel,Music Box,Vibraphone,Marimba,Xylophone,Tubular Bells,Dulcimer,Drawbar Organ,Percussive Organ,Rock Organ,Church Organ,Reed Organ,Accordion,Harmonica,Tango Accordion,Acoustic Guitar nylon,Acoustic Guitar steel,Electric Guitar jazz,Electric Guitar clean,Electric Guitar muted,Overdriven Guitar,Distortion Guitar,Guitar harmonics,Acoustic Bass,Electric Bass finger,Electric Bass pick,Fretless Bass,Slap Bass 1,Slap Bass 2,Synth Bass 1,Synth Bass 2,Violin,Viola,Cello,Contrabass,Tremolo Strings,Pizzicato Strings,Orchestral Harp,Timpani,String Ensemble 1,String Ensemble 2,Synth Strings 1,Synth Strings 2,Choir Aahs,Voice Oohs,Synth Voice,Orchestra Hit,Trumpet,Trombone,Tuba,Muted Trumpet,French Horn,Brass Section,Synth Brass 1,Synth Brass 2,Soprano Sax,Alto Sax,Tenor Sax,Baritone Sax,Oboe,English Horn,Bassoon,Clarinet,Piccolo,Flute,Recorder,Pan Flute,Blown Bottle,Shakuhachi,Whistle,Ocarina,Lead square,Lead sawtooth,Lead calliope,Lead chiff,Lead charang,Lead voice,Lead fifths,Lead bass and lead,Pad new age,Pad warm,Pad polysynth,Pad choir,Pad bowed,Pad metallic,Pad halo,Pad sweep,FX rain,FX soundtrack,FX crystal,FX atmosphere,FX brightness,FX goblins,FX echoes,FX sci-fi,Sitar,Banjo,Shamisen,Koto,Kalimba,Bag pipe,Fiddle,Shanai,Tinkle Bell,Agogo,Steel Drums,Woodblock,Taiko Drum,Melodic Tom,Synth Drum,Reverse Cymbal,Guitar Fret Noise,Breath Noise,Seashore,Bird Tweet,Telephone Ring,Helicopter,Applause,Gunshot').split(',')\nPC = ['C','C#','D','Eb','E','F','F#','G','Ab','A','Bb','B']\nDRUM = {35:'acoustic bass drum',36:'bass drum',37:'side stick',38:'snare',39:'hand clap',40:'electric snare',41:'low floor tom',42:'closed hi-hat',43:'high floor tom',44:'pedal hi-hat',45:'low tom',46:'open hi-hat',47:'low-mid tom',48:'high-mid tom',49:'crash cymbal',50:'high tom',51:'ride cymbal',52:'Chinese cymbal',53:'ride bell',54:'tambourine',55:'splash cymbal',56:'cowbell',57:'crash cymbal 2',59:'ride cymbal 2'}\n\ndef note(n):\n    return PC[n % 12] + str(n // 12 - 1)\n\ndef adapt(path):\n    mid = mido.MidiFile(path, clip=True)\n    ppq = mid.ticks_per_beat\n    lines = ['MIDI type %s, %d tracks, %d ticks per quarter note.' % (mid.type, len(mid.tracks), ppq)]\n    if ppq <= 0:\n        return {'text': '\\n'.join(lines + ['SMPTE timing; detailed beat analysis unavailable.'])}\n    events, meta, tempos, meters = [], [], [], []\n    track_names = {}\n    end = 0\n    for ti, track in enumerate(mid.tracks):\n        t = 0\n        for msg in track:\n            t += msg.time\n            if msg.is_meta:\n                if msg.type == 'set_tempo': tempos.append((t, msg.tempo))\n                elif msg.type == 'time_signature': meters.append((t, msg.numerator, msg.denominator))\n                elif msg.type in ('track_name','instrument_name','text','lyrics','marker','copyright','key_signature'):\n                    val = getattr(msg, 'text', getattr(msg, 'name', getattr(msg, 'key', '')))\n                    if val:\n                        val = str(val).replace('\\n',' ')[:160]\n                        meta.append((ti, t, msg.type, val))\n                        if msg.type == 'track_name': track_names[ti] = val\n            elif hasattr(msg, 'channel'):\n                events.append((t, ti, len(events), msg))\n        end = max(end, t)\n    events.sort(key=lambda x: (x[0], x[1], x[2]))\n    tempos.sort(); meters.sort()\n    if tempos:\n        lines.append('Tempo events: ' + '; '.join('beat %.2f: %.1f BPM' % (t/ppq, 60000000/v) for t,v in tempos[:12] if v > 0))\n    else: lines.append('No tempo event; MIDI default 120 BPM.')\n    if meters:\n        lines.append('Meter events: ' + '; '.join('beat %.2f: %d/%d' % (t/ppq,n,d) for t,n,d in meters[:10]))\n    else: lines.append('No meter event; MIDI default 4/4.')\n    tempo_map = [(0,500000)] + tempos\n    seconds = 0.0\n    for i,(t,v) in enumerate(tempo_map):\n        nxt = tempo_map[i+1][0] if i+1 < len(tempo_map) else end\n        if nxt > t: seconds += (nxt-t)*v/(ppq*1000000)\n    lines.append('Length: %.1f quarter-note beats, approximately %.1f seconds.' % (end/ppq, seconds))\n    if meta:\n        lines.append('Embedded metadata: ' + '; '.join('track %d beat %.1f %s: %s' % (ti+1,t/ppq,k,v) for ti,t,k,v in meta[:18]))\n    programs = defaultdict(Counter)\n    current = defaultdict(int)\n    notes = defaultdict(list)\n    active = defaultdict(deque)\n    controls = defaultdict(Counter)\n    for t,ti,_,msg in events:\n        ch = msg.channel\n        if msg.type == 'program_change': current[ch] = msg.program\n        elif msg.type == 'control_change': controls[ch][msg.control] += 1\n        elif msg.type == 'note_on' and msg.velocity > 0:\n            rec = [t, None, msg.note, msg.velocity, ti, current[ch]]\n            notes[ch].append(rec); active[(ch,msg.note)].append(rec)\n            programs[ch][current[ch]] += 1\n        elif msg.type == 'note_off' or (msg.type == 'note_on' and msg.velocity == 0):\n            q = active[(ch,msg.note)]\n            if q: q.popleft()[1] = t\n    total = sum(map(len, notes.values()))\n    lines.append('Total note attacks: %d; active channels: %d.' % (total,len(notes)))\n    allpc = Counter()\n    for ch, ns in sorted(notes.items(), key=lambda x: -len(x[1])):\n        if ch != 9:\n            allpc.update(n[2] % 12 for n in ns)\n    if allpc:\n        lines.append('Pitched note-class counts: ' + ', '.join('%s %d' % (PC[p],c) for p,c in allpc.most_common()))\n    for ch, ns in sorted(notes.items(), key=lambda x: -len(x[1]))[:12]:\n        pitches = [n[2] for n in ns]; velocities = [n[3] for n in ns]\n        tracks = sorted(set(n[4]+1 for n in ns))\n        if ch == 9:\n            inst = 'percussion channel; ' + ', '.join('%s %d' % (DRUM.get(p,'drum '+str(p)),c) for p,c in Counter(pitches).most_common(8))\n        else:\n            inst = ', '.join('%s (%d notes)' % (GM[p] if 0 <= p < 128 else str(p),c) for p,c in programs[ch].most_common(4))\n        starts = sorted(set(n[0] for n in ns))\n        gaps = [(b-a)/ppq for a,b in zip(starts,starts[1:]) if b>a]\n        durations = [(n[1]-n[0])/ppq for n in ns if n[1] is not None and n[1]>=n[0]]\n        simultaneous = Counter(n[0] for n in ns)\n        poly = sum(c for c in simultaneous.values() if c>1)/len(ns)\n        desc = 'Channel %d, tracks %s: %s; %d notes, range %s-%s, velocity median %d (range %d-%d), %.0f%% of notes in simultaneous attacks' % (ch+1, ','.join(map(str,tracks)), inst, len(ns), note(min(pitches)), note(max(pitches)), statistics.median(velocities), min(velocities), max(velocities), 100*poly)\n        if durations: desc += '; median duration %.2f beats' % statistics.median(durations)\n        if gaps:\n            common = Counter(round(g,2) for g in gaps).most_common(3)\n            desc += '; common onset gaps ' + ', '.join('%.2f beats (%d)' % x for x in common)\n        lines.append(desc + '.')\n        if ch != 9:\n            seq = sorted(ns, key=lambda n:(n[0],n[2]))[:24]\n            lines.append('  Opening attacks (beat:note): ' + ' '.join('%.2f:%s' % (n[0]/ppq,note(n[2])) for n in seq))\n        if controls[ch]:\n            lines.append('  MIDI controllers used: ' + ', '.join('%d (%d)' % x for x in controls[ch].most_common(5)))\n    pitched = [n for ch,ns in notes.items() if ch != 9 for n in ns]\n    if pitched:\n        groups = defaultdict(list)\n        for n in pitched: groups[n[0]].append(n[2])\n        chords = []\n        for t, ps in sorted(groups.items()):\n            pcs = sorted(set(p % 12 for p in ps))\n            if len(pcs) >= 3:\n                chords.append('%.1f:%s' % (t/ppq,'/'.join(PC[p] for p in pcs)))\n        if chords: lines.append('Simultaneous pitch-class groups at attacks (beat:classes): ' + ' '.join(chords[:16]))\n    return {'text': '\\n'.join(lines)[:4000]}\n",
+        "preview": "MIDI type 0, 1 tracks, 480 ticks per quarter note.\nTempo events: beat 0.00: 160.0 BPM\nMeter events: beat 0.00: 3/4\nLength: 24.0 quarter-note beats, approximately 9.0 seconds.\nTotal note attacks: 64; active channels: 2.\nPitched note-class counts: C 13, E 12, G 11, B 8, D 8, F 6, Ab 2, A 2, F# 2\nCh...",
+        "output_kind": "text",
+        "notes": [],
+        "seconds": 0.134
+      },
+      "t": 35.316
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Searching the Hugging Face Hub and the web for labelled probe files.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "search",
+        "goal": "What genre of music is this?",
+        "modality": "music"
+      },
+      "t": 35.316
+    },
+    {
+      "step": "data",
+      "status": "ok",
+      "message": "Found 20 candidate datasets for labelled probe files.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "search",
+        "queries": [
+          "music genre",
+          "GTZAN",
+          "FMA",
+          "genre classification",
+          "music classification",
+          "genre music",
+          "genre",
+          "music"
+        ],
+        "origin": "llm+rule",
+        "found": 20,
+        "top": [
+          "DynamicSuperb/MusicGenreClassification_FMA",
+          "storylinez/gtzan-music-genre-dataset",
+          "rpmon/fma-genre-classification",
+          "danilotpnta/GTZAN_genre_classification",
+          "matteuscantisani/rsn-music-genre-classification",
+          "AntSanchez77/gtzan-music-genre-dataset",
+          "atoof/fma-music-descriptions",
+          "SoundStock/soundstock.com-music-genres-taxonomy",
+          "Khahn-nh/GTZAN-Dataset-Music-Genre-Classification",
+          "MahiA/GT-Music-Genre",
+          "mteb/gtzan-genre",
+          "lewtun/music_genres"
+        ],
+        "web": {
+          "used": true,
+          "reason": null,
+          "origin": "live",
+          "hub_ids": [
+            "rpmon/fma-genre-classification"
+          ],
+          "tables": [],
+          "refused": []
+        },
+        "excluded": []
+      },
+      "t": 38.738
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Trying DynamicSuperb/MusicGenreClassification_FMA.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "DynamicSuperb/MusicGenreClassification_FMA",
+        "source": "DynamicSuperb/MusicGenreClassification_FMA",
+        "kind": "hub",
+        "downloads": 65,
+        "found_by": "hub",
+        "licence": null,
+        "url": "https://huggingface.co/datasets/DynamicSuperb/MusicGenreClassification_FMA"
+      },
+      "t": 38.738
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of DynamicSuperb/MusicGenreClassification_FMA.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "DynamicSuperb/MusicGenreClassification_FMA",
+        "source": "DynamicSuperb/MusicGenreClassification_FMA",
+        "kind": "hub"
+      },
+      "t": 38.738
+    },
+    {
+      "step": "data",
+      "status": "ok",
+      "message": "DynamicSuperb/MusicGenreClassification_FMA fits: input audio, label label.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "DynamicSuperb/MusicGenreClassification_FMA",
+        "source": "DynamicSuperb/MusicGenreClassification_FMA",
+        "kind": "hub",
+        "mapping": {
+          "config": "default",
+          "split": "test",
+          "input_columns": [
+            "audio"
+          ],
+          "input_kind": "media",
+          "template": "",
+          "extension": ".mp3",
+          "label_column": "label",
+          "label_kind": "string",
+          "label_names": null,
+          "label_separator": null,
+          "media_type": "Audio",
+          "origin": "llm",
+          "reason": "The audio column contains the music, and the label column provides its genre.",
+          "folder_depth": null
+        }
+      },
+      "t": 40.515
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Fetching labelled files from DynamicSuperb/MusicGenreClassification_FMA.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "fetch",
+        "hub_id": "DynamicSuperb/MusicGenreClassification_FMA",
+        "source": "DynamicSuperb/MusicGenreClassification_FMA",
+        "kind": "hub",
+        "folder": "<repo>/.sense/fetched/probes/music/DynamicSuperb__MusicGenreClassification_FMA"
+      },
+      "t": 40.515
+    },
+    {
+      "step": "data",
+      "status": "ok",
+      "message": "Fetched 112 files in 8 labels from DynamicSuperb/MusicGenreClassification_FMA.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "fetch",
+        "hub_id": "DynamicSuperb/MusicGenreClassification_FMA",
+        "source": "DynamicSuperb/MusicGenreClassification_FMA",
+        "kind": "hub",
+        "counts": {
+          "international": 14,
+          "experimental": 14,
+          "folk": 14,
+          "pop": 14,
+          "electronic": 14,
+          "rock": 14,
+          "hip_hop": 14,
+          "instrumental": 14
+        },
+        "rows_seen": 112,
+        "skipped": {},
+        "bytes": 113428848
+      },
+      "t": 78.042
+    },
+    {
+      "step": "data",
+      "status": "ok",
+      "message": "Using DynamicSuperb/MusicGenreClassification_FMA: 8 labels (international, experimental, folk, pop, electronic, rock, hip_hop, instrumental).",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "DynamicSuperb/MusicGenreClassification_FMA",
+        "source": "DynamicSuperb/MusicGenreClassification_FMA",
+        "kind": "hub",
+        "labels": [
+          "international",
+          "experimental",
+          "folk",
+          "pop",
+          "electronic",
+          "rock",
+          "hip_hop",
+          "instrumental"
+        ],
+        "licence": null
+      },
+      "t": 78.042
+    },
+    {
+      "step": "data",
+      "status": "ok",
+      "message": "Using 112 dataset probe files in 8 labels (electronic, experimental, folk, hip hop, instrumental, international, pop, rock); all are held out, since the adapter was written before they existed.",
+      "data": {
+        "name": "music-dataset-4f86fc01da",
+        "provenance": "dataset",
+        "source": "https://huggingface.co/datasets/DynamicSuperb/MusicGenreClassification_FMA",
+        "licence": "unknown",
+        "labels": [
+          "electronic",
+          "experimental",
+          "folk",
+          "hip hop",
+          "instrumental",
+          "international",
+          "pop",
+          "rock"
+        ],
+        "counts": {
+          "electronic": 14,
+          "experimental": 14,
+          "folk": 14,
+          "hip hop": 14,
+          "instrumental": 14,
+          "international": 14,
+          "pop": 14,
+          "rock": 14
+        },
+        "n": 112,
+        "split": {
+          "fit": 64,
+          "dev": 24,
+          "test": 24
+        },
+        "meta": {
+          "folder": "<repo>/.sense/fetched/probes/music/DynamicSuperb__MusicGenreClassification_FMA",
+          "copied_to": "<repo>/.sense/probes/music-dataset-4f86fc01da",
+          "per_label": {
+            "electronic": 14,
+            "experimental": 14,
+            "folk": 14,
+            "hip hop": 14,
+            "instrumental": 14,
+            "international": 14,
+            "pop": 14,
+            "rock": 14
+          },
+          "duplicates_collapsed": 0,
+          "conflicts_dropped": [],
+          "capped": 0,
+          "skipped": {
+            "hidden": 0,
+            "empty": 0,
+            "subfolders": 0,
+            "other_types": 0
+          },
+          "suffixes": null,
+          "warnings": [],
+          "seed": 0,
+          "min_per_label": 5,
+          "max_per_label": 40
+        },
+        "label_leaks": [],
+        "fetched": {
+          "hub_id": "DynamicSuperb/MusicGenreClassification_FMA",
+          "url": "https://huggingface.co/datasets/DynamicSuperb/MusicGenreClassification_FMA",
+          "title": "DynamicSuperb/MusicGenreClassification_FMA",
+          "kind": "hub",
+          "source": "DynamicSuperb/MusicGenreClassification_FMA",
+          "licence": null,
+          "licence_source": null,
+          "label_values": {
+            "international": "International",
+            "experimental": "Experimental",
+            "folk": "Folk",
+            "pop": "Pop",
+            "electronic": "Electronic",
+            "rock": "Rock",
+            "hip_hop": "Hip-Hop",
+            "instrumental": "Instrumental"
+          },
+          "counts": {
+            "international": 14,
+            "experimental": 14,
+            "folk": 14,
+            "pop": 14,
+            "electronic": 14,
+            "rock": 14,
+            "hip_hop": 14,
+            "instrumental": 14
+          },
+          "mapping": {
+            "config": "default",
+            "split": "test",
+            "input_columns": [
+              "audio"
+            ],
+            "input_kind": "media",
+            "template": "",
+            "extension": ".mp3",
+            "label_column": "label",
+            "label_kind": "string",
+            "label_names": null,
+            "label_separator": null,
+            "media_type": "Audio",
+            "origin": "llm",
+            "reason": "The audio column contains the music, and the label column provides its genre.",
+            "folder_depth": null
+          },
+          "rows_seen": 112,
+          "skipped": {},
+          "notes": [
+            "The audio column contains the music, and the label column provides its genre.",
+            "stripped the metadata that can name a label from 112 files (tags, by an ffmpeg remux)"
+          ],
+          "tried": []
+        }
+      },
+      "t": 78.436
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Searching the Hugging Face Hub and the web for labelled files of other categories.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "search",
+        "goal": "What genre of music is this?",
+        "modality": "music"
+      },
+      "t": 78.436
+    },
+    {
+      "step": "data",
+      "status": "ok",
+      "message": "Found 20 candidate datasets for labelled files of other categories.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "search",
+        "queries": [
+          "music genre",
+          "GTZAN",
+          "FMA",
+          "genre classification",
+          "music classification",
+          "genre music",
+          "genre",
+          "music"
+        ],
+        "origin": "llm+rule",
+        "found": 20,
+        "top": [
+          "storylinez/gtzan-music-genre-dataset",
+          "rpmon/fma-genre-classification",
+          "danilotpnta/GTZAN_genre_classification",
+          "matteuscantisani/rsn-music-genre-classification",
+          "AntSanchez77/gtzan-music-genre-dataset",
+          "atoof/fma-music-descriptions",
+          "SoundStock/soundstock.com-music-genres-taxonomy",
+          "Khahn-nh/GTZAN-Dataset-Music-Genre-Classification",
+          "MahiA/GT-Music-Genre",
+          "mteb/gtzan-genre",
+          "lewtun/music_genres",
+          "lewtun/music_genres_small"
+        ],
+        "web": {
+          "used": true,
+          "reason": null,
+          "origin": "memo",
+          "hub_ids": [
+            "rpmon/fma-genre-classification"
+          ],
+          "tables": [],
+          "refused": []
+        },
+        "excluded": [
+          {
+            "source": "DynamicSuperb/MusicGenreClassification_FMA",
+            "reason": "in exclude_sources"
+          }
+        ]
+      },
+      "t": 80.808
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Trying storylinez/gtzan-music-genre-dataset.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "storylinez/gtzan-music-genre-dataset",
+        "source": "storylinez/gtzan-music-genre-dataset",
+        "kind": "hub",
+        "downloads": 1016,
+        "found_by": "hub",
+        "licence": "mit",
+        "url": "https://huggingface.co/datasets/storylinez/gtzan-music-genre-dataset"
+      },
+      "t": 80.808
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of storylinez/gtzan-music-genre-dataset.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "storylinez/gtzan-music-genre-dataset",
+        "source": "storylinez/gtzan-music-genre-dataset",
+        "kind": "hub"
+      },
+      "t": 80.808
+    },
+    {
+      "step": "data",
+      "status": "ok",
+      "message": "storylinez/gtzan-music-genre-dataset fits: input audio, label genre.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "storylinez/gtzan-music-genre-dataset",
+        "source": "storylinez/gtzan-music-genre-dataset",
+        "kind": "hub",
+        "mapping": {
+          "config": "default",
+          "split": "train",
+          "input_columns": [
+            "audio"
+          ],
+          "input_kind": "media",
+          "template": "",
+          "extension": ".wav",
+          "label_column": "genre",
+          "label_kind": "classlabel",
+          "label_names": [
+            "blues",
+            "classical",
+            "country",
+            "disco",
+            "hiphop",
+            "jazz",
+            "metal",
+            "pop",
+            "reggae",
+            "rock"
+          ],
+          "label_separator": null,
+          "media_type": "Audio",
+          "origin": "llm",
+          "reason": "The audio column contains the music, and the genre column provides its genre label.",
+          "folder_depth": null
+        }
+      },
+      "t": 82.771
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Fetching labelled files from storylinez/gtzan-music-genre-dataset.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "fetch",
+        "hub_id": "storylinez/gtzan-music-genre-dataset",
+        "source": "storylinez/gtzan-music-genre-dataset",
+        "kind": "hub",
+        "folder": "<repo>/.sense/fetched/probes/music-unseen/storylinez__gtzan-music-genre-dataset"
+      },
+      "t": 82.772
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "Fetching from storylinez/gtzan-music-genre-dataset failed: none of the 100 rows read from storylinez/gtzan-music-genre-dataset had both an input and a label",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "fetch",
+        "hub_id": "storylinez/gtzan-music-genre-dataset",
+        "source": "storylinez/gtzan-music-genre-dataset",
+        "kind": "hub",
+        "reason": "none of the 100 rows read from storylinez/gtzan-music-genre-dataset had both an input and a label"
+      },
+      "t": 83.13
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "Could not use storylinez/gtzan-music-genre-dataset: fetch: none of the 100 rows read from storylinez/gtzan-music-genre-dataset had both an input and a label",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "storylinez/gtzan-music-genre-dataset",
+        "source": "storylinez/gtzan-music-genre-dataset",
+        "kind": "hub",
+        "reason": "fetch: none of the 100 rows read from storylinez/gtzan-music-genre-dataset had both an input and a label"
+      },
+      "t": 83.13
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Trying rpmon/fma-genre-classification.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "rpmon/fma-genre-classification",
+        "source": "rpmon/fma-genre-classification",
+        "kind": "hub",
+        "downloads": 212,
+        "found_by": "both",
+        "licence": null,
+        "url": "https://huggingface.co/datasets/rpmon/fma-genre-classification"
+      },
+      "t": 83.131
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of rpmon/fma-genre-classification.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "rpmon/fma-genre-classification",
+        "source": "rpmon/fma-genre-classification",
+        "kind": "hub"
+      },
+      "t": 83.131
+    },
+    {
+      "step": "data",
+      "status": "ok",
+      "message": "rpmon/fma-genre-classification fits: input audio, label genre.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "rpmon/fma-genre-classification",
+        "source": "rpmon/fma-genre-classification",
+        "kind": "hub",
+        "mapping": {
+          "config": "default",
+          "split": "train",
+          "input_columns": [
+            "audio"
+          ],
+          "input_kind": "media",
+          "template": "",
+          "extension": ".mp3",
+          "label_column": "genre",
+          "label_kind": "classlabel",
+          "label_names": [
+            "Electronic",
+            "Experimental",
+            "Folk",
+            "Hip-Hop",
+            "Instrumental",
+            "International",
+            "Pop",
+            "Rock"
+          ],
+          "label_separator": null,
+          "media_type": "Audio",
+          "origin": "llm",
+          "reason": "The audio column contains the music, and the genre column provides its genre label.",
+          "folder_depth": null
+        }
+      },
+      "t": 84.819
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Fetching labelled files from rpmon/fma-genre-classification.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "fetch",
+        "hub_id": "rpmon/fma-genre-classification",
+        "source": "rpmon/fma-genre-classification",
+        "kind": "hub",
+        "folder": "<repo>/.sense/fetched/probes/music-unseen/rpmon__fma-genre-classification"
+      },
+      "t": 84.819
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "Fetching from rpmon/fma-genre-classification failed: rpmon/fma-genre-classification has fewer than 2 label values with 3 usable rows among 400 inputs read, once the 8 labels in disjoint_from are left out",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "fetch",
+        "hub_id": "rpmon/fma-genre-classification",
+        "source": "rpmon/fma-genre-classification",
+        "kind": "hub",
+        "reason": "rpmon/fma-genre-classification has fewer than 2 label values with 3 usable rows among 400 inputs read, once the 8 labels in disjoint_from are left out"
+      },
+      "t": 144.906
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "Could not use rpmon/fma-genre-classification: fetch: rpmon/fma-genre-classification has fewer than 2 label values with 3 usable rows among 400 inputs read, once the 8 labels in disjoint_from are left out",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "rpmon/fma-genre-classification",
+        "source": "rpmon/fma-genre-classification",
+        "kind": "hub",
+        "reason": "fetch: rpmon/fma-genre-classification has fewer than 2 label values with 3 usable rows among 400 inputs read, once the 8 labels in disjoint_from are left out"
+      },
+      "t": 144.906
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Trying danilotpnta/GTZAN_genre_classification.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "danilotpnta/GTZAN_genre_classification",
+        "source": "danilotpnta/GTZAN_genre_classification",
+        "kind": "hub",
+        "downloads": 181,
+        "found_by": "hub",
+        "licence": "mit",
+        "url": "https://huggingface.co/datasets/danilotpnta/GTZAN_genre_classification"
+      },
+      "t": 144.907
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of danilotpnta/GTZAN_genre_classification.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "danilotpnta/GTZAN_genre_classification",
+        "source": "danilotpnta/GTZAN_genre_classification",
+        "kind": "hub"
+      },
+      "t": 144.907
+    },
+    {
+      "step": "data",
+      "status": "ok",
+      "message": "danilotpnta/GTZAN_genre_classification fits: input audio, label genre.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "danilotpnta/GTZAN_genre_classification",
+        "source": "danilotpnta/GTZAN_genre_classification",
+        "kind": "hub",
+        "mapping": {
+          "config": "gtzan",
+          "split": "train",
+          "input_columns": [
+            "audio"
+          ],
+          "input_kind": "media",
+          "template": "",
+          "extension": ".wav",
+          "label_column": "genre",
+          "label_kind": "string",
+          "label_names": null,
+          "label_separator": null,
+          "media_type": "Audio",
+          "origin": "llm",
+          "reason": "The audio column contains the music, and genre provides its category label.",
+          "folder_depth": null
+        }
+      },
+      "t": 168.18
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Fetching labelled files from danilotpnta/GTZAN_genre_classification.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "fetch",
+        "hub_id": "danilotpnta/GTZAN_genre_classification",
+        "source": "danilotpnta/GTZAN_genre_classification",
+        "kind": "hub",
+        "folder": "<repo>/.sense/fetched/probes/music-unseen/danilotpnta__GTZAN_genre_classification"
+      },
+      "t": 168.18
+    },
+    {
+      "step": "data",
+      "status": "ok",
+      "message": "Fetched 100 files in 5 labels from danilotpnta/GTZAN_genre_classification.",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "fetch",
+        "hub_id": "danilotpnta/GTZAN_genre_classification",
+        "source": "danilotpnta/GTZAN_genre_classification",
+        "kind": "hub",
+        "counts": {
+          "blues": 20,
+          "classical": 20,
+          "country": 20,
+          "disco": 20,
+          "jazz": 20
+        },
+        "rows_seen": 600,
+        "skipped": {
+          "page_failed": 1
+        },
+        "bytes": 132394156
+      },
+      "t": 239.554
+    },
+    {
+      "step": "data",
+      "status": "ok",
+      "message": "Using danilotpnta/GTZAN_genre_classification: 5 labels (blues, classical, country, disco, jazz).",
+      "data": {
+        "purpose": "unseen",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "danilotpnta/GTZAN_genre_classification",
+        "source": "danilotpnta/GTZAN_genre_classification",
+        "kind": "hub",
+        "labels": [
+          "blues",
+          "classical",
+          "country",
+          "disco",
+          "jazz"
+        ],
+        "licence": "mit"
+      },
+      "t": 239.555
+    },
+    {
+      "step": "data",
+      "status": "info",
+      "message": "Also scoring 100 files of 5 other categories (blues, classical, country, disco, jazz), which the adapter was not built around.",
+      "data": {
+        "unseen": {
+          "name": "music-unseen-c774084e4f",
+          "source": "https://huggingface.co/datasets/danilotpnta/GTZAN_genre_classification",
+          "labels": [
+            "blues",
+            "classical",
+            "country",
+            "disco",
+            "jazz"
+          ],
+          "per_label": {
+            "blues": 20,
+            "classical": 20,
+            "country": 20,
+            "disco": 20,
+            "jazz": 20
+          },
+          "n": 100
+        }
+      },
+      "t": 239.765
+    },
+    {
+      "step": "verify",
+      "status": "start",
+      "message": "Scoring adapter:music-midi on dataset probe files against swapped-input and no-input controls, and 100 files of categories it was not built around.",
+      "data": {
+        "bridge": "adapter:music-midi",
+        "n_test": 112,
+        "native": false,
+        "unseen": "music-unseen-c774084e4f"
+      },
+      "t": 239.8
+    },
+    {
+      "step": "verify",
+      "status": "fail",
+      "message": "The adapter failed on 50 of 50 held-out files, more than half, so adapter:music-midi cannot be verified. First failure (98ec475561e363a2.mp3): adapt(path) raised OSError: MThd not found. Probably not a MIDI file",
+      "data": {
+        "bridge": "adapter:music-midi",
+        "error": {
+          "reason": "The adapter failed on 50 of 50 held-out files, more than half, so adapter:music-midi cannot be verified. First failure (98ec475561e363a2.mp3): adapt(path) raised OSError: MThd not found. Probably not a MIDI file",
+          "traceback": "Traceback (most recent call last):\n  File \"adapter.py\", line 13, in adapt\n    mid = mido.MidiFile(path, clip=True)\n          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"<repo>/.sense/toolbox/site/mido/midifiles/midifiles.py\", line 320, in __init__\n    self._load(file)\n  File \"<repo>/.sense/toolbox/site/mido/midifiles/midifiles.py\", line 360, in _load\n    self.ticks_per_beat) = read_file_header(infile)\n                           ^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"<repo>/.sense/toolbox/site/mido/midifiles/midifiles.py\", line 106, in read_file_header\n    raise OSError('MThd not found. Probably not a MIDI file')\nOSError: MThd not found. Probably not a MIDI file",
+          "cause": "verify"
+        }
+      },
+      "t": 241.803
+    },
+    {
+      "step": "done",
+      "status": "ok",
+      "message": "No music sense was installed: The adapter failed on 50 of 50 held-out files, more than half, so adapter:music-midi cannot be verified. First failure (98ec475561e363a2.mp3): adapt(path) raised OSError: MThd not found. Probably not a MIDI file",
+      "data": {
+        "installed": null,
+        "needs_user": false
+      },
+      "t": 241.803
+    }
+  ],
+  "cards": [],
+  "installed": null,
+  "error": null,
+  "seconds": 241.803,
+  "format": 1
+}

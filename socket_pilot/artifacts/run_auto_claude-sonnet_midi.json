@@ -1,0 +1,1576 @@
+{
+  "id": "ebd54e9830ac",
+  "origin": "server",
+  "recorded": "2026-11-15T06:04:55+00:00",
+  "request": {
+    "model": "claude-sonnet",
+    "dataset": "",
+    "modality": "",
+    "scope": "closed"
+  },
+  "status": "done",
+  "events": [
+    {
+      "step": "detect",
+      "status": "start",
+      "message": "Detecting the contents of mystery.mid.",
+      "data": {},
+      "t": 0.0
+    },
+    {
+      "step": "detect",
+      "status": "ok",
+      "message": "mystery.mid matches no known signature and is not UTF-8 or UTF-16 text. Since Claude Sonnet 5.5 does not read other files and no specialist is wired for them, the agent will write an adapter: code that turns the file into something Claude Sonnet 5.5 reads.",
+      "data": {
+        "file": "mystery.mid",
+        "goal": "What genre of music is this?",
+        "modality": "other",
+        "format": "unknown",
+        "how": "content",
+        "detail": "mystery.mid matches no known signature and is not UTF-8 or UTF-16 text.",
+        "flow": "adapter"
+      },
+      "t": 0.001
+    },
+    {
+      "step": "design",
+      "status": "start",
+      "message": "Designing an adapter that lets Claude Sonnet 5.5 sense mystery.mid: What genre of music is this?",
+      "data": {
+        "file": "mystery.mid",
+        "goal": "What genre of music is this?"
+      },
+      "t": 0.001
+    },
+    {
+      "step": "design",
+      "status": "ok",
+      "message": "A text adapter for music (midi) files: Parse MIDI events into a factual musical summary including tempo, meter, instruments, note patterns, rhythm, harmony, and arrangement. Report any genre metadata separately and note that genre may be ambiguous from MIDI alone.",
+      "data": {
+        "modality": "music",
+        "format": "midi",
+        "route": "text",
+        "description": "Parse MIDI events into a factual musical summary including tempo, meter, instruments, note patterns, rhythm, harmony, and arrangement. Report any genre metadata separately and note that genre may be ambiguous from MIDI alone.",
+        "libraries": [
+          "mido"
+        ],
+        "question": "What genre best describes this music?",
+        "label_hint": "Music genre categories.",
+        "labels": [
+          "classical",
+          "jazz",
+          "rock",
+          "pop",
+          "folk",
+          "electronic"
+        ],
+        "probe_plan": "dataset",
+        "probe_reason": "Genre labels require externally annotated musical examples rather than labels inferred from a construction script.",
+        "install": [],
+        "detection": {
+          "modality": "other",
+          "format": "unknown",
+          "how": "content",
+          "detail": "mystery.mid matches no known signature and is not UTF-8 or UTF-16 text."
+        },
+        "toolbox": [
+          "numpy",
+          "scipy",
+          "PIL",
+          "json",
+          "csv",
+          "math",
+          "struct",
+          "zipfile",
+          "gzip",
+          "io",
+          "re",
+          "xml.etree",
+          "statistics",
+          "trimesh",
+          "rdkit",
+          "soundfile",
+          "matplotlib",
+          "ffmpeg (via subprocess)",
+          "ffprobe (via subprocess)",
+          "adapter_kit (this harness's helper module, on the adapter's path: import adapter_kit. video_frames(path, n=6) -> PIL frames and video_summary(path) -> dict, for video; contact_sheet(images) -> one PIL image; load_mesh(path), mesh_views(path, views=4) -> PIL renders and mesh_summary(path) -> dict with a plain description, for 3D meshes; read_molecule(path), molecule_summary(path) -> dict with a plain description and molecule_image(path), for molecules; read_coordinates(path) -> [(lat, lon)], coordinate_summary(lat, lon) -> dict and nearest_places(lat, lon), for coordinates; ValueError when a file cannot be read)",
+          "mido"
+        ],
+        "head_preview": "[hex dump of the first 583 of 583 bytes] 00000000 4d 54 68 64 00 00 00 06 00 00 00 01 01 e0 4d 54 |MThd..........MT| 00000010 72 6b 00 00 02 31 00 ff 51 03 05 b8 d8 00 ff 58 |rk...1..Q......X| 00000020 04 03 02 18 08 00 c0 00 00 c1 00 00 91 30 46 00 |.............0F.| 00000030 90 48 5a 83 56 80 4..."
+      },
+      "t": 3.09
+    },
+    {
+      "step": "build",
+      "status": "start",
+      "message": "Writing adapt(path) with mido and running it on mystery.mid in the sandbox.",
+      "data": {
+        "libraries": [
+          "mido"
+        ],
+        "sandboxed": true,
+        "max_attempts": 3
+      },
+      "t": 3.104
+    },
+    {
+      "step": "build",
+      "status": "ok",
+      "message": "The adapter ran on mystery.mid after 1 attempt (0.1 s).",
+      "data": {
+        "attempts": 1,
+        "libraries": [
+          "math",
+          "mido",
+          "statistics"
+        ],
+        "code_sha256": "bf51f7154d5c321e717f202af4edbe987d670a2b6a0ce9e63ebf9d02dfc10d31",
+        "code": "import mido, math, statistics\nfrom collections import Counter, defaultdict, deque\n\nGM = ('Acoustic Grand Piano,Bright Acoustic Piano,Electric Grand Piano,Honky-tonk Piano,Electric Piano 1,Electric Piano 2,Harpsichord,Clavinet,Celesta,Glockenspiel,Music Box,Vibraphone,Marimba,Xylophone,Tubular Bells,Dulcimer,Drawbar Organ,Percussive Organ,Rock Organ,Church Organ,Reed Organ,Accordion,Harmonica,Tango Accordion,Acoustic Guitar nylon,Acoustic Guitar steel,Electric Guitar jazz,Electric Guitar clean,Electric Guitar muted,Overdriven Guitar,Distortion Guitar,Guitar harmonics,Acoustic Bass,Electric Bass finger,Electric Bass pick,Fretless Bass,Slap Bass 1,Slap Bass 2,Synth Bass 1,Synth Bass 2,Violin,Viola,Cello,Contrabass,Tremolo Strings,Pizzicato Strings,Orchestral Harp,Timpani,String Ensemble 1,String Ensemble 2,Synth Strings 1,Synth Strings 2,Choir Aahs,Voice Oohs,Synth Voice,Orchestra Hit,Trumpet,Trombone,Tuba,Muted Trumpet,French Horn,Brass Section,Synth Brass 1,Synth Brass 2,Soprano Sax,Alto Sax,Tenor Sax,Baritone Sax,Oboe,English Horn,Bassoon,Clarinet,Piccolo,Flute,Recorder,Pan Flute,Blown Bottle,Shakuhachi,Whistle,Ocarina,Lead square,Lead sawtooth,Lead calliope,Lead chiff,Lead charang,Lead voice,Lead fifths,Lead bass and lead,Pad new age,Pad warm,Pad polysynth,Pad choir,Pad bowed,Pad metallic,Pad halo,Pad sweep,FX rain,FX soundtrack,FX crystal,FX atmosphere,FX brightness,FX goblins,FX echoes,FX sci-fi,Sitar,Banjo,Shamisen,Koto,Kalimba,Bag pipe,Fiddle,Shanai,Tinkle Bell,Agogo,Steel Drums,Woodblock,Taiko Drum,Melodic Tom,Synth Drum,Reverse Cymbal,Guitar Fret Noise,Breath Noise,Seashore,Bird Tweet,Telephone Ring,Helicopter,Applause,Gunshot').split(',')\nPC = ['C','C#','D','Eb','E','F','F#','G','Ab','A','Bb','B']\nDR = {35:'bass drum 2',36:'bass drum',37:'side stick',38:'snare',39:'hand clap',40:'electric snare',41:'low floor tom',42:'closed hi-hat',43:'high floor tom',44:'pedal hi-hat',45:'low tom',46:'open hi-hat',47:'low-mid tom',48:'high-mid tom',49:'crash cymbal',50:'high tom',51:'ride cymbal',52:'Chinese cymbal',53:'ride bell',54:'tambourine',55:'splash cymbal',56:'cowbell',57:'crash cymbal 2',59:'ride cymbal 2'}\ndef note(n): return PC[n%12]+str(n//12-1)\ndef top(c, n=6): return ', '.join(str(k)+':'+str(v) for k,v in c.most_common(n))\ndef adapt(path):\n    try:\n        mid=mido.MidiFile(path, clip=True)\n    except Exception as e:\n        return {'text':'Could not parse MIDI file: '+str(e)[:200]}\n    ppq=mid.ticks_per_beat\n    lines=['MIDI format %s, %d tracks, %s ticks per quarter note.'%(mid.type,len(mid.tracks),ppq)]\n    events=[]; meta=[]; tempos=[]; meters=[]; keys=[]; end=0; truncated=False\n    for ti,tr in enumerate(mid.tracks):\n        t=0\n        for msg in tr:\n            t+=msg.time; end=max(end,t)\n            if len(events)>=300000:\n                truncated=True; break\n            events.append((t,ti,len(events),msg))\n            if msg.is_meta:\n                if msg.type=='set_tempo': tempos.append((t,msg.tempo))\n                elif msg.type=='time_signature': meters.append((t,msg.numerator,msg.denominator))\n                elif msg.type=='key_signature': keys.append((t,msg.key))\n                elif msg.type in ('track_name','instrument_name','text','lyrics','marker','copyright','cue_marker'):\n                    s=str(getattr(msg,'text',getattr(msg,'name',''))).replace('\\n',' ').strip()\n                    if s: meta.append((msg.type,s[:160]))\n        if truncated: break\n    if truncated: lines.append('Analysis limited to first 300000 events; duration and counts may be incomplete.')\n    if ppq<=0:\n        lines.append('SMPTE timing; beat-based measurements unavailable.')\n        ppq=480\n    events.sort(key=lambda x:(x[0],x[1],x[2]))\n    tempos.sort(); meters.sort(); keys.sort()\n    if tempos:\n        lines.append('Tempo events: '+', '.join('beat %.1f: %.1f BPM'%(t/ppq,60000000/v) for t,v in tempos[:8]))\n    else: lines.append('No tempo metadata; MIDI default is 120 BPM.')\n    if meters: lines.append('Meter events: '+', '.join('beat %.1f: %d/%d'%(t/ppq,a,b) for t,a,b in meters[:8]))\n    else: lines.append('No time signature metadata; MIDI default is 4/4.')\n    if keys: lines.append('Key signature metadata: '+', '.join('beat %.1f: %s'%(t/ppq,k) for t,k in keys[:8]))\n    if meta:\n        seen=[]\n        for typ,s in meta:\n            item=typ+': '+s\n            if item not in seen: seen.append(item)\n        lines.append('Embedded text metadata (not necessarily genre): '+'; '.join(seen[:12]))\n    else: lines.append('No descriptive text or genre metadata found.')\n    tempo=500000; last=0; seconds=0\n    for t,v in tempos:\n        if t>end: break\n        seconds+=(t-last)*tempo/(ppq*1000000); last=t; tempo=v\n    seconds+=(end-last)*tempo/(ppq*1000000)\n    lines.append('Length: %.1f quarter-note beats, approximately %.1f seconds.'%(end/ppq,seconds))\n    programs=[0]*16; banks=[0]*16; active=defaultdict(deque); notes=[]; counts=Counter(); progcounts=defaultdict(Counter); velocities=defaultdict(list); starts=defaultdict(list); pitches=defaultdict(list); drums=Counter(); controls=Counter()\n    for t,ti,idx,msg in events:\n        typ=msg.type\n        if typ=='program_change': programs[msg.channel]=msg.program\n        elif typ=='control_change':\n            controls[(msg.channel,msg.control)]+=1\n            if msg.control==0: banks[msg.channel]=msg.value\n        elif typ=='note_on' and msg.velocity>0:\n            ch=msg.channel; counts[ch]+=1; progcounts[ch][(programs[ch],banks[ch])]+=1\n            velocities[ch].append(msg.velocity); starts[ch].append(t); pitches[ch].append(msg.note)\n            if ch==9: drums[msg.note]+=1\n            active[(ch,msg.note)].append((t,msg.velocity,ti))\n        elif typ=='note_off' or (typ=='note_on' and msg.velocity==0):\n            ch=msg.channel; q=active[(ch,msg.note)]\n            if q:\n                st,vel,track=q.popleft(); notes.append((st,t,ch,msg.note,vel,track))\n    total=sum(counts.values()); lines.append('Note attacks: %d; active MIDI channels: %d.'%(total,len(counts)))\n    if drums: lines.append('Channel 10 percussion hits: '+', '.join('%s (%d): %d'%(DR.get(k,'drum'),k,v) for k,v in drums.most_common(10)))\n    for ch,n in counts.most_common(10):\n        ps=pitches[ch]; vs=velocities[ch]; ts=starts[ch]; ds=[(b-a)/ppq for a,b,c,p,v,tr in notes if c==ch and b>=a]\n        inst=[]\n        for (p,b),cnt in progcounts[ch].most_common(3):\n            inst.append(('percussion kit' if ch==9 else GM[p])+' (%d notes%s)'%(cnt,', bank '+str(b) if b else ''))\n        unique=sorted(set(ts)); gaps=[(b-a)/ppq for a,b in zip(unique,unique[1:]) if b>a]\n        simultaneous=n-len(unique)\n        desc='Channel %d: %s; %d attacks, range %s-%s, velocity median %d (range %d-%d)'%(ch+1,', '.join(inst),n,note(min(ps)),note(max(ps)),statistics.median(vs),min(vs),max(vs))\n        if ds: desc+=', median note length %.2f beats'%statistics.median(ds)\n        if gaps: desc+=', median onset spacing %.2f beats'%statistics.median(gaps)\n        desc+=', %d simultaneous extra attacks.'%simultaneous\n        lines.append(desc)\n        if ch!=9:\n            lines.append('  Frequent pitches: '+top(Counter(note(p) for p in ps),6)+'.')\n            seq=sorted([(t,p) for t,p in zip(ts,ps)])[:24]\n            if seq: lines.append('  Opening attacks (beat:pitch): '+', '.join('%.2f:%s'%(t/ppq,note(p)) for t,p in seq)+'.')\n    melodic=[x for x in notes if x[2]!=9]\n    if melodic:\n        pc=Counter(PC[p%12] for a,b,c,p,v,tr in melodic)\n        lines.append('Pitch-class attack counts: '+top(pc,12)+'.')\n        groups=defaultdict(set)\n        for a,b,c,p,v,tr in melodic: groups[a].add(p%12)\n        chords=Counter()\n        for s in groups.values():\n            if len(s)>=3:\n                for root in sorted(s):\n                    for intervals,name in [({0,4,7},'major'),({0,3,7},'minor'),({0,3,6},'diminished')]:\n                        if {(root+i)%12 for i in intervals}.issubset(s): chords[PC[root]+' '+name]+=1\n        if chords: lines.append('Simultaneous note-on triad subsets (not a full harmonic analysis): '+top(chords,8)+'.')\n        # Beat-position distribution reveals regularity and offbeat emphasis.\n        phases=Counter(round((a%ppq)/ppq*4)/4 for a,b,c,p,v,tr in melodic)\n        lines.append('Melodic attack positions within quarter-note beat (fraction:count): '+top(phases,6)+'.')\n    if controls:\n        sustain=sum(v for (ch,cc),v in controls.items() if cc==64)\n        if sustain: lines.append('Sustain pedal controller events: %d.'%sustain)\n    lines.append('MIDI specifies note events and instrument programs, not actual rendered timbre; genre can be ambiguous from MIDI alone.')\n    return {'text':'\\n'.join(lines)[:4000]}\n",
+        "preview": "MIDI format 0, 1 tracks, 480 ticks per quarter note.\nTempo events: beat 0.0: 160.0 BPM\nMeter events: beat 0.0: 3/4\nNo descriptive text or genre metadata found.\nLength: 24.0 quarter-note beats, approximately 9.0 seconds.\nNote attacks: 64; active MIDI channels: 2.\nChannel 2: Acoustic Grand Piano (4...",
+        "output_kind": "text",
+        "notes": [],
+        "seconds": 0.124
+      },
+      "t": 33.449
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Searching the Hugging Face Hub and the web for labelled probe files.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "search",
+        "goal": "What genre of music is this?",
+        "modality": "music"
+      },
+      "t": 33.454
+    },
+    {
+      "step": "data",
+      "status": "ok",
+      "message": "Found 21 candidate datasets for labelled probe files.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "search",
+        "queries": [
+          "midi genre",
+          "Lakh MIDI",
+          "MIDI classification",
+          "music genre",
+          "symbolic music",
+          "midi music",
+          "genre music",
+          "midi",
+          "genre",
+          "music"
+        ],
+        "origin": "llm+rule",
+        "found": 21,
+        "top": [
+          "Gapagapi1/ABC-Lakh-MIDI-Dataset",
+          "projectlosangeles/lakh-clean-midi-genres",
+          "TiMauzi/imslp-midi-cc0-1.0",
+          "TiMauzi/imslp-midi-by-sa",
+          "ygonet/midi-classical-music",
+          "drengskapur/midi-classical-music",
+          "elizawhitfield/midi-classical-music",
+          "korigamik/lakh-midicaps-dedup",
+          "ayousanz/midi-classical-music-toio-json",
+          "storylinez/gtzan-music-genre-dataset",
+          "ccmusic-database/music_genre",
+          "rpmon/fma-genre-classification"
+        ],
+        "web": {
+          "used": true,
+          "reason": null,
+          "origin": "live",
+          "hub_ids": [
+            "storylinez/gtzan-music-genre-dataset",
+            "rpmon/fma-genre-classification",
+            "ccmusic-database/music_genre"
+          ],
+          "tables": [],
+          "refused": []
+        },
+        "excluded": []
+      },
+      "t": 37.961
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Trying Gapagapi1/ABC-Lakh-MIDI-Dataset.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "Gapagapi1/ABC-Lakh-MIDI-Dataset",
+        "source": "Gapagapi1/ABC-Lakh-MIDI-Dataset",
+        "kind": "hub",
+        "downloads": 109,
+        "found_by": "hub",
+        "licence": "cc-by-nc-sa-4.0",
+        "url": "https://huggingface.co/datasets/Gapagapi1/ABC-Lakh-MIDI-Dataset"
+      },
+      "t": 37.961
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of Gapagapi1/ABC-Lakh-MIDI-Dataset.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "Gapagapi1/ABC-Lakh-MIDI-Dataset",
+        "source": "Gapagapi1/ABC-Lakh-MIDI-Dataset",
+        "kind": "hub"
+      },
+      "t": 37.961
+    },
+    {
+      "step": "data",
+      "status": "ok",
+      "message": "Gapagapi1/ABC-Lakh-MIDI-Dataset fits: input abc_text, label genre_category.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "Gapagapi1/ABC-Lakh-MIDI-Dataset",
+        "source": "Gapagapi1/ABC-Lakh-MIDI-Dataset",
+        "kind": "hub",
+        "mapping": {
+          "config": "abc_texts",
+          "split": "train",
+          "input_columns": [
+            "abc_text"
+          ],
+          "input_kind": "text",
+          "template": "{abc_text}",
+          "extension": ".mid",
+          "label_column": "genre_category",
+          "label_kind": "classlabel",
+          "label_names": [
+            "Rock",
+            "Pop",
+            "Electronic",
+            "Country",
+            "RnB",
+            "Jazz",
+            "World",
+            "Other",
+            "Unknown"
+          ],
+          "label_separator": null,
+          "media_type": null,
+          "origin": "llm",
+          "reason": "The ABC notation represents the music, and genre_category provides its genre label.",
+          "folder_depth": null
+        }
+      },
+      "t": 40.332
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Fetching labelled files from Gapagapi1/ABC-Lakh-MIDI-Dataset.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "fetch",
+        "hub_id": "Gapagapi1/ABC-Lakh-MIDI-Dataset",
+        "source": "Gapagapi1/ABC-Lakh-MIDI-Dataset",
+        "kind": "hub",
+        "folder": "<repo>/.sense/fetched/probes/music/Gapagapi1__ABC-Lakh-MIDI-Dataset"
+      },
+      "t": 40.332
+    },
+    {
+      "step": "data",
+      "status": "ok",
+      "message": "Fetched 118 files in 7 labels from Gapagapi1/ABC-Lakh-MIDI-Dataset.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "fetch",
+        "hub_id": "Gapagapi1/ABC-Lakh-MIDI-Dataset",
+        "source": "Gapagapi1/ABC-Lakh-MIDI-Dataset",
+        "kind": "hub",
+        "counts": {
+          "pop": 20,
+          "rock": 20,
+          "electronic": 20,
+          "world": 20,
+          "country": 16,
+          "jazz": 13,
+          "rnb": 9
+        },
+        "rows_seen": 1200,
+        "skipped": {
+          "no_input": 9,
+          "duplicate_input": 1
+        },
+        "bytes": 356899
+      },
+      "t": 63.175
+    },
+    {
+      "step": "data",
+      "status": "ok",
+      "message": "Using Gapagapi1/ABC-Lakh-MIDI-Dataset: 7 labels (pop, rock, electronic, world, country, jazz, rnb).",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "Gapagapi1/ABC-Lakh-MIDI-Dataset",
+        "source": "Gapagapi1/ABC-Lakh-MIDI-Dataset",
+        "kind": "hub",
+        "labels": [
+          "pop",
+          "rock",
+          "electronic",
+          "world",
+          "country",
+          "jazz",
+          "rnb"
+        ],
+        "licence": "cc-by-nc-sa-4.0"
+      },
+      "t": 63.175
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "Could not use Gapagapi1/ABC-Lakh-MIDI-Dataset: 118 of its files are not of the user's file format (they do not start with the same 4 bytes), which leaves too few.",
+      "data": {
+        "action": "build",
+        "purpose": "probes",
+        "provenance": "dataset",
+        "reason": "118 of its files are not of the user's file format (they do not start with the same 4 bytes), which leaves too few",
+        "source": "Gapagapi1/ABC-Lakh-MIDI-Dataset"
+      },
+      "t": 63.189
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Searching the Hugging Face Hub and the web for labelled probe files.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "search",
+        "goal": "What genre of music is this?",
+        "modality": "music"
+      },
+      "t": 63.19
+    },
+    {
+      "step": "data",
+      "status": "ok",
+      "message": "Found 21 candidate datasets for labelled probe files.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "search",
+        "queries": [
+          "MIDI genre",
+          "music genre",
+          "Lakh MIDI",
+          "MIDI classification",
+          "symbolic music",
+          "midi genre",
+          "midi music",
+          "genre music",
+          "midi",
+          "genre",
+          "music"
+        ],
+        "origin": "llm+rule",
+        "found": 21,
+        "top": [
+          "projectlosangeles/lakh-clean-midi-genres",
+          "TiMauzi/imslp-midi-cc0-1.0",
+          "TiMauzi/imslp-midi-by-sa",
+          "ygonet/midi-classical-music",
+          "drengskapur/midi-classical-music",
+          "elizawhitfield/midi-classical-music",
+          "korigamik/lakh-midicaps-dedup",
+          "ayousanz/midi-classical-music-toio-json",
+          "breadlicker45/midi-gpt-music-small",
+          "storylinez/gtzan-music-genre-dataset",
+          "ccmusic-database/music_genre",
+          "rpmon/fma-genre-classification"
+        ],
+        "web": {
+          "used": true,
+          "reason": null,
+          "origin": "memo",
+          "hub_ids": [
+            "storylinez/gtzan-music-genre-dataset",
+            "rpmon/fma-genre-classification",
+            "ccmusic-database/music_genre"
+          ],
+          "tables": [],
+          "refused": []
+        },
+        "excluded": [
+          {
+            "source": "Gapagapi1/ABC-Lakh-MIDI-Dataset",
+            "reason": "in exclude_sources"
+          }
+        ]
+      },
+      "t": 66.243
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Trying projectlosangeles/lakh-clean-midi-genres.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "projectlosangeles/lakh-clean-midi-genres",
+        "source": "projectlosangeles/lakh-clean-midi-genres",
+        "kind": "hub",
+        "downloads": 175,
+        "found_by": "hub",
+        "licence": "cc-by-nc-sa-4.0",
+        "url": "https://huggingface.co/datasets/projectlosangeles/lakh-clean-midi-genres"
+      },
+      "t": 66.243
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of projectlosangeles/lakh-clean-midi-genres.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "projectlosangeles/lakh-clean-midi-genres",
+        "source": "projectlosangeles/lakh-clean-midi-genres",
+        "kind": "hub"
+      },
+      "t": 66.243
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "projectlosangeles/lakh-clean-midi-genres does not fit: projectlosangeles/lakh-clean-midi-genres has no input column for music: wanted a column named like with fitting values (columns: primary_genre, nuanced_genre, midi_name)",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "projectlosangeles/lakh-clean-midi-genres",
+        "source": "projectlosangeles/lakh-clean-midi-genres",
+        "kind": "hub",
+        "reason": "projectlosangeles/lakh-clean-midi-genres has no input column for music: wanted a column named like  with fitting values (columns: primary_genre, nuanced_genre, midi_name)"
+      },
+      "t": 68.169
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of projectlosangeles/lakh-clean-midi-genres.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "projectlosangeles/lakh-clean-midi-genres",
+        "source": "projectlosangeles/lakh-clean-midi-genres",
+        "kind": "folder"
+      },
+      "t": 68.169
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "projectlosangeles/lakh-clean-midi-genres does not fit: projectlosangeles/lakh-clean-midi-genres holds no .mid files",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "projectlosangeles/lakh-clean-midi-genres",
+        "source": "projectlosangeles/lakh-clean-midi-genres",
+        "kind": "folder",
+        "reason": "projectlosangeles/lakh-clean-midi-genres holds no .mid files"
+      },
+      "t": 68.358
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "Could not use projectlosangeles/lakh-clean-midi-genres: inspect: projectlosangeles/lakh-clean-midi-genres has no input column for music: wanted a column named like with fitting values (columns: primary_genre, nuanced_genre, midi_name); folder: projectlosangeles/lakh-clean-midi-genres holds no .mid files",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "projectlosangeles/lakh-clean-midi-genres",
+        "source": "projectlosangeles/lakh-clean-midi-genres",
+        "kind": "folder",
+        "reason": "inspect: projectlosangeles/lakh-clean-midi-genres has no input column for music: wanted a column named like  with fitting values (columns: primary_genre, nuanced_genre, midi_name); folder: projectlosangeles/lakh-clean-midi-genres holds no .mid files"
+      },
+      "t": 68.358
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Trying TiMauzi/imslp-midi-cc0-1.0.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "TiMauzi/imslp-midi-cc0-1.0",
+        "source": "TiMauzi/imslp-midi-cc0-1.0",
+        "kind": "hub",
+        "downloads": 740,
+        "found_by": "hub",
+        "licence": "cc0-1.0",
+        "url": "https://huggingface.co/datasets/TiMauzi/imslp-midi-cc0-1.0"
+      },
+      "t": 68.359
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of TiMauzi/imslp-midi-cc0-1.0.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "TiMauzi/imslp-midi-cc0-1.0",
+        "source": "TiMauzi/imslp-midi-cc0-1.0",
+        "kind": "hub"
+      },
+      "t": 68.359
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "TiMauzi/imslp-midi-cc0-1.0 does not fit: TiMauzi/imslp-midi-cc0-1.0 has no input column for music: wanted a column named like with fitting values (columns: midi_source, metadata_source, file_name, title, composer, year, era, style, key, license, midi, midi_mido)",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "TiMauzi/imslp-midi-cc0-1.0",
+        "source": "TiMauzi/imslp-midi-cc0-1.0",
+        "kind": "hub",
+        "reason": "TiMauzi/imslp-midi-cc0-1.0 has no input column for music: wanted a column named like  with fitting values (columns: midi_source, metadata_source, file_name, title, composer, year, era, style, key, license, midi, midi_mido)"
+      },
+      "t": 70.078
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of TiMauzi/imslp-midi-cc0-1.0.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "TiMauzi/imslp-midi-cc0-1.0",
+        "source": "TiMauzi/imslp-midi-cc0-1.0",
+        "kind": "folder"
+      },
+      "t": 70.078
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "TiMauzi/imslp-midi-cc0-1.0 does not fit: TiMauzi/imslp-midi-cc0-1.0 holds no .mid files",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "TiMauzi/imslp-midi-cc0-1.0",
+        "source": "TiMauzi/imslp-midi-cc0-1.0",
+        "kind": "folder",
+        "reason": "TiMauzi/imslp-midi-cc0-1.0 holds no .mid files"
+      },
+      "t": 70.287
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "Could not use TiMauzi/imslp-midi-cc0-1.0: inspect: TiMauzi/imslp-midi-cc0-1.0 has no input column for music: wanted a column named like with fitting values (columns: midi_source, metadata_source, file_name, title, composer, year, era, style, key, license, midi, midi_mido); folder: TiMauzi/imslp-midi-cc0-1.0 holds no .mid files",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "TiMauzi/imslp-midi-cc0-1.0",
+        "source": "TiMauzi/imslp-midi-cc0-1.0",
+        "kind": "folder",
+        "reason": "inspect: TiMauzi/imslp-midi-cc0-1.0 has no input column for music: wanted a column named like  with fitting values (columns: midi_source, metadata_source, file_name, title, composer, year, era, style, key, license, midi, midi_mido); folder: TiMauzi/imslp-midi-cc0-1.0 holds no .mid files"
+      },
+      "t": 70.287
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Trying TiMauzi/imslp-midi-by-sa.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "TiMauzi/imslp-midi-by-sa",
+        "source": "TiMauzi/imslp-midi-by-sa",
+        "kind": "hub",
+        "downloads": 620,
+        "found_by": "hub",
+        "licence": "cc-by-sa-4.0",
+        "url": "https://huggingface.co/datasets/TiMauzi/imslp-midi-by-sa"
+      },
+      "t": 70.287
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of TiMauzi/imslp-midi-by-sa.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "TiMauzi/imslp-midi-by-sa",
+        "source": "TiMauzi/imslp-midi-by-sa",
+        "kind": "hub"
+      },
+      "t": 70.287
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "TiMauzi/imslp-midi-by-sa does not fit: TiMauzi/imslp-midi-by-sa has no input column for music: wanted a column named like with fitting values (columns: midi_source, metadata_source, file_name, title, composer, year, era, style, key, license, midi, midi_mido)",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "TiMauzi/imslp-midi-by-sa",
+        "source": "TiMauzi/imslp-midi-by-sa",
+        "kind": "hub",
+        "reason": "TiMauzi/imslp-midi-by-sa has no input column for music: wanted a column named like  with fitting values (columns: midi_source, metadata_source, file_name, title, composer, year, era, style, key, license, midi, midi_mido)"
+      },
+      "t": 72.084
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of TiMauzi/imslp-midi-by-sa.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "TiMauzi/imslp-midi-by-sa",
+        "source": "TiMauzi/imslp-midi-by-sa",
+        "kind": "folder"
+      },
+      "t": 72.084
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "TiMauzi/imslp-midi-by-sa does not fit: TiMauzi/imslp-midi-by-sa holds no .mid files",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "TiMauzi/imslp-midi-by-sa",
+        "source": "TiMauzi/imslp-midi-by-sa",
+        "kind": "folder",
+        "reason": "TiMauzi/imslp-midi-by-sa holds no .mid files"
+      },
+      "t": 72.263
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "Could not use TiMauzi/imslp-midi-by-sa: inspect: TiMauzi/imslp-midi-by-sa has no input column for music: wanted a column named like with fitting values (columns: midi_source, metadata_source, file_name, title, composer, year, era, style, key, license, midi, midi_mido); folder: TiMauzi/imslp-midi-by-sa holds no .mid files",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "TiMauzi/imslp-midi-by-sa",
+        "source": "TiMauzi/imslp-midi-by-sa",
+        "kind": "folder",
+        "reason": "inspect: TiMauzi/imslp-midi-by-sa has no input column for music: wanted a column named like  with fitting values (columns: midi_source, metadata_source, file_name, title, composer, year, era, style, key, license, midi, midi_mido); folder: TiMauzi/imslp-midi-by-sa holds no .mid files"
+      },
+      "t": 72.263
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Trying ygonet/midi-classical-music.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "ygonet/midi-classical-music",
+        "source": "ygonet/midi-classical-music",
+        "kind": "hub",
+        "downloads": 4445,
+        "found_by": "hub",
+        "licence": "mit",
+        "url": "https://huggingface.co/datasets/ygonet/midi-classical-music"
+      },
+      "t": 72.263
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of ygonet/midi-classical-music.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "ygonet/midi-classical-music",
+        "source": "ygonet/midi-classical-music",
+        "kind": "hub"
+      },
+      "t": 72.263
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "ygonet/midi-classical-music does not fit: ygonet/midi-classical-music has no input column for music: wanted a column named like with fitting values (columns: file_name)",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "ygonet/midi-classical-music",
+        "source": "ygonet/midi-classical-music",
+        "kind": "hub",
+        "reason": "ygonet/midi-classical-music has no input column for music: wanted a column named like  with fitting values (columns: file_name)"
+      },
+      "t": 73.943
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of ygonet/midi-classical-music.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "ygonet/midi-classical-music",
+        "source": "ygonet/midi-classical-music",
+        "kind": "folder"
+      },
+      "t": 73.943
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "ygonet/midi-classical-music does not fit: none of ygonet/midi-classical-music's 4,796 .mid files sits in a folder that can name a label (they sit in the top folder or in split or generic folders only)",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "ygonet/midi-classical-music",
+        "source": "ygonet/midi-classical-music",
+        "kind": "folder",
+        "reason": "none of ygonet/midi-classical-music's 4,796 .mid files sits in a folder that can name a label (they sit in the top folder or in split or generic folders only)"
+      },
+      "t": 75.279
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "Could not use ygonet/midi-classical-music: inspect: ygonet/midi-classical-music has no input column for music: wanted a column named like with fitting values (columns: file_name); folder: none of ygonet/midi-classical-music's 4,796 .mid files sits in a folder that can name a label (they sit in the top folder or in split or generic folders...",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "ygonet/midi-classical-music",
+        "source": "ygonet/midi-classical-music",
+        "kind": "folder",
+        "reason": "inspect: ygonet/midi-classical-music has no input column for music: wanted a column named like  with fitting values (columns: file_name); folder: none of ygonet/midi-classical-music's 4,796 .mid files sits in a folder that can name a label (they sit in the top folder or in split or generic folders only)"
+      },
+      "t": 75.279
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Trying drengskapur/midi-classical-music.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "drengskapur/midi-classical-music",
+        "source": "drengskapur/midi-classical-music",
+        "kind": "hub",
+        "downloads": 2778,
+        "found_by": "hub",
+        "licence": "mit",
+        "url": "https://huggingface.co/datasets/drengskapur/midi-classical-music"
+      },
+      "t": 75.279
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of drengskapur/midi-classical-music.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "drengskapur/midi-classical-music",
+        "source": "drengskapur/midi-classical-music",
+        "kind": "hub"
+      },
+      "t": 75.279
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "drengskapur/midi-classical-music does not fit: drengskapur/midi-classical-music has no input column for music: wanted a column named like with fitting values (columns: file_name)",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "drengskapur/midi-classical-music",
+        "source": "drengskapur/midi-classical-music",
+        "kind": "hub",
+        "reason": "drengskapur/midi-classical-music has no input column for music: wanted a column named like  with fitting values (columns: file_name)"
+      },
+      "t": 77.113
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of drengskapur/midi-classical-music.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "drengskapur/midi-classical-music",
+        "source": "drengskapur/midi-classical-music",
+        "kind": "folder"
+      },
+      "t": 77.113
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "drengskapur/midi-classical-music does not fit: none of drengskapur/midi-classical-music's 4,796 .mid files sits in a folder that can name a label (they sit in the top folder or in split or generic folders only)",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "drengskapur/midi-classical-music",
+        "source": "drengskapur/midi-classical-music",
+        "kind": "folder",
+        "reason": "none of drengskapur/midi-classical-music's 4,796 .mid files sits in a folder that can name a label (they sit in the top folder or in split or generic folders only)"
+      },
+      "t": 78.225
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "Could not use drengskapur/midi-classical-music: inspect: drengskapur/midi-classical-music has no input column for music: wanted a column named like with fitting values (columns: file_name); folder: none of drengskapur/midi-classical-music's 4,796 .mid files sits in a folder that can name a label (they sit in the top folder or in split or gener...",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "drengskapur/midi-classical-music",
+        "source": "drengskapur/midi-classical-music",
+        "kind": "folder",
+        "reason": "inspect: drengskapur/midi-classical-music has no input column for music: wanted a column named like  with fitting values (columns: file_name); folder: none of drengskapur/midi-classical-music's 4,796 .mid files sits in a folder that can name a label (they sit in the top folder or in split or generic folders only)"
+      },
+      "t": 78.225
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Trying elizawhitfield/midi-classical-music.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "elizawhitfield/midi-classical-music",
+        "source": "elizawhitfield/midi-classical-music",
+        "kind": "hub",
+        "downloads": 734,
+        "found_by": "hub",
+        "licence": "mit",
+        "url": "https://huggingface.co/datasets/elizawhitfield/midi-classical-music"
+      },
+      "t": 78.226
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of elizawhitfield/midi-classical-music.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "elizawhitfield/midi-classical-music",
+        "source": "elizawhitfield/midi-classical-music",
+        "kind": "hub"
+      },
+      "t": 78.226
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "elizawhitfield/midi-classical-music does not fit: elizawhitfield/midi-classical-music has no input column for music: wanted a column named like with fitting values (columns: file_name)",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "elizawhitfield/midi-classical-music",
+        "source": "elizawhitfield/midi-classical-music",
+        "kind": "hub",
+        "reason": "elizawhitfield/midi-classical-music has no input column for music: wanted a column named like  with fitting values (columns: file_name)"
+      },
+      "t": 79.898
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of elizawhitfield/midi-classical-music.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "elizawhitfield/midi-classical-music",
+        "source": "elizawhitfield/midi-classical-music",
+        "kind": "folder"
+      },
+      "t": 79.899
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "elizawhitfield/midi-classical-music does not fit: none of elizawhitfield/midi-classical-music's 4,796 .mid files sits in a folder that can name a label (they sit in the top folder or in split or generic folders only)",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "elizawhitfield/midi-classical-music",
+        "source": "elizawhitfield/midi-classical-music",
+        "kind": "folder",
+        "reason": "none of elizawhitfield/midi-classical-music's 4,796 .mid files sits in a folder that can name a label (they sit in the top folder or in split or generic folders only)"
+      },
+      "t": 81.083
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "Could not use elizawhitfield/midi-classical-music: inspect: elizawhitfield/midi-classical-music has no input column for music: wanted a column named like with fitting values (columns: file_name); folder: none of elizawhitfield/midi-classical-music's 4,796 .mid files sits in a folder that can name a label (they sit in the top folder or in split or...",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "elizawhitfield/midi-classical-music",
+        "source": "elizawhitfield/midi-classical-music",
+        "kind": "folder",
+        "reason": "inspect: elizawhitfield/midi-classical-music has no input column for music: wanted a column named like  with fitting values (columns: file_name); folder: none of elizawhitfield/midi-classical-music's 4,796 .mid files sits in a folder that can name a label (they sit in the top folder or in split or generic folders only)"
+      },
+      "t": 81.083
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Trying korigamik/lakh-midicaps-dedup.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "korigamik/lakh-midicaps-dedup",
+        "source": "korigamik/lakh-midicaps-dedup",
+        "kind": "hub",
+        "downloads": 282,
+        "found_by": "hub",
+        "licence": "cc-by-sa-4.0",
+        "url": "https://huggingface.co/datasets/korigamik/lakh-midicaps-dedup"
+      },
+      "t": 81.083
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of korigamik/lakh-midicaps-dedup.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "korigamik/lakh-midicaps-dedup",
+        "source": "korigamik/lakh-midicaps-dedup",
+        "kind": "hub"
+      },
+      "t": 81.083
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "korigamik/lakh-midicaps-dedup does not fit: korigamik/lakh-midicaps-dedup has no input column for music: wanted a column named like with fitting values (columns: id, location, midi, selected, caption, genre, genre_prob, mood, mood_prob, key, time_signature, tempo, tempo_word, duration, duration_word, chord_summary, chord_summary_occurence,...",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "korigamik/lakh-midicaps-dedup",
+        "source": "korigamik/lakh-midicaps-dedup",
+        "kind": "hub",
+        "reason": "korigamik/lakh-midicaps-dedup has no input column for music: wanted a column named like  with fitting values (columns: id, location, midi, selected, caption, genre, genre_prob, mood, mood_prob, key, time_signature, tempo, tempo_word, duration, duration_word, chord_summary, chord_summary_occurence, instrument_summary, instrument_numbers_sorted, all_chords, all_chords_timestamps, midicaps_other)"
+      },
+      "t": 83.24
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of korigamik/lakh-midicaps-dedup.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "korigamik/lakh-midicaps-dedup",
+        "source": "korigamik/lakh-midicaps-dedup",
+        "kind": "folder"
+      },
+      "t": 83.24
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "korigamik/lakh-midicaps-dedup does not fit: korigamik/lakh-midicaps-dedup holds no .mid files",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "korigamik/lakh-midicaps-dedup",
+        "source": "korigamik/lakh-midicaps-dedup",
+        "kind": "folder",
+        "reason": "korigamik/lakh-midicaps-dedup holds no .mid files"
+      },
+      "t": 83.429
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "Could not use korigamik/lakh-midicaps-dedup: inspect: korigamik/lakh-midicaps-dedup has no input column for music: wanted a column named like with fitting values (columns: id, location, midi, selected, caption, genre, genre_prob, mood, mood_prob, key, time_signature, tempo, tempo_word, duration, duration_word, chord_summary, chord_summary_o...",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "korigamik/lakh-midicaps-dedup",
+        "source": "korigamik/lakh-midicaps-dedup",
+        "kind": "folder",
+        "reason": "inspect: korigamik/lakh-midicaps-dedup has no input column for music: wanted a column named like  with fitting values (columns: id, location, midi, selected, caption, genre, genre_prob, mood, mood_prob, key, time_signature, tempo, tempo_word, duration, duration_word, chord_summary, chord_summary_occurence, instrument_summary, instrument_numbers_sorted, all_chords, all_chords_timestamps, midicaps_other); folder: korigamik/lakh-midicaps-dedup holds no .mid files"
+      },
+      "t": 83.429
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Trying ayousanz/midi-classical-music-toio-json.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "ayousanz/midi-classical-music-toio-json",
+        "source": "ayousanz/midi-classical-music-toio-json",
+        "kind": "hub",
+        "downloads": 256,
+        "found_by": "hub",
+        "licence": "mit",
+        "url": "https://huggingface.co/datasets/ayousanz/midi-classical-music-toio-json"
+      },
+      "t": 83.429
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of ayousanz/midi-classical-music-toio-json.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "ayousanz/midi-classical-music-toio-json",
+        "source": "ayousanz/midi-classical-music-toio-json",
+        "kind": "hub"
+      },
+      "t": 83.429
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "ayousanz/midi-classical-music-toio-json does not fit: ayousanz/midi-classical-music-toio-json has no input column for music: wanted a column named like with fitting values (columns: track_name, priority, notes)",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "ayousanz/midi-classical-music-toio-json",
+        "source": "ayousanz/midi-classical-music-toio-json",
+        "kind": "hub",
+        "reason": "ayousanz/midi-classical-music-toio-json has no input column for music: wanted a column named like  with fitting values (columns: track_name, priority, notes)"
+      },
+      "t": 85.226
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of ayousanz/midi-classical-music-toio-json.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "ayousanz/midi-classical-music-toio-json",
+        "source": "ayousanz/midi-classical-music-toio-json",
+        "kind": "folder"
+      },
+      "t": 85.226
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "ayousanz/midi-classical-music-toio-json does not fit: none of ayousanz/midi-classical-music-toio-json's 4,796 .mid files sits in a folder that can name a label (they sit in the top folder or in split or generic folders only)",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "ayousanz/midi-classical-music-toio-json",
+        "source": "ayousanz/midi-classical-music-toio-json",
+        "kind": "folder",
+        "reason": "none of ayousanz/midi-classical-music-toio-json's 4,796 .mid files sits in a folder that can name a label (they sit in the top folder or in split or generic folders only)"
+      },
+      "t": 88.33
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "Could not use ayousanz/midi-classical-music-toio-json: inspect: ayousanz/midi-classical-music-toio-json has no input column for music: wanted a column named like with fitting values (columns: track_name, priority, notes); folder: none of ayousanz/midi-classical-music-toio-json's 4,796 .mid files sits in a folder that can name a label (they sit in the...",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "ayousanz/midi-classical-music-toio-json",
+        "source": "ayousanz/midi-classical-music-toio-json",
+        "kind": "folder",
+        "reason": "inspect: ayousanz/midi-classical-music-toio-json has no input column for music: wanted a column named like  with fitting values (columns: track_name, priority, notes); folder: none of ayousanz/midi-classical-music-toio-json's 4,796 .mid files sits in a folder that can name a label (they sit in the top folder or in split or generic folders only)"
+      },
+      "t": 88.33
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Trying breadlicker45/midi-gpt-music-small.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "breadlicker45/midi-gpt-music-small",
+        "source": "breadlicker45/midi-gpt-music-small",
+        "kind": "hub",
+        "downloads": 39,
+        "found_by": "hub",
+        "licence": "other",
+        "url": "https://huggingface.co/datasets/breadlicker45/midi-gpt-music-small"
+      },
+      "t": 88.331
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of breadlicker45/midi-gpt-music-small.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "breadlicker45/midi-gpt-music-small",
+        "source": "breadlicker45/midi-gpt-music-small",
+        "kind": "hub"
+      },
+      "t": 88.331
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "breadlicker45/midi-gpt-music-small does not fit: breadlicker45/midi-gpt-music-small has no input column for music: wanted a column named like with fitting values (columns: text)",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "breadlicker45/midi-gpt-music-small",
+        "source": "breadlicker45/midi-gpt-music-small",
+        "kind": "hub",
+        "reason": "breadlicker45/midi-gpt-music-small has no input column for music: wanted a column named like  with fitting values (columns: text)"
+      },
+      "t": 90.208
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of breadlicker45/midi-gpt-music-small.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "breadlicker45/midi-gpt-music-small",
+        "source": "breadlicker45/midi-gpt-music-small",
+        "kind": "folder"
+      },
+      "t": 90.208
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "breadlicker45/midi-gpt-music-small does not fit: breadlicker45/midi-gpt-music-small holds no .mid files",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "breadlicker45/midi-gpt-music-small",
+        "source": "breadlicker45/midi-gpt-music-small",
+        "kind": "folder",
+        "reason": "breadlicker45/midi-gpt-music-small holds no .mid files"
+      },
+      "t": 90.401
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "Could not use breadlicker45/midi-gpt-music-small: inspect: breadlicker45/midi-gpt-music-small has no input column for music: wanted a column named like with fitting values (columns: text); folder: breadlicker45/midi-gpt-music-small holds no .mid files",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "breadlicker45/midi-gpt-music-small",
+        "source": "breadlicker45/midi-gpt-music-small",
+        "kind": "folder",
+        "reason": "inspect: breadlicker45/midi-gpt-music-small has no input column for music: wanted a column named like  with fitting values (columns: text); folder: breadlicker45/midi-gpt-music-small holds no .mid files"
+      },
+      "t": 90.401
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Trying storylinez/gtzan-music-genre-dataset.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "storylinez/gtzan-music-genre-dataset",
+        "source": "storylinez/gtzan-music-genre-dataset",
+        "kind": "hub",
+        "downloads": 1016,
+        "found_by": "both",
+        "licence": "mit",
+        "url": "https://huggingface.co/datasets/storylinez/gtzan-music-genre-dataset"
+      },
+      "t": 90.401
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of storylinez/gtzan-music-genre-dataset.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "storylinez/gtzan-music-genre-dataset",
+        "source": "storylinez/gtzan-music-genre-dataset",
+        "kind": "hub"
+      },
+      "t": 90.401
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "storylinez/gtzan-music-genre-dataset does not fit: storylinez/gtzan-music-genre-dataset has no input column for music: wanted a column named like with fitting values (columns: audio, genre)",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "storylinez/gtzan-music-genre-dataset",
+        "source": "storylinez/gtzan-music-genre-dataset",
+        "kind": "hub",
+        "reason": "storylinez/gtzan-music-genre-dataset has no input column for music: wanted a column named like  with fitting values (columns: audio, genre)"
+      },
+      "t": 92.154
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of storylinez/gtzan-music-genre-dataset.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "storylinez/gtzan-music-genre-dataset",
+        "source": "storylinez/gtzan-music-genre-dataset",
+        "kind": "folder"
+      },
+      "t": 92.154
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "storylinez/gtzan-music-genre-dataset does not fit: storylinez/gtzan-music-genre-dataset holds no .mid files",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "storylinez/gtzan-music-genre-dataset",
+        "source": "storylinez/gtzan-music-genre-dataset",
+        "kind": "folder",
+        "reason": "storylinez/gtzan-music-genre-dataset holds no .mid files"
+      },
+      "t": 92.383
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "Could not use storylinez/gtzan-music-genre-dataset: inspect: storylinez/gtzan-music-genre-dataset has no input column for music: wanted a column named like with fitting values (columns: audio, genre); folder: storylinez/gtzan-music-genre-dataset holds no .mid files",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "storylinez/gtzan-music-genre-dataset",
+        "source": "storylinez/gtzan-music-genre-dataset",
+        "kind": "folder",
+        "reason": "inspect: storylinez/gtzan-music-genre-dataset has no input column for music: wanted a column named like  with fitting values (columns: audio, genre); folder: storylinez/gtzan-music-genre-dataset holds no .mid files"
+      },
+      "t": 92.383
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Trying ccmusic-database/music_genre.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "ccmusic-database/music_genre",
+        "source": "ccmusic-database/music_genre",
+        "kind": "hub",
+        "downloads": 423,
+        "found_by": "both",
+        "licence": "cc-by-nc-nd-4.0",
+        "url": "https://huggingface.co/datasets/ccmusic-database/music_genre"
+      },
+      "t": 92.383
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of ccmusic-database/music_genre.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "ccmusic-database/music_genre",
+        "source": "ccmusic-database/music_genre",
+        "kind": "hub"
+      },
+      "t": 92.383
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "ccmusic-database/music_genre does not fit: ccmusic-database/music_genre has no input column for music: wanted a column named like with fitting values (columns: mel, cqt, chroma, fst_level_label, sec_level_label, thr_level_label)",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "ccmusic-database/music_genre",
+        "source": "ccmusic-database/music_genre",
+        "kind": "hub",
+        "reason": "ccmusic-database/music_genre has no input column for music: wanted a column named like  with fitting values (columns: mel, cqt, chroma, fst_level_label, sec_level_label, thr_level_label)"
+      },
+      "t": 94.171
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of ccmusic-database/music_genre.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "ccmusic-database/music_genre",
+        "source": "ccmusic-database/music_genre",
+        "kind": "folder"
+      },
+      "t": 94.171
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "ccmusic-database/music_genre does not fit: ccmusic-database/music_genre holds no .mid files",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "ccmusic-database/music_genre",
+        "source": "ccmusic-database/music_genre",
+        "kind": "folder",
+        "reason": "ccmusic-database/music_genre holds no .mid files"
+      },
+      "t": 94.361
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "Could not use ccmusic-database/music_genre: inspect: ccmusic-database/music_genre has no input column for music: wanted a column named like with fitting values (columns: mel, cqt, chroma, fst_level_label, sec_level_label, thr_level_label); folder: ccmusic-database/music_genre holds no .mid files",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "ccmusic-database/music_genre",
+        "source": "ccmusic-database/music_genre",
+        "kind": "folder",
+        "reason": "inspect: ccmusic-database/music_genre has no input column for music: wanted a column named like  with fitting values (columns: mel, cqt, chroma, fst_level_label, sec_level_label, thr_level_label); folder: ccmusic-database/music_genre holds no .mid files"
+      },
+      "t": 94.361
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Trying rpmon/fma-genre-classification.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "rpmon/fma-genre-classification",
+        "source": "rpmon/fma-genre-classification",
+        "kind": "hub",
+        "downloads": 212,
+        "found_by": "both",
+        "licence": null,
+        "url": "https://huggingface.co/datasets/rpmon/fma-genre-classification"
+      },
+      "t": 94.362
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of rpmon/fma-genre-classification.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "rpmon/fma-genre-classification",
+        "source": "rpmon/fma-genre-classification",
+        "kind": "hub"
+      },
+      "t": 94.362
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "rpmon/fma-genre-classification does not fit: rpmon/fma-genre-classification has no input column for music: wanted a column named like with fitting values (columns: audio, genre, track_id, title, artist)",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "rpmon/fma-genre-classification",
+        "source": "rpmon/fma-genre-classification",
+        "kind": "hub",
+        "reason": "rpmon/fma-genre-classification has no input column for music: wanted a column named like  with fitting values (columns: audio, genre, track_id, title, artist)"
+      },
+      "t": 96.166
+    },
+    {
+      "step": "data",
+      "status": "start",
+      "message": "Reading the columns of rpmon/fma-genre-classification.",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "rpmon/fma-genre-classification",
+        "source": "rpmon/fma-genre-classification",
+        "kind": "folder"
+      },
+      "t": 96.166
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "rpmon/fma-genre-classification does not fit: rpmon/fma-genre-classification holds no .mid files",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "inspect",
+        "hub_id": "rpmon/fma-genre-classification",
+        "source": "rpmon/fma-genre-classification",
+        "kind": "folder",
+        "reason": "rpmon/fma-genre-classification holds no .mid files"
+      },
+      "t": 96.368
+    },
+    {
+      "step": "data",
+      "status": "fail",
+      "message": "Could not use rpmon/fma-genre-classification: inspect: rpmon/fma-genre-classification has no input column for music: wanted a column named like with fitting values (columns: audio, genre, track_id, title, artist); folder: rpmon/fma-genre-classification holds no .mid files",
+      "data": {
+        "purpose": "probes",
+        "provenance": "dataset",
+        "action": "candidate",
+        "hub_id": "rpmon/fma-genre-classification",
+        "source": "rpmon/fma-genre-classification",
+        "kind": "folder",
+        "reason": "inspect: rpmon/fma-genre-classification has no input column for music: wanted a column named like  with fitting values (columns: audio, genre, track_id, title, artist); folder: rpmon/fma-genre-classification holds no .mid files"
+      },
+      "t": 96.369
+    },
+    {
+      "step": "data",
+      "status": "info",
+      "message": "No probe files: the search for labelled midi files found none (no candidate dataset gave usable probes: projectlosangeles/lakh-clean-midi-genres (inspect: projectlosangeles/lakh-clean-midi-genres has no input column for music: wanted a column named like with fitting values (columns: primary_genre, nuanced_genre, midi_name); folder: projectlosangeles/lakh-cle...). Genre labels require externally annotated musical examples rather than labels inferred from a construction script.",
+      "data": {
+        "probe_plan": "dataset",
+        "probe_reason": "Genre labels require externally annotated musical examples rather than labels inferred from a construction script.",
+        "wanted": {
+          "labels": [
+            "classical",
+            "jazz",
+            "rock",
+            "pop",
+            "folk",
+            "electronic"
+          ],
+          "label_hint": "Music genre categories.",
+          "format": "midi",
+          "min_per_label": 5,
+          "question": "What genre best describes this music?"
+        },
+        "web_reason": "no candidate dataset gave usable probes: projectlosangeles/lakh-clean-midi-genres (inspect: projectlosangeles/lakh-clean-midi-genres has no input column for music: wanted a column named like  with fitting values (columns: primary_genre, nuanced_genre, midi_name); folder: projectlosangeles/lakh-clean-midi-genres holds no .mid files); TiMauzi/imslp-midi-cc0-1.0 (inspect: TiMauzi/imslp-midi-cc0-1.0 has no input column for music: wanted a column named like  with fitting values (columns: midi_source, metadata_source, file_name, title, composer, year, era, style, key, license, midi, midi_mido); folder: TiMauzi/imslp-midi-cc0-1.0 holds no .mid files); TiMauzi/imslp-midi-by-sa (inspect: TiMauzi/imslp-midi-by-sa has no input column for music: wanted a column named like  with fitting values (columns: midi_source, metadata_source, file_name, title, composer, year, era, style, key, license, midi, midi_mido); folder: TiMauzi/imslp-midi-by-sa holds no .mid files); ygonet/midi-classical-music (inspect: ygonet/midi-classical-music has no input column for music: wanted a column named like  with fitting values (columns: file_name); folder: none of ygonet/midi-classical-music's 4,796 .mid files sits in a folder that can name a label (they sit in the top folder or in split or generic folders only)); drengskapur/midi-classical-music (inspect: drengskapur/midi-classical-music has no input column for music: wanted a column named like  with fitting values (columns: file_name); folder: none of drengskapur/midi-classical-music's 4,796 .mid files sits in a folder that can name a label (they sit in the top folder or in split or generic folders only)); elizawhitfield/midi-classical-music (inspect: elizawhitfield/midi-classical-music has no input column for music: wanted a column named like  with fitting values (columns: file_name); folder: none of elizawhitfield/midi-classical-music's 4,796 .mid files sits in a folder that can name a label (they sit in the top folder or in split or generic folders only)); korigamik/lakh-midicaps-dedup (inspect: korigamik/lakh-midicaps-dedup has no input column for music: wanted a column named like  with fitting values (columns: id, location, midi, selected, caption, genre, genre_prob, mood, mood_prob, key, time_signature, tempo, tempo_word, duration, duration_word, chord_summary, chord_summary_occurence, instrument_summary, instrument_numbers_sorted, all_chords, all_chords_timestamps, midicaps_other); folder: korigamik/lakh-midicaps-dedup holds no .mid files); ayousanz/midi-classical-music-toio-json (inspect: ayousanz/midi-classical-music-toio-json has no input column for music: wanted a column named like  with fitting values (columns: track_name, priority, notes); folder: none of ayousanz/midi-classical-music-toio-json's 4,796 .mid files sits in a folder that can name a label (they sit in the top folder or in split or generic folders only)); breadlicker45/midi-gpt-music-small (inspect: breadlicker45/midi-gpt-music-small has no input column for music: wanted a column named like  with fitting values (columns: text); folder: breadlicker45/midi-gpt-music-small holds no .mid files); storylinez/gtzan-music-genre-dataset (inspect: storylinez/gtzan-music-genre-dataset has no input column for music: wanted a column named like  with fitting values (columns: audio, genre); folder: storylinez/gtzan-music-genre-dataset holds no .mid files); ccmusic-database/music_genre (inspect: ccmusic-database/music_genre has no input column for music: wanted a column named like  with fitting values (columns: mel, cqt, chroma, fst_level_label, sec_level_label, thr_level_label); folder: ccmusic-database/music_genre holds no .mid files); rpmon/fma-genre-classification (inspect: rpmon/fma-genre-classification has no input column for music: wanted a column named like  with fitting values (columns: audio, genre, track_id, title, artist); folder: rpmon/fma-genre-classification holds no .mid files) (earlier: not the user's format: Gapagapi1/ABC-Lakh-MIDI-Dataset: 118 of its files are not of the user's file format (they do not start with the same 4 bytes), which leaves too few)"
+      },
+      "t": 96.369
+    },
+    {
+      "step": "done",
+      "status": "ok",
+      "message": "I found no labelled examples on the web. To verify a music adapter I need labelled examples: a folder with one sub-folder per label, named after it (Music genre categories. (for example classical, jazz, rock, pop)), each holding at least 5 midi files, for the question \"What genre best describes this music?\". Run again with that folder as the examples.",
+      "data": {
+        "installed": null,
+        "needs_user": true,
+        "wanted": {
+          "labels": [
+            "classical",
+            "jazz",
+            "rock",
+            "pop",
+            "folk",
+            "electronic"
+          ],
+          "label_hint": "Music genre categories.",
+          "format": "midi",
+          "min_per_label": 5,
+          "question": "What genre best describes this music?"
+        },
+        "probe_plan": "dataset",
+        "web_reason": "no candidate dataset gave usable probes: projectlosangeles/lakh-clean-midi-genres (inspect: projectlosangeles/lakh-clean-midi-genres has no input column for music: wanted a column named like  with fitting values (columns: primary_genre, nuanced_genre, midi_name); folder: projectlosangeles/lakh-clean-midi-genres holds no .mid files); TiMauzi/imslp-midi-cc0-1.0 (inspect: TiMauzi/imslp-midi-cc0-1.0 has no input column for music: wanted a column named like  with fitting values (columns: midi_source, metadata_source, file_name, title, composer, year, era, style, key, license, midi, midi_mido); folder: TiMauzi/imslp-midi-cc0-1.0 holds no .mid files); TiMauzi/imslp-midi-by-sa (inspect: TiMauzi/imslp-midi-by-sa has no input column for music: wanted a column named like  with fitting values (columns: midi_source, metadata_source, file_name, title, composer, year, era, style, key, license, midi, midi_mido); folder: TiMauzi/imslp-midi-by-sa holds no .mid files); ygonet/midi-classical-music (inspect: ygonet/midi-classical-music has no input column for music: wanted a column named like  with fitting values (columns: file_name); folder: none of ygonet/midi-classical-music's 4,796 .mid files sits in a folder that can name a label (they sit in the top folder or in split or generic folders only)); drengskapur/midi-classical-music (inspect: drengskapur/midi-classical-music has no input column for music: wanted a column named like  with fitting values (columns: file_name); folder: none of drengskapur/midi-classical-music's 4,796 .mid files sits in a folder that can name a label (they sit in the top folder or in split or generic folders only)); elizawhitfield/midi-classical-music (inspect: elizawhitfield/midi-classical-music has no input column for music: wanted a column named like  with fitting values (columns: file_name); folder: none of elizawhitfield/midi-classical-music's 4,796 .mid files sits in a folder that can name a label (they sit in the top folder or in split or generic folders only)); korigamik/lakh-midicaps-dedup (inspect: korigamik/lakh-midicaps-dedup has no input column for music: wanted a column named like  with fitting values (columns: id, location, midi, selected, caption, genre, genre_prob, mood, mood_prob, key, time_signature, tempo, tempo_word, duration, duration_word, chord_summary, chord_summary_occurence, instrument_summary, instrument_numbers_sorted, all_chords, all_chords_timestamps, midicaps_other); folder: korigamik/lakh-midicaps-dedup holds no .mid files); ayousanz/midi-classical-music-toio-json (inspect: ayousanz/midi-classical-music-toio-json has no input column for music: wanted a column named like  with fitting values (columns: track_name, priority, notes); folder: none of ayousanz/midi-classical-music-toio-json's 4,796 .mid files sits in a folder that can name a label (they sit in the top folder or in split or generic folders only)); breadlicker45/midi-gpt-music-small (inspect: breadlicker45/midi-gpt-music-small has no input column for music: wanted a column named like  with fitting values (columns: text); folder: breadlicker45/midi-gpt-music-small holds no .mid files); storylinez/gtzan-music-genre-dataset (inspect: storylinez/gtzan-music-genre-dataset has no input column for music: wanted a column named like  with fitting values (columns: audio, genre); folder: storylinez/gtzan-music-genre-dataset holds no .mid files); ccmusic-database/music_genre (inspect: ccmusic-database/music_genre has no input column for music: wanted a column named like  with fitting values (columns: mel, cqt, chroma, fst_level_label, sec_level_label, thr_level_label); folder: ccmusic-database/music_genre holds no .mid files); rpmon/fma-genre-classification (inspect: rpmon/fma-genre-classification has no input column for music: wanted a column named like  with fitting values (columns: audio, genre, track_id, title, artist); folder: rpmon/fma-genre-classification holds no .mid files) (earlier: not the user's format: Gapagapi1/ABC-Lakh-MIDI-Dataset: 118 of its files are not of the user's file format (they do not start with the same 4 bytes), which leaves too few)"
+      },
+      "t": 96.369
+    }
+  ],
+  "cards": [],
+  "installed": null,
+  "error": null,
+  "seconds": 96.369,
+  "format": 1
+}
