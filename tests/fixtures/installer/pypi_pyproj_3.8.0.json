@@ -1,0 +1,62 @@
+{
+ "info": {
+  "classifiers": [],
+  "home_page": "https://github.com/pyproj4/pyproj",
+  "license": null,
+  "license_expression": "MIT",
+  "project_urls": {
+   "Homepage": "https://github.com/pyproj4/pyproj",
+   "changelog": "https://pyproj4.github.io/pyproj/stable/history.html",
+   "documentation": "https://pyproj4.github.io/pyproj/",
+   "homepage": "https://pyproj4.github.io/pyproj/",
+   "repository": "https://github.com/pyproj4/pyproj"
+  },
+  "summary": "Python interface to PROJ (cartographic projections and coordinate transformations library)",
+  "version": "3.8.0",
+  "yanked": false,
+  "yanked_reason": null
+ },
+ "urls": [
+  {
+   "digests": {
+    "sha256": "8606ccbc110ce2e8cbe4c9ba6c3f24cd73f603795ac0fce1ceb8fc27a9bb786e"
+   },
+   "filename": "pyproj-3.8.0-cp312-cp312-macosx_14_0_arm64.whl",
+   "packagetype": "bdist_wheel",
+   "upload_time_iso_8601": "2026-09-05T20:03:10.928904Z",
+   "url": "https://files.pythonhosted.org/packages/bb/c0/e2cdf9555f4feb6a17717de08527b0358ecccca7892ac78b17f5a04903cb/pyproj-3.8.0-cp312-cp312-macosx_14_0_arm64.whl",
+   "yanked": false
+  },
+  {
+   "digests": {
+    "sha256": "6b34cec6bdd66b721980c003cc2a0fce0cab7949444ad037fc2a7ecb6f3b996c"
+   },
+   "filename": "pyproj-3.8.0-cp312-cp312-manylinux_2_28_x86_64.whl",
+   "packagetype": "bdist_wheel",
+   "upload_time_iso_8601": "2026-09-05T20:03:17.430987Z",
+   "url": "https://files.pythonhosted.org/packages/5f/ed/035354de8fbc1c1350f5b7f66361995f187d89675622eb63016bf7261dd5/pyproj-3.8.0-cp312-cp312-manylinux_2_28_x86_64.whl",
+   "yanked": false
+  },
+  {
+   "digests": {
+    "sha256": "0556ce011e1530aea2084a12e39dc9c6ccd25a16c1db5457f39bf83161e7c301"
+   },
+   "filename": "pyproj-3.8.0-cp312-cp312-win_amd64.whl",
+   "packagetype": "bdist_wheel",
+   "upload_time_iso_8601": "2026-09-05T20:03:26.863551Z",
+   "url": "https://files.pythonhosted.org/packages/b7/d7/2c861a429581577a441e03020d27274812d7969748f5951d972f6e34597f/pyproj-3.8.0-cp312-cp312-win_amd64.whl",
+   "yanked": false
+  },
+  {
+   "digests": {
+    "sha256": "efa59725bba68bf97fa808b61302df32934acdceb6a5c92a8dd0e71dc266a876"
+   },
+   "filename": "pyproj-3.8.0.tar.gz",
+   "packagetype": "sdist",
+   "upload_time_iso_8601": "2026-09-05T20:05:09.353229Z",
+   "url": "https://files.pythonhosted.org/packages/c8/29/6598570c90cbfc84ddefc3ccac4aa412bf51a527d72c74cc4fe64a5e6f24/pyproj-3.8.0.tar.gz",
+   "yanked": false
+  }
+ ],
+ "vulnerabilities": []
+}
