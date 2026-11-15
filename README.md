@@ -36,7 +36,7 @@ Every number below comes from a recorded run in [`socket_pilot/artifacts/`](sock
 | coordinates, "which country" | Claude Sonnet 5.5 | world cities, found by the agent | 100.0% | raw coordinates 98% | refused: the model already reads coordinates |
 | MIDI, "what genre" (blind test) | Claude Sonnet 5.5 | 60 piano MIDI files we supplied | 32.0% [20.8, 45.8] | no input 20% | refused: below the 35% bar |
 
-The 3D goal was repeated once, with a different mesh (a chair) and an empty sense folder, and installed again at 100.0% (swapped input 8%, raw file 34%, unseen categories 70%). The ESC-50 run turned down its best-scoring bridge because that score did not hold on sounds the bridge had never been fitted on. In the blind test, MIDI appears nowhere in the code. The agent wrote a working `mido` adapter on its first attempt. The only MIDI genre set its Hub search returned was one it could not read, so it asked for examples. With our examples it measured a weak adapter and refused it.
+The 3D, video and molecule goals were each run a second time from an empty sense folder, and all three installed again: 3D at 100.0% (on a different mesh, a chair), video at 86.0% [73.8, 93.1] (78.0% the first time), and molecule at 58.0%, again 12 points over the raw file's 46.0%. The reruns found the same datasets, so they repeat the adapter and the model's answers, not the data. The ESC-50 run turned down its best-scoring bridge because that score did not hold on sounds the bridge had never been fitted on. In the blind test, MIDI appears nowhere in the code. The agent wrote a working `mido` adapter on its first attempt. The only MIDI genre set its Hub search returned was one it could not read, so it asked for examples. With our examples it measured a weak adapter and refused it.
 
 ## Try it
 
@@ -58,7 +58,7 @@ Install requests are asked on the terminal, and No is the default.
 
 ## Limits
 
-- **Single runs.** Adapters are rewritten on every run, so a number can move: the molecule adapter cleared the raw-file bar in one run and missed it by 2 points in another.
+- **Few runs.** Adapters are rewritten on every run, so a number can move. The 3D, video and molecule goals have two recorded runs each, both installed; an earlier, unrecorded molecule run missed the raw-file bar by 2 points. The other rows are single runs.
 - **A pass is not understanding.** It shows that the model answers better with the adapter than without it, on that data.
 - **Small samples for API models.** They are scored on 50 questions, so intervals span about 12 points either way.
 - **The specialist is often enough.** On ESC-50, CLAP alone scores 99.0%. On GTZAN, nearest-example lookup scores 84.5% against the bridge's 79.5%.
