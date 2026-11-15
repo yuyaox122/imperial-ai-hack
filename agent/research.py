@@ -20,7 +20,9 @@ port or downgrades https to http.
 "licence" is the Hub's cardData.license, else its "license:<id>" tag, else None.
 
 Cache: each successful live JSON answer is saved as <SENSE_HOME>/research/<sha256(method, url, body)[:16]>.json
-(never the key or any header). On a network or HTTP error, or with no Linkup key, the cached answer is served
+(never the key or any header), except the dataset viewer's: its rows carry signed audio URLs that expire, so a
+viewer answer is neither saved nor served from the cache, and an unreachable viewer raises ResearchUnavailable.
+On a network or HTTP error, or with no Linkup key, the cached answer is served
 with origin "cache"; with none, ResearchUnavailable names the cause. A Hub 404 gives None without reading the cache. Access denial (including 401), outages and malformed
 records remain unavailable, since they cannot establish that a repository is missing.
 Downloads are not cached: download writes beside dest under a temporary name and renames on success, so a
@@ -233,7 +235,8 @@ def viewer(endpoint: str, *, timeout: float = 25.0, **params) -> dict:
     url = f"{VIEWER_URL}/{endpoint}"
     if params:
         url += "?" + urllib.parse.urlencode(params)
-    answer, _ = _fetch_json("GET", url, timeout=timeout)
+    # Not cached: rows hold signed, expiring audio URLs that must be used at once and never stored.
+    answer, _ = _fetch_json("GET", url, timeout=timeout, cache=False)
     if not isinstance(answer, dict):
         raise ResearchUnavailable(f"the dataset viewer's {endpoint} answer is not a JSON object")
     return answer
@@ -349,24 +352,32 @@ def _fetch_json(
     timeout: float,
     absent: tuple[int, ...] = (),
     check: Callable[[object], str | None] | None = None,
+    cache: bool = True,
 ) -> tuple[object, str]:
     """(parsed answer, "live") and the answer cached; on failure (cached answer, "cache") or ResearchUnavailable.
     An HTTP status in `absent` is a definite "not there": (None, "live"), and the cache is not read.
-    `check` returns why a live answer is unusable; such an answer raises ResearchUnavailable and is not cached."""
+    `check` returns why a live answer is unusable; such an answer raises ResearchUnavailable and is not cached.
+    With cache=False the answer is never saved and a failure never reads the cache: it raises ResearchUnavailable."""
+    fallback = _cached_or_raise if cache else _raise_uncached
     try:
         answer = json.loads(_http(method, url, body=body, headers=headers, timeout=timeout))
     except urllib.error.HTTPError as exc:
         if exc.code in absent:
             return None, "live"
-        return _cached_or_raise(method, url, body, f"{_host(url)} answered {_describe(exc, url)}", exc)
+        return fallback(method, url, body, f"{_host(url)} answered {_describe(exc, url)}", exc)
     except _NETWORK_ERRORS + (ValueError,) as exc:
         cause = _describe(exc, url)
-        return _cached_or_raise(method, url, body, f"{_host(url)} could not be reached: {cause}", exc)
+        return fallback(method, url, body, f"{_host(url)} could not be reached: {cause}", exc)
     problem = check(answer) if check else None
     if problem:
         raise ResearchUnavailable(problem)
-    _write_cache(method, url, body, answer)
+    if cache:
+        _write_cache(method, url, body, answer)
     return answer, "live"
+
+
+def _raise_uncached(method: str, url: str, body: dict | None, cause: str, exc: Exception | None = None):
+    raise ResearchUnavailable(cause) from exc
 
 
 def _cached_or_raise(

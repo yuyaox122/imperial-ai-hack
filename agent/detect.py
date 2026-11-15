@@ -5,7 +5,9 @@ Public surface (do not rename):
   detect(path) -> Detection  ValueError (naming the path) for a missing path, a directory or an empty file
 
 Magic bytes in the first 64 bytes decide the audio and image formats:
-  wav (RIFF....WAVE), flac (fLaC), ogg (OggS), png, jpeg, and mp3: an ID3v2.2-2.4 tag ("ID3" then version
+  wav (RIFF....WAVE, or RF64....WAVE for files over 4 GB), aiff (FORM....AIFF or FORM....AIFC), au (".snd" with
+  a big-endian encoding code 1-27 at byte 12, so text that starts ".snd" stays text),
+  flac (fLaC), ogg (OggS), png, jpeg, and mp3: an ID3v2.2-2.4 tag ("ID3" then version
   byte 2, 3 or 4) or an MPEG Layer III frame sync (FF, then a byte with the top three bits set, layer bits 01
   and a version that is not reserved: FF FB, FF FA, FF F3, FF F2, FF E3 and the like; not FF FE or AAC FF F1).
 Otherwise the first 4,096 bytes are read as text: UTF-16 when they start with a byte-order mark (FF FE or
@@ -35,7 +37,7 @@ _SIGNATURES = [  # (prefix, modality, format, name used in the detail sentence)
 @dataclass(frozen=True)
 class Detection:
     modality: str  # "audio" | "image" | "text" | "other"
-    format: str  # "wav" | "flac" | "ogg" | "mp3" | "png" | "jpeg" | "text" | "csv" | "fasta" | "unknown"
+    format: str  # "wav" | "aiff" | "au" | "flac" | "ogg" | "mp3" | "png" | "jpeg" | "text" | "csv" | "fasta" | "unknown"
     how: str  # "magic bytes" | "content"
     detail: str  # one sentence for the trace
 
@@ -57,8 +59,12 @@ def detect(path: Path) -> Detection:
 
 
 def _by_magic(path: Path, head: bytes) -> Detection | None:
-    if head[:4] == b"RIFF" and head[8:12] == b"WAVE":
+    if head[:4] in (b"RIFF", b"RF64") and head[8:12] == b"WAVE":
         return _magic(path, "audio", "wav", "a WAV")
+    if head[:4] == b"FORM" and head[8:12] in (b"AIFF", b"AIFC"):
+        return _magic(path, "audio", "aiff", "an AIFF")
+    if head[:4] == b".snd" and len(head) >= 16 and 1 <= int.from_bytes(head[12:16], "big") <= 27:
+        return _magic(path, "audio", "au", "a Sun AU")
     for prefix, modality, fmt, name in _SIGNATURES:
         if head.startswith(prefix):
             return _magic(path, modality, fmt, name)

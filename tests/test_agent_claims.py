@@ -89,6 +89,8 @@ def test_a_claim_without_a_value_says_nothing_about_the_source():
 def test_none_used_makes_every_claim_not_testable():
     c = claim(); settle_specialist_claims([c], None, [card(0.9)])
     assert c.status == "not_testable"
+    # No provenance is not the same as "never loaded": the research step may have loaded and used this model.
+    assert "not loaded" not in c.evidence and "do not record which Hub specialist" in c.evidence
 
 
 def test_dataset_claims_and_hub_refuted_claims_are_left_alone():

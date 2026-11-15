@@ -20,6 +20,15 @@ Trace contract for the interface (all times use the same monotonic start):
 on_request publishes the resolved FitRequest before fitting. A supplied folder is
 closed scope. Research and sample failures allow a goal-matching prewired fallback;
 invalid user folders fail visibly instead of silently using unrelated examples.
+A model that is not available (available_models() says why) raises ValueError
+before any research, download or embedding. A user folder whose name is taken
+by a built-in set or the caption bank ("gtzan", "esc50", "captions") is saved
+as "<name>-folder"; its title stays the folder name.
+Named categories (need.labels) are matched with agent.data.required_classes:
+a label naming the set's own kind ("music genres") asks for the set as a whole.
+Every chosen set, whatever its origin, must pass agent.data.set_problem
+(sense.datasets.fit_problem) for the run's scope before fitting: a fetched one
+that fails is a failed candidate, a prewired one is skipped, a user one raises.
 """
 from __future__ import annotations
 
@@ -70,6 +79,9 @@ def run_auto(model: str, file: Path, goal: str, emit: Callable[[TraceEvent], Non
         info = next((info for info in models.available_models() if info.name == model), None)
         if info is None:
             raise ValueError(f'Unknown model {model!r}; choose a model from available_models().')
+        if not info.available:
+            # Refused before research, downloads and embedding, which would all be wasted on a model that cannot load.
+            raise ValueError(f'{info.label} cannot be loaded. {info.note}'.strip())
         say('ok', detected.detail, file=file.name, goal=goal, **detected.to_dict())
         modality = detected.modality
         if modality in info.native:
@@ -101,10 +113,13 @@ def run_auto(model: str, file: Path, goal: str, emit: Callable[[TraceEvent], Non
             need = data.DataNeed('labelled', 'closed', [], 'The user supplied labelled categories to verify.')
             origin, source, licence = 'user', str(examples), 'user supplied'
             say('start', f'Building the labelled set from {examples}.', action='build', need=need.to_dict())
-            name = data.build_set(examples, data.safe_label(examples.name, 0), title=examples.name,
+            name = data.build_set(examples, _user_set_name(examples), title=examples.name,
                                   question=f'Which of these is in the {modality} clip?', modality=modality,
                                   source=source, licence=licence)
             entry = metadata(name)
+            problem = data.set_problem(name, need.scope)
+            if problem:
+                raise data.DataUnavailable(problem)
             labels, n_files = entry.get('labels', []), entry.get('n', 0)
         else:
             say('start', f'Deciding which labelled examples the goal needs: {goal}', action='need')
@@ -140,7 +155,10 @@ def run_auto(model: str, file: Path, goal: str, emit: Callable[[TraceEvent], Non
                                           question=f'Which of these is in the {modality} clip?', modality=modality,
                                           source=candidate.source_url, licence=report.licence or '')
                     entry = metadata(name)
-                    data.require_coverage(need.labels, entry['labels'])
+                    data.required_classes(need.labels, f'{candidate.title} {candidate.hub_id}', entry['labels'])
+                    problem = data.set_problem(name, need.scope)
+                    if problem:
+                        raise data.DataUnavailable(problem)
                 except (data.DataUnavailable, research.ResearchUnavailable) as exc:
                     name = None
                     for claim in matching:
@@ -164,11 +182,14 @@ def run_auto(model: str, file: Path, goal: str, emit: Callable[[TraceEvent], Non
                     claim.status, claim.evidence = 'not_testable', 'Not sampled: an earlier set succeeded or the two-candidate limit was reached.'
             if name is None:
                 say('start', 'Looking for a prewired set matching the goal.', action='fallback')
-                name = data.choose_prewired(goal, modality, requested_labels=need.labels)
+                name = data.choose_prewired(goal, modality, requested_labels=need.labels, scope=need.scope)
                 if name is not None:
                     try:
                         entry = metadata(name)
-                        data.require_coverage(need.labels, entry['labels'])
+                        data.required_classes(need.labels, f"{entry.get('title') or ''} {name}", entry['labels'])
+                        problem = data.set_problem(name, need.scope)
+                        if problem:
+                            raise data.DataUnavailable(problem)
                     except data.DataUnavailable as exc:
                         say('fail', str(exc), action='fallback', reason=str(exc))
                         name = None
@@ -227,3 +248,10 @@ def run_auto(model: str, file: Path, goal: str, emit: Callable[[TraceEvent], Non
             step = 'error'
             say('fail', f'The agent run stopped during the {failed} step. {detail}', step=failed, error=type(exc).__name__)
         raise
+
+
+def _user_set_name(folder: Path) -> str:
+    """The set name for a user's examples folder: its own name, unless a built-in set or the caption bank has it."""
+    name = data.safe_label(folder.name, 0)
+    reserved = set(getattr(datasets, '_SETS', ('gtzan', 'esc50'))) | set(getattr(datasets, '_RESERVED', ('captions',)))
+    return f'{name}_folder' if name.replace('_', '-') in reserved else name
