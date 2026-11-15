@@ -1,0 +1,432 @@
+{
+  "id": "3511a1a1c85f",
+  "origin": "cli",
+  "recorded": "2026-11-15T00:04:50+00:00",
+  "request": {
+    "model": "openai-chat",
+    "dataset": "esc50",
+    "modality": "audio",
+    "scope": "closed"
+  },
+  "status": "done",
+  "events": [
+    {
+      "step": "inspect",
+      "status": "start",
+      "message": "Loading the base model openai-chat and the labelled set esc50.",
+      "data": {},
+      "t": 0.0
+    },
+    {
+      "step": "inspect",
+      "status": "ok",
+      "message": "OpenAI chat (API) reads text and image natively, but not audio; it is not open-weight, so the vector bridge is unavailable. Environmental sounds (ESC-50): 50 labels, 1200 examples to fit on, 400 held out.",
+      "data": {
+        "model": {
+          "name": "openai-chat",
+          "label": "OpenAI chat (API)",
+          "native": [
+            "text",
+            "image"
+          ],
+          "open_weights": false,
+          "available": true,
+          "note": "Requires OPENAI_API_KEY; text bridges convey audio captions, and the tool bridge lets it call CLAP.",
+          "tools": true
+        },
+        "dataset": {
+          "name": "esc50",
+          "title": "Environmental sounds (ESC-50)",
+          "labels": [
+            "dog",
+            "rooster",
+            "pig",
+            "cow",
+            "frog",
+            "cat",
+            "hen",
+            "insects",
+            "sheep",
+            "crow",
+            "rain",
+            "sea waves",
+            "crackling fire",
+            "crickets",
+            "chirping birds",
+            "water drops",
+            "wind",
+            "pouring water",
+            "toilet flush",
+            "thunderstorm",
+            "crying baby",
+            "sneezing",
+            "clapping",
+            "breathing",
+            "coughing",
+            "footsteps",
+            "laughing",
+            "brushing teeth",
+            "snoring",
+            "drinking sipping",
+            "door wood knock",
+            "mouse click",
+            "keyboard typing",
+            "door wood creaks",
+            "can opening",
+            "washing machine",
+            "vacuum cleaner",
+            "clock alarm",
+            "clock tick",
+            "glass breaking",
+            "helicopter",
+            "chainsaw",
+            "siren",
+            "car horn",
+            "engine",
+            "train",
+            "church bells",
+            "airplane",
+            "fireworks",
+            "hand saw"
+          ],
+          "n_fit": 1200,
+          "n_dev": 400,
+          "n_test": 400
+        }
+      },
+      "t": 0.028
+    },
+    {
+      "step": "plan",
+      "status": "start",
+      "message": "Asking the llm planner which bridges to try for closed-scope audio.",
+      "data": {},
+      "t": 0.028
+    },
+    {
+      "step": "plan",
+      "status": "ok",
+      "message": "Bridges to try, in order: text, tool. The planner proposed text; tool added so every available bridge is verified.",
+      "data": {
+        "planner": "llm",
+        "kinds": [
+          "text",
+          "tool"
+        ],
+        "unavailable": [
+          {
+            "kind": "native",
+            "why": "OpenAI chat (API) does not read audio natively"
+          },
+          {
+            "kind": "image",
+            "why": "the image bridge, which would show the input as a picture such as a spectrogram, is not built yet"
+          },
+          {
+            "kind": "vector",
+            "why": "OpenAI chat (API) is not open-weight: an API exposes no hidden states to write into"
+          }
+        ]
+      },
+      "t": 1.619
+    },
+    {
+      "step": "fit",
+      "status": "start",
+      "message": "Building the text bridge, which names the closest of the 50 labels.",
+      "data": {
+        "kind": "text"
+      },
+      "t": 1.62
+    },
+    {
+      "step": "fit",
+      "status": "ok",
+      "message": "Built text:esc50 in 0.0 s.",
+      "data": {
+        "kind": "text",
+        "bridge": "text:esc50",
+        "seconds": 0.0,
+        "layer": null,
+        "dev_accuracy": null,
+        "specialist": {
+          "name": "laion/clap-htsat-unfused",
+          "label": "CLAP",
+          "modality": "audio",
+          "dim": 512,
+          "embed_seconds_per_file": null,
+          "loaded": false
+        }
+      },
+      "t": 1.62
+    },
+    {
+      "step": "fit",
+      "status": "start",
+      "message": "Building the tool bridge.",
+      "data": {
+        "kind": "tool"
+      },
+      "t": 1.62
+    },
+    {
+      "step": "fit",
+      "status": "ok",
+      "message": "Built tool:esc50 in 0.0 s.",
+      "data": {
+        "kind": "tool",
+        "bridge": "tool:esc50",
+        "seconds": 0.0,
+        "layer": null,
+        "dev_accuracy": null,
+        "specialist": {
+          "name": "laion/clap-htsat-unfused",
+          "label": "CLAP",
+          "modality": "audio",
+          "dim": 512,
+          "embed_seconds_per_file": null,
+          "loaded": false
+        }
+      },
+      "t": 1.62
+    },
+    {
+      "step": "verify",
+      "status": "start",
+      "message": "Scoring text:esc50 on held-out Environmental sounds (ESC-50) examples against controls.",
+      "data": {
+        "bridge": "text:esc50"
+      },
+      "t": 1.62
+    },
+    {
+      "step": "verify",
+      "status": "ok",
+      "message": "text:esc50 scored 92.0% on 50 held-out questions (chance 20.0%); controls: swapped input 16.0%, no input 18.0%, nearest-example lookup 100.0%, specialist alone 96.0%.",
+      "data": {
+        "card": {
+          "model": "openai-chat",
+          "modality": "audio",
+          "dataset": "esc50",
+          "scope": "closed",
+          "bridge": "text:esc50",
+          "kind": "text",
+          "n": 50,
+          "chance": 0.2,
+          "accuracy": 0.92,
+          "controls": {
+            "swapped": 0.16,
+            "no_input": 0.18,
+            "lookup": 1.0,
+            "specialist_alone": 0.96
+          },
+          "verdict": "candidate",
+          "reason": "",
+          "created": "2026-11-15T00:05:09+00:00",
+          "interval": [
+            0.8116,
+            0.9685
+          ]
+        },
+        "seconds": 17.43
+      },
+      "t": 19.045
+    },
+    {
+      "step": "verify",
+      "status": "start",
+      "message": "Scoring tool:esc50 on held-out Environmental sounds (ESC-50) examples against controls.",
+      "data": {
+        "bridge": "tool:esc50"
+      },
+      "t": 19.045
+    },
+    {
+      "step": "verify",
+      "status": "ok",
+      "message": "tool:esc50 scored 96.0% on 50 held-out questions (chance 20.0%); controls: swapped input 22.0%, no input 18.0%, nearest-example lookup 100.0%, specialist alone 96.0%.",
+      "data": {
+        "card": {
+          "model": "openai-chat",
+          "modality": "audio",
+          "dataset": "esc50",
+          "scope": "closed",
+          "bridge": "tool:esc50",
+          "kind": "tool",
+          "n": 50,
+          "chance": 0.2,
+          "accuracy": 0.96,
+          "controls": {
+            "swapped": 0.22,
+            "no_input": 0.18,
+            "lookup": 1.0,
+            "specialist_alone": 0.96
+          },
+          "verdict": "candidate",
+          "reason": "",
+          "created": "2026-11-15T00:05:09+00:00",
+          "interval": [
+            0.8654,
+            0.989
+          ]
+        },
+        "seconds": 0.02
+      },
+      "t": 19.065
+    },
+    {
+      "step": "decide",
+      "status": "start",
+      "message": "Asking the llm planner to choose among 2 verified candidates.",
+      "data": {},
+      "t": 19.065
+    },
+    {
+      "step": "decide",
+      "status": "ok",
+      "message": "Installed tool:esc50. tool:esc50 passed: it scored 96.0% against 20.0% chance, meets the 35.0% bar for a tool bridge.",
+      "data": {
+        "install": "tool:esc50",
+        "cards": [
+          {
+            "model": "openai-chat",
+            "modality": "audio",
+            "dataset": "esc50",
+            "scope": "closed",
+            "bridge": "text:esc50",
+            "kind": "text",
+            "n": 50,
+            "chance": 0.2,
+            "accuracy": 0.92,
+            "controls": {
+              "swapped": 0.16,
+              "no_input": 0.18,
+              "lookup": 1.0,
+              "specialist_alone": 0.96
+            },
+            "verdict": "rejected",
+            "reason": "text:esc50 passed: it scored 92.0% against 20.0% chance, meets the 35.0% bar for a text bridge. Swapped input scored 16.0%, requiring at least 26.0% accuracy. It was not installed because tool:esc50 was chosen instead.",
+            "created": "2026-11-15T00:05:09+00:00",
+            "interval": [
+              0.8116,
+              0.9685
+            ]
+          },
+          {
+            "model": "openai-chat",
+            "modality": "audio",
+            "dataset": "esc50",
+            "scope": "closed",
+            "bridge": "tool:esc50",
+            "kind": "tool",
+            "n": 50,
+            "chance": 0.2,
+            "accuracy": 0.96,
+            "controls": {
+              "swapped": 0.22,
+              "no_input": 0.18,
+              "lookup": 1.0,
+              "specialist_alone": 0.96
+            },
+            "verdict": "installed",
+            "reason": "Installed tool:esc50. tool:esc50 passed: it scored 96.0% against 20.0% chance, meets the 35.0% bar for a tool bridge.",
+            "created": "2026-11-15T00:05:09+00:00",
+            "interval": [
+              0.8654,
+              0.989
+            ]
+          }
+        ]
+      },
+      "t": 20.17
+    },
+    {
+      "step": "install",
+      "status": "start",
+      "message": "Installing tool:esc50 for OpenAI chat (API), replacing the earlier text:captions sense (90.0% on esc50, open scope).",
+      "data": {
+        "bridge": "tool:esc50",
+        "replaced": "text:captions"
+      },
+      "t": 20.173
+    },
+    {
+      "step": "install",
+      "status": "ok",
+      "message": "Installed tool:esc50; OpenAI chat (API) can now take audio input in chat.",
+      "data": {
+        "bridge": "tool:esc50",
+        "replaced": "text:captions"
+      },
+      "t": 20.175
+    },
+    {
+      "step": "done",
+      "status": "ok",
+      "message": "OpenAI chat (API) can now take audio input through tool:esc50: it scored 96.0% on 50 held-out questions, against 20.0% chance. It replaced the earlier text:captions sense (90.0% on esc50, open scope).",
+      "data": {
+        "installed": "tool:esc50",
+        "replaced": "text:captions"
+      },
+      "t": 20.175
+    }
+  ],
+  "cards": [
+    {
+      "model": "openai-chat",
+      "modality": "audio",
+      "dataset": "esc50",
+      "scope": "closed",
+      "bridge": "text:esc50",
+      "kind": "text",
+      "n": 50,
+      "chance": 0.2,
+      "accuracy": 0.92,
+      "controls": {
+        "swapped": 0.16,
+        "no_input": 0.18,
+        "lookup": 1.0,
+        "specialist_alone": 0.96
+      },
+      "verdict": "rejected",
+      "reason": "text:esc50 passed: it scored 92.0% against 20.0% chance, meets the 35.0% bar for a text bridge. Swapped input scored 16.0%, requiring at least 26.0% accuracy. It was not installed because tool:esc50 was chosen instead.",
+      "created": "2026-11-15T00:05:09+00:00",
+      "interval": [
+        0.8116,
+        0.9685
+      ]
+    },
+    {
+      "model": "openai-chat",
+      "modality": "audio",
+      "dataset": "esc50",
+      "scope": "closed",
+      "bridge": "tool:esc50",
+      "kind": "tool",
+      "n": 50,
+      "chance": 0.2,
+      "accuracy": 0.96,
+      "controls": {
+        "swapped": 0.22,
+        "no_input": 0.18,
+        "lookup": 1.0,
+        "specialist_alone": 0.96
+      },
+      "verdict": "installed",
+      "reason": "Installed tool:esc50. tool:esc50 passed: it scored 96.0% against 20.0% chance, meets the 35.0% bar for a tool bridge.",
+      "created": "2026-11-15T00:05:09+00:00",
+      "interval": [
+        0.8654,
+        0.989
+      ]
+    }
+  ],
+  "installed": "tool:esc50",
+  "error": null,
+  "seconds": 20.17,
+  "machine": {
+    "platform": "macOS-27.0-arm64-arm-64bit",
+    "python": "3.12.12",
+    "machine": "arm64"
+  }
+}
