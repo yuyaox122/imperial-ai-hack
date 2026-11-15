@@ -1472,24 +1472,9 @@ def _country_aliases() -> dict[str, set[str]]:
     countries by code and the other by name. A mistaken alias can only drop more labels, never let one through."""
     global _country_alias_cache
     if _country_alias_cache is None:
-        path = os.environ.get("SENSE_GAZETTEER") or os.path.expanduser(
-            "~/.cache/sense-harness/gazetteer/ne_10m_populated_places_simple.geojson")
-        groups: dict[str, set[str]] = {}
-        try:
-            with open(path, encoding="utf-8") as handle:
-                features = json.load(handle).get("features") or []
-        except (OSError, ValueError, AttributeError):
-            features = []
-        for feature in features:
-            props = (feature or {}).get("properties") or {}
-            code, name = str(props.get("iso_a2") or ""), str(props.get("adm0name") or "")
-            if len(code) != 2 or not code.isalpha() or not name:
-                continue
-            short = re.sub(r"\b(of america|the)\b", "", name, flags=re.IGNORECASE)
-            keys = {re.sub(r"[\W_]+", "", text.lower()) for text in (code, name, short)} - {""}
-            for key in keys:
-                groups.setdefault(key, set()).update(keys)
-        _country_alias_cache = groups
+        from sense.adapters import country_aliases  # the same table verify_files uses for its unseen control
+
+        _country_alias_cache = country_aliases()
     return _country_alias_cache
 
 
