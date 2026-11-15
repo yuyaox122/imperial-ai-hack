@@ -165,6 +165,26 @@ def test_an_image_input_becomes_an_image_block(claude, image, media_type):
     ]
 
 
+def test_a_large_image_is_scaled_under_the_api_limits(claude):
+    """Chat lets 20 MB images through; Claude takes at most 5 MB of base64 per image, so big ones are scaled."""
+    from io import BytesIO
+
+    from PIL import Image
+
+    noisy = Image.fromarray(np.random.default_rng(0).integers(0, 256, (2600, 2600, 3), dtype=np.uint8))
+    buf = BytesIO()
+    noisy.save(buf, format="PNG")
+    big = buf.getvalue()
+    assert len(big) > 5_000_000
+    claude.module.AnthropicChatModel().chat("What is this?", [SenseInput("image", "image", image=big)])
+    [message] = claude.create.call_args.kwargs["messages"]
+    sent = base64.b64decode(message["content"][0]["source"]["data"])
+    assert len(message["content"][0]["source"]["data"]) < 5_000_000
+    with Image.open(BytesIO(sent)) as img:
+        assert max(img.size) == claude.module.IMAGE_SIDE
+    assert message["content"][0]["source"]["media_type"] == ("image/jpeg" if sent[:3] == b"\xff\xd8\xff" else "image/png")
+
+
 def test_chat_keeps_a_reply_cut_at_the_limit_and_fails_on_a_refusal(claude):
     claude.create.return_value = reply("A dog is", stop="max_tokens")
     assert claude.module.AnthropicChatModel().chat("What sound?", []) == "A dog is"

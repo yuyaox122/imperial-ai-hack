@@ -89,13 +89,13 @@ class AnthropicChatModel(APIChatModel):
         images = [item.image for item in inputs if item.kind == "image" and item.image]
         if not images:
             return prompt
-        content = [
-            {
+        content = []
+        for image in images:
+            image = _fit_image(image)
+            content.append({
                 "type": "image",
                 "source": {"type": "base64", "media_type": _image_type(image), "data": base64.b64encode(image).decode("ascii")},
-            }
-            for image in images
-        ]
+            })
         return content + [{"type": "text", "text": prompt}]
 
     def _request(self, instruction: str, messages: list[dict], max_tokens: int, **extra) -> dict:
@@ -179,6 +179,36 @@ class AnthropicChatModel(APIChatModel):
             raise ValueError(_refused(final))
         if not texted or final.stop_reason not in ("end_turn", "max_tokens"):
             raise ValueError("The API model returned no complete answer")
+
+
+IMAGE_SIDE = 1568  # the longest side an image is sent at; larger images are scaled down first
+IMAGE_BYTES = 3_700_000  # raw bytes, so the base64 form stays under the API's 5 MB per image
+
+
+def _fit_image(image: bytes) -> bytes:
+    """An image the Messages API accepts: unchanged when it is small enough, else scaled so its longest side is
+    IMAGE_SIDE and re-encoded (PNG, or JPEG at quality 85 when the PNG is still over IMAGE_BYTES). Chat lets
+    images of up to 20 MB through (the OpenAI limit), and Claude takes at most 5 MB of base64 per image."""
+    from io import BytesIO
+
+    from PIL import Image, UnidentifiedImageError
+
+    try:
+        opened = Image.open(BytesIO(image))
+    except (UnidentifiedImageError, OSError):
+        return image  # not an image PIL reads: sent as it is, and the API says what is wrong with it
+    with opened as img:
+        if len(image) <= IMAGE_BYTES and max(img.size) <= IMAGE_SIDE:
+            return image
+        img = img.convert("RGB") if img.mode not in ("RGB", "RGBA", "L") else img.copy()
+        img.thumbnail((IMAGE_SIDE, IMAGE_SIDE))
+        out = BytesIO()
+        img.save(out, format="PNG", optimize=True)
+        if out.tell() <= IMAGE_BYTES:
+            return out.getvalue()
+        out = BytesIO()
+        img.convert("RGB").save(out, format="JPEG", quality=85)
+        return out.getvalue()
 
 
 def _usage(usage: object) -> tuple[int, int]:
