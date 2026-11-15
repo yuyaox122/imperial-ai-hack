@@ -235,6 +235,8 @@ def test_molecules(tmp_path):
         "a.inchi": (Chem.MolToInchi(vanillin) + "\n", "inchi"),
         "a.smi": ("COc1cc(C=O)ccc1O\n", "smiles"),
         "few.smi": ("CCO\nc1ccccc1\nCN(C)C\n", "smiles"),
+        "ethane.smi": ("CC\n", "smiles"),  # plain capitals, but two carbons
+        "named.smi": ("CCO ethanol\nc1ccccc1\tbenzene ring\nCN(C)C trimethylamine\n", "smiles"),  # .smi names
         "salt.smi": ("[Na+].[Cl-]\n", None),  # no organic-subset atom outside brackets
     }
     for name, (content, fmt) in cases.items():
@@ -250,6 +252,8 @@ def test_molecules(tmp_path):
 @pytest.mark.parametrize("content", [
     "Hello\n", "Thanks, see you soon.\n", "CCCCC1\n", "C(C\n", "OK\n", "NO WAY\n",
     "The molecule is CCO, also called ethanol.\n",
+    # words and acronyms spelled in organic-subset capitals, which rdkit also parses
+    "NO\n", "ISO\n", "FBI\n", "CNN\n", "BOSS\n", "ICON\n", "SOS\n", "IP\n", "COP\n", "NSF\nSNP\n", "CNN news\n",
 ])
 def test_words_and_prose_are_not_smiles(tmp_path, content):
     p = tmp_path / "note.txt"
@@ -272,7 +276,7 @@ def test_places(tmp_path):
         "spaces.txt": ("33.4484 -112.0740\n", "latlon"),
         "letters.txt": ("51.5072° N, 0.1276° W\n", "latlon"),
         "lon_first.txt": ("E 7.47 N 51.36\n", "latlon"),
-        "three.txt": ("51.36, 7.47\n27.25, 33.81\n-33.86; 151.21\n", "latlon"),
+        "three.txt": ("51.3608, 7.47\n27.2574, 33.8129\n-33.86; 151.209\n", "latlon"),
     }
     for name, (content, fmt) in cases.items():
         p = tmp_path / name
@@ -293,6 +297,11 @@ def test_places(tmp_path):
     ('{"type": "Point", "coordinates": [1, 2], "x": 1}\n', ("geo", "geojson")),
     ('{"name": "a", "b": 1, "c": 2}\n', ("other", "csv")),  # JSON that is not GeoJSON: as before
     ("<html><body>gpx files hold tracks</body></html>\n", ("text", "text")),
+    # number pairs without a hemisphere letter, a degree sign or GPS precision (3 decimals) are not places
+    ("1.5 2.5\n", ("text", "text")),
+    ("12.30 14.45\n", ("text", "text")),
+    ("0.25, 0.75\n0.5, 0.1\n", ("text", "text")),
+    ("21.5, 22.0\n22.25, 21.75\n21.0, 23.5\n", ("text", "text")),
 ])
 def test_what_is_not_a_place_stays_as_before(tmp_path, content, expected):
     p = tmp_path / "x.txt"
@@ -300,13 +309,19 @@ def test_what_is_not_a_place_stays_as_before(tmp_path, content, expected):
     assert (detect(p).modality, detect(p).format) == expected
 
 
-def test_a_two_column_numeric_csv_of_many_rows_is_csv(tmp_path):
+def test_a_two_column_numeric_csv_of_many_rows_is_text_as_before_and_not_places(tmp_path):
+    # One comma per line was text before agent.detect knew places, and chat gives text to the model as it is:
+    # such a table stays text (not csv, not latlon), even when its columns are latitudes and longitudes.
     p = tmp_path / "table.csv"
     p.write_text("lat,lon\n" + "".join(f"{10 + k * 0.01:.4f},{20 + k * 0.02:.4f}\n" for k in range(500)))
-    assert (detect(p).modality, detect(p).format) == ("other", "csv")
+    assert (detect(p).modality, detect(p).format) == ("text", "text")
     headerless = tmp_path / "values.csv"
     headerless.write_text("".join(f"{k}.5,{k * 2}.25\n" for k in range(20)))
-    assert (detect(headerless).modality, detect(headerless).format) == ("other", "csv")
+    assert (detect(headerless).modality, detect(headerless).format) == ("text", "text")
+    for content in ["x,y\n1,2\n3,4\n5,6\n", "1,000\n2,500\n3,000\n", "lat,lon\n51.5,-0.1\n48.8,2.3\n"]:
+        small = tmp_path / "small.csv"
+        small.write_text(content)
+        assert (detect(small).modality, detect(small).format) == ("text", "text"), content
 
 
 def test_prose_stays_text(tmp_path):

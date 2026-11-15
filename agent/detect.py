@@ -27,7 +27,8 @@ Magic bytes, in this order:
   mp41, mp42, avc1, "M4V ", M4VH, M4VP, "qt  ", mmp4, MSNV, "f4v ", 3gp*, 3g2*), or when the major brand is not
   a still-image brand (heic, mif1, avif and the like) and a compatible brand listed in the ftyp box is a video
   brand; mov for the QuickTime brand "qt  ", else mp4. An ftyp box naming "M4A ", "M4B " or "M4P " (audio and
-  audiobooks) is not video and stays what it was before video was known: other, unknown.
+  audiobooks) is not video and stays what it was before video was known: other, unknown. The tracks are not
+  parsed, so an audio-only file under a generic brand (an AAC .mp4 marked isom) reads as video.
   video, Matroska: the EBML magic 1A 45 DF A3 with DocType "webm" (webm) or "matroska" (mkv). An audio-only WebM or
   Matroska file reads as video too: the tracks are not parsed.
   video, AVI: RIFF....AVI .
@@ -63,15 +64,17 @@ Text is tested in this order:
     longitude (-180 to 180), separated by a comma, a semicolon or spaces, each optionally with a degree sign, and
     with N/S/E/W letters either after the numbers ("51.5° N, 0.1° W") or before both ("N 51.5 W 0.1"). A letter
     takes an unsigned number; S and W make it negative; E/W first means longitude first; without letters,
-    latitude comes first. Each line needs a decimal point, a letter or a degree sign, so "12 34" is not a place.
-  csv: at least 3 non-empty lines that all hold the same number (1 or more) of commas, with a number in every
-    field of every line after the first (a numeric table of one comma per line, which the first-line rule
-    misses).
-  smiles: 1 to 10 non-empty lines, the whole file, each one token of the SMILES alphabet (organic-subset atoms,
-    aromatic atoms, bracket atoms, bonds, branches and ring closures), of at least 2 characters, with at least one
-    organic-subset atom outside brackets, balanced parentheses and ring-closure digits in pairs; when rdkit can be
-    imported, the first line must parse as a molecule.
-  text: anything else.
+    latitude comes first. Each line needs a letter, a degree sign or a number with at least 3 decimal places
+    (GPS coordinates have 4 or more), so "12 34", "1.5 2.5" or times such as "12.30 14.45" are not places.
+    Degrees-minutes-seconds ("51°30'N") are not read.
+  smiles: 1 to 10 non-empty lines, the whole file, each a SMILES string, alone or followed by a name the way .smi
+    files have it (after a tab, or after spaces when the name is one word). A SMILES string is one token of the
+    SMILES alphabet (organic-subset atoms, aromatic atoms, bracket atoms, bonds, branches and ring closures), of
+    at least 2 characters, with at least one organic-subset atom outside brackets, balanced parentheses and
+    ring-closure digits in pairs; when rdkit can be imported, each must parse as a molecule. Plain
+    capitals also spell words ("NO", "ISO", "FBI", "CNN"), so unless some line holds an aromatic atom, a bond, a
+    branch, a ring closure or a bracket atom, every line needs at least two carbon atoms ("CC", "CCO").
+  text: anything else, including a numeric table of one comma per line (as before).
 """
 
 from __future__ import annotations
@@ -503,7 +506,7 @@ def _has_face_later(path: Path) -> bool:
 
 
 def _plain_values(path: Path, text: str, *, filled: bool) -> Detection | None:
-    """latlon, a numeric CSV of one comma per line, or SMILES."""
+    """latlon or SMILES."""
     name = path.name
     lines = [line.strip() for line in _lines(text, filled=filled) if line.strip()]
     if not lines:
@@ -517,21 +520,38 @@ def _plain_values(path: Path, text: str, *, filled: bool) -> Detection | None:
                 f"{name} holds {len(points)} latitude and longitude pair{'' if len(points) == 1 else 's'} "
                 f"{shown}{more}, so it is a list of places."
             ))
-    if len(lines) >= 3:
-        commas = {line.count(",") for line in lines}
-        if len(commas) == 1 and min(commas) >= 1 and all(
-            _NUMBER.match(field) for line in lines[1:] for field in line.split(",")
-        ):
-            k = min(commas)
-            return Detection("other", "csv", "content", (
-                f"{name} is text whose lines each hold {k} comma{'' if k == 1 else 's'} between numbers, so CSV."
+    if not filled and len(lines) <= MAX_SMILES_LINES:
+        tokens = [_smiles_part(line) for line in lines]
+        if all(tokens) and (any(map(_marked_smiles, tokens)) or all(_carbons(t) >= 2 for t in tokens)):
+            return Detection("molecule", "smiles", "content", (
+                f"{name} holds {len(lines)} SMILES string{'' if len(lines) == 1 else 's'} ({tokens[0][:60]}), so "
+                "it describes molecules."
             ))
-    if not filled and len(lines) <= MAX_SMILES_LINES and all(_smiles_token(line) for line in lines):
-        return Detection("molecule", "smiles", "content", (
-            f"{name} holds {len(lines)} SMILES string{'' if len(lines) == 1 else 's'} ({lines[0][:60]}), so it "
-            "describes molecules."
-        ))
     return None
+
+
+def _smiles_part(line: str) -> str | None:
+    """The SMILES string of a line, alone or followed by a name (after a tab, or after spaces when the name is
+    one word), when it is one; else None."""
+    if "\t" in line:
+        token = line.split("\t", 1)[0].strip()
+    else:
+        parts = line.split()
+        if len(parts) > 2:
+            return None
+        token = parts[0]
+    return token if _smiles_token(token) else None
+
+
+def _marked_smiles(token: str) -> bool:
+    """Whether a SMILES token holds something words do not: an aromatic atom, a bond, a branch, a ring closure or
+    a bracket atom."""
+    return re.search(r"[bcnops0-9=#$:/\\().*%\[\-]", re.sub(r"Cl|Br", "", token)) is not None
+
+
+def _carbons(token: str) -> int:
+    """Carbon atoms written outside brackets ("C" not followed by "l")."""
+    return len(re.findall(r"C(?!l)", re.sub(r"\[[^\]]*\]", "", token)))
 
 
 def _latlon(line: str) -> tuple[float, float] | None:
@@ -545,8 +565,9 @@ def _latlon(line: str) -> tuple[float, float] | None:
             return None  # "-51.5 N": a sign and a hemisphere letter at once
         sides.append((letter, float(number)))
     marked = any(letter for letter, _ in sides) or found.group("ad") or found.group("bd")
-    if not marked and "." not in found.group("an") + found.group("bn"):
-        return None  # two whole numbers and nothing else: not a place
+    decimals = max(len(n.partition(".")[2]) for n in (found.group("an"), found.group("bn")))
+    if not marked and decimals < 3:
+        return None  # "12 34", "1.5 2.5", "12.30 14.45": numbers, not plainly a place
     (l1, v1), (l2, v2) = sides
     if l1 in ("E", "W") or l2 in ("N", "S"):  # longitude first
         (l1, v1), (l2, v2) = (l2, v2), (l1, v1)
