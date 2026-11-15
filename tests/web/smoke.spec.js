@@ -38,6 +38,10 @@ async function setup(page, options = {}) {
       cancelled = false;
       return json({ job_id: "job-1" });
     }
+    if (path === "/api/jobs/job-1/approval") {
+      if (options.approval) return options.approval(route, req);
+      return json({ detail: "Not Found" }, 404);
+    }
     if (path === "/api/jobs/job-1" && req.method() === "DELETE") {
       if (options.cancelError) return json({ detail: "Cannot be cancelled yet" }, 409);
       cancelled = true;
@@ -264,7 +268,7 @@ test("the stream's done.used is final: a tool the model did not call is not repo
 test("a file the model takes as it is (kind native) reads as is, not as a bridge", async ({ page }) => {
   const native = { kind: "native", bridge: "", source: "note.txt", detail: "its text was given to the model with the message" };
   await setup(page, { chat: (route) => route.fulfill({ json: { reply: "It says hello.", used: [native] } }) });
-  expect(await page.locator("#file-input").getAttribute("accept")).toContain(".txt");
+  expect(await page.locator("#file-input").getAttribute("accept")).toBeNull(); // any file: the server decides what it is
   await page.locator("#file-input").setInputFiles({ name: "note.txt", mimeType: "text/plain", buffer: Buffer.from("hello") });
   await send(page, "What does it say?");
   await expect(page.locator(".used-item")).toHaveText("note.txt: Read as is · its text was given to the model with the message");
@@ -586,5 +590,325 @@ test("chat navigation, composer and runs reflow at phone and zoomed widths", asy
   }
   await page.locator("#mode-button").click();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  expect(errors).toEqual([]);
+});
+
+// ---------------------------------------------------------------- agent-written adapters
+// The shapes agent.synth.run_synth and agent.jobs really send (agent/auto.py's adapter flow, tests/test_adapter_flow.py).
+const meshGoal = "Tell which kind of chair this 3D model is";
+const adapterDetect = (file = "chair.obj", format = "obj") => [
+  event("detect", "start", `Detecting the contents of ${file}.`),
+  event("detect", "ok", `${file} is a ${format} mesh. Since Fake model does not read 3d files and no specialist is wired for them, the agent will write an adapter: code that turns the file into something Fake model reads.`,
+    { file, goal: meshGoal, modality: "3d", format, how: "content", flow: "adapter" }),
+];
+const meshDesign = (changes = {}) => ({
+  modality: "3d", format: "obj", route: "text", description: "Counts the mesh's vertices and faces and measures its bounding box.",
+  libraries: ["trimesh"], question: "What kind of chair is this 3D model?", label_hint: "chair styles", labels: ["armchair", "stool"],
+  probe_plan: "dataset", probe_reason: "Public mesh datasets label furniture.", install: [], designed_modality: "3d-model", ...changes,
+});
+const adapterCode = 'import trimesh\n\ndef adapt(path):\n    mesh = trimesh.load(path, force="mesh")\n    return {"text": f"The mesh has {len(mesh.vertices)} vertices."}\n';
+const adapterCard = {
+  model: "fake", modality: "3d", dataset: "3d-dataset-2a8c4c7ee5", scope: "closed", bridge: "adapter:3d-obj", kind: "text", n: 40,
+  chance: 0.5, accuracy: 0.9, controls: { swapped: 0.45, no_input: 0.5, native: 0.5, unseen_categories: 0.6 },
+  control_chance: { unseen_categories: 0.3333 }, verdict: "installed", interval: [0.77, 0.96],
+  reason: "adapter:3d-obj passed: it scored 90.0% against 50.0% chance, meets the 65.0% bar for a text bridge, 40.0 points above the 50.0% the model scored on the raw file.",
+};
+const probes = (purpose, source, labels, licence) => {
+  const facts = { purpose, provenance: "dataset", hub_id: source, source, kind: "hub" };
+  return [
+    event("data", "start", "Searching the Hugging Face Hub and the web.", { ...facts, action: "search" }),
+    event("data", "ok", "Found 1 candidate dataset.", { ...facts, action: "search", found: 1 }),
+    event("data", "start", `Trying ${source}.`, { ...facts, action: "candidate", licence, url: `https://huggingface.co/datasets/${source}` }),
+    event("data", "start", `Fetching labelled files from ${source}.`, { ...facts, action: "fetch" }),
+    event("data", "ok", `Fetched files from ${source}.`, { ...facts, action: "fetch", counts: Object.fromEntries(labels.map((l) => [l, 5])) }),
+    event("data", "ok", `Using ${source}: ${labels.length} labels.`, { ...facts, action: "candidate", labels, licence, url: `https://huggingface.co/datasets/${source}` }),
+  ];
+};
+/** A finished adapter run: detect, design, build (one failed attempt, then the code), probe files from a public
+    dataset, unseen categories from another one (or the note that they were not measured), verify ... done. */
+function adapterJob({ unseen = true, card = adapterCard } = {}) {
+  const summary = {
+    name: card.dataset, provenance: "dataset", source: "https://huggingface.co/datasets/shapes/chairs", licence: "cc-by-4.0",
+    labels: ["armchair", "stool"], counts: { armchair: 20, stool: 20 }, n: 40, split: { fit: 24, dev: 8, test: 8 }, meta: {}, label_leaks: [],
+    fetched: { hub_id: "shapes/chairs", url: "https://huggingface.co/datasets/shapes/chairs", title: "shapes/chairs", licence: "cc-by-4.0", licence_source: "the Hub dataset card" },
+  };
+  const note = "Unseen categories not measured: the Hub search found no other open dataset with other labels.";
+  return {
+    request: { model: "fake", dataset: card.dataset, modality: "3d", scope: "closed" }, status: "done", error: null, installed: card.bridge, cards: [card],
+    events: [
+      ...adapterDetect(),
+      event("design", "start", "Designing an adapter that lets Fake model sense chair.obj."),
+      event("design", "ok", "A text adapter for 3d (obj) files: Counts the mesh's vertices and faces and measures its bounding box.", meshDesign()),
+      event("build", "start", "Writing adapt(path) with trimesh and running it on chair.obj in the sandbox.", { libraries: ["trimesh"], sandboxed: true, max_attempts: 3 }),
+      event("build", "info", "Attempt 1 failed: ModuleNotFoundError: No module named 'pygltf' Asking the LLM for a repair.",
+        { attempt: 1, error: { reason: "ModuleNotFoundError: No module named 'pygltf'", cause: "run" } }),
+      event("build", "ok", "The adapter ran on chair.obj after 2 attempts (0.4 s).", {
+        attempts: 2, libraries: ["trimesh"], code_sha256: "7fef4b7682f585a4d03c29d10698ec38", code: adapterCode,
+        preview: "The mesh has 412 vertices.", output_kind: "text", notes: [], seconds: 0.42 }),
+      ...probes("probes", "shapes/chairs", ["armchair", "stool"], "cc-by-4.0"),
+      event("data", "ok", "Using 40 dataset probe files in 2 labels (armchair, stool); all are held out.", summary),
+      ...(unseen
+        ? [...probes("unseen", "other/benches", ["bench", "sofa", "table"], "mit"),
+          event("data", "info", "Also scoring 15 files of 3 other categories (bench, sofa, table), which the adapter was not built around.", {
+            unseen: { name: "3d-unseen-1", source: "https://huggingface.co/datasets/other/benches", labels: ["bench", "sofa", "table"], per_label: { bench: 5, sofa: 5, table: 5 }, n: 15 } })]
+        : [event("data", "info", note, { purpose: "unseen", reason: "the Hub search found no other open dataset with other labels" })]),
+      event("verify", "start", "Scoring adapter:3d-obj on dataset probe files.", { bridge: card.bridge, n_test: 40, native: true, unseen: unseen ? "3d-unseen-1" : null }),
+      event("verify", "ok", "adapter:3d-obj scored 90.0% on 40 held-out probe files.", { card: { ...card, verdict: "candidate" }, controls: card.controls, control_chance: card.control_chance, seconds: 1.0 }),
+      event("decide", "start", "Checking adapter:3d-obj against the bars for a text bridge."),
+      event("decide", "ok", card.reason, { install: card.bridge, accepted: true, card }),
+      event("install", "start", `Installing ${card.bridge}.`, { bridge: card.bridge }),
+      event("install", "ok", `Installed ${card.bridge}; Fake model can now take 3d files in chat.`, { bridge: card.bridge }),
+      event("done", "ok", `Fake model can now take 3d files through ${card.bridge}: it scored 90.0% on 40 probe files, against 50.0% chance.`, { installed: card.bridge, needs_user: false }),
+    ],
+  };
+}
+const adapterSense = { bridge: "adapter:3d-glb", kind: "text", modality: "3d", dataset: "3d-dataset-2a8c4c7ee5", card: { ...adapterCard, bridge: "adapter:3d-glb" } };
+
+/** An install request: agent.installer's plan (one package with a caution, a dependency, one already installed). */
+const installPlan = {
+  requested: [{ name: "pygltflib", version: null, why: "reads glTF scenes" }],
+  packages: [
+    { name: "pygltflib", version: "1.16.2", verdict: "caution", reasons: ["fewer than 3 releases", "first release under 90 days ago"], facts: { already_installed: false, requested: true, via: [] } },
+    { name: "dataclasses-json", version: "0.6.7", verdict: "ok", reasons: [], facts: { already_installed: false, requested: false, via: ["pygltflib"] } },
+    { name: "numpy", version: "2.1.3", verdict: "ok", reasons: ["already installed in the environment at 2.1.3; not vetted or reinstalled"], facts: { already_installed: true, requested: false, via: ["pygltflib"] } },
+  ],
+  verdict: "caution", requirements: "", created: "2026-11-15T03:00:00+00:00", problems: [], target: {},
+  summary: "Caution, pygltflib needs a look before approval (2 new packages for the toolbox, 1 already installed): pygltflib: fewer than 3 releases.",
+};
+const pendingInstall = {
+  id: "req-1", kind: "install", timeout: 600, asked: 0.4,
+  payload: { plan: installPlan, summary: installPlan.summary, review: "A small glTF reader; its release history is short, so check its home page." },
+};
+/** A live adapter run waiting on the install request until it is answered (answer: null, true or false), then
+    going on to the build step. */
+function waitingJob(answer) {
+  const requested = installPlan.requested;
+  const record = { requested, verdict: "caution", summary: installPlan.summary };
+  const answered = answer === null ? [] : answer
+    ? [event("approval", "ok", "Approved.", { id: "req-1", kind: "install", answer: true, reason: "approved" }),
+      event("install_request", "ok", "Installed pygltflib 1.16.2 into the toolbox; the adapter may import it.",
+        { ...record, approved: true, installed: [{ name: "pygltflib", version: "1.16.2", sha256: "0".repeat(64) }], note: "" }),
+      event("build", "start", "Writing adapt(path) with trimesh, pygltflib and running it on chair.glb in the sandbox.")]
+    : [event("approval", "fail", "Declined.", { id: "req-1", kind: "install", answer: false, reason: "declined" }),
+      event("install_request", "info", "Not installing pygltflib: the request was declined or not answered. Writing the adapter with the toolbox as it is.",
+        { ...record, approved: false, installed: [], note: "declined or not answered" }),
+      event("build", "start", "Writing adapt(path) with trimesh and running it on chair.glb in the sandbox.")];
+  return {
+    request: autoRequest, status: "running", error: null, installed: null, cards: [],
+    events: [
+      ...adapterDetect("chair.glb", "glb"),
+      event("design", "start", "Designing an adapter that lets Fake model sense chair.glb."),
+      event("design", "ok", "A text adapter for 3d (glb) files.", meshDesign({ format: "glb", install: [{ name: "pygltflib", why: "reads glTF scenes" }] })),
+      event("install_request", "start", "The design asks for pygltflib, which the toolbox lacks: checking it before asking you.", { requested }),
+      event("approval", "start", `Waiting for your approval (install): ${installPlan.summary}`, { id: "req-1", kind: "install", payload: pendingInstall.payload, timeout: 600 }),
+      ...answered,
+    ],
+    pending_approval: answer === null ? pendingInstall : null,
+  };
+}
+
+/** Start an agent run from New sense with a file the browser has no special type for. */
+async function runOnMesh(page, name = "chair.glb") {
+  await page.locator("#new-sense-button").click();
+  await page.locator("#fit-goal").fill(meshGoal);
+  await page.locator("#fit-file").setInputFiles({ name, mimeType: "model/gltf-binary", buffer: Buffer.from("glTF") });
+  await page.locator("#run-button").click();
+}
+
+test("an install request shows the checks apart from the LLM's opinion; Approve by keyboard answers it", async ({ page }) => {
+  let answer = null;
+  const { calls, errors } = await setup(page, {
+    senses: [],
+    job: () => waitingJob(answer),
+    approval: (route, req) => {
+      answer = JSON.parse(req.postData()).approve;
+      return route.fulfill({ json: { answered: true, approve: answer } });
+    },
+  });
+  // Any file starts a run: the New sense window has no type filter and says so.
+  expect(await page.locator("#fit-file").getAttribute("accept")).toBeNull();
+  await page.locator("#new-sense-button").click();
+  await expect(page.locator("#fit-drop")).toContainText("3D models, molecules, coordinates");
+  await page.keyboard.press("Escape");
+  await runOnMesh(page);
+  expect(calls.find((c) => c.path === "/api/auto").body).toContain('filename="chair.glb"');
+
+  const card = page.getByRole("region", { name: "Install pygltflib?" });
+  await expect(card).toBeVisible();
+  await expect(card).toContainText(installPlan.summary);
+  await expect(card).toContainText("checks: caution");
+  await expect(card.locator("tbody tr")).toHaveCount(2); // the package to install and its dependency
+  await expect(card.locator("tbody tr").first()).toContainText(["pygltflib", "requested", "1.16.2", "caution", "fewer than 3 releases"].join(""));
+  await expect(card.locator("tbody tr").nth(1)).toContainText("needed by pygltflib");
+  await expect(card.locator(".approval-have summary")).toHaveText("1 already installed: not vetted or installed again");
+  await expect(card.locator(".approval-have li")).toBeHidden(); // collapsed
+  await expect(card.locator(".approval-review")).toContainText("an LLM's review, not one of the checks");
+  await expect(card.locator(".approval-review")).toContainText("release history is short");
+  await expect(card).toContainText("No answer within 10 minutes counts as declined.");
+  await expect(page.locator(".step").filter({ hasText: "Your approval" }).locator(".step-state")).toHaveText("Waiting");
+  await expect(page.locator(".step-title")).toHaveText([
+    "Detect the input", "Design an adapter", "Check requested packages", "Your approval", "Write and run the adapter",
+    "Find labelled probe files", "Verify on probe files", "Install or refuse", "Install",
+  ]);
+
+  // The chat says the agent is waiting, and its link takes the keyboard to the card.
+  const note = page.locator(".msg--agent").first(); // the only agent message while the run waits
+  await expect(note).toContainText("asks to install pygltflib");
+  await page.getByRole("tab", { name: "Report", exact: true }).click();
+  await note.getByRole("button", { name: "Review the request →" }).focus();
+  await page.keyboard.press("Enter");
+  await expect(card.locator(".approval-title")).toBeFocused();
+  await page.keyboard.press("Tab"); // the folded list of installed packages
+  await page.keyboard.press("Tab");
+  await expect(card.getByRole("button", { name: "Approve" })).toBeFocused();
+  await page.keyboard.press("Enter");
+
+  await expect.poll(() => calls.filter((c) => c.path === "/api/jobs/job-1/approval").length).toBe(1);
+  expect(JSON.parse(calls.find((c) => c.path === "/api/jobs/job-1/approval").body)).toEqual({ id: "req-1", approve: true });
+  await expect(card.locator(".approval-outcome")).toHaveText(/^Approved\./);
+  await expect(card.locator(".approval-outcome")).toBeFocused();
+  await expect(note).toContainText("You approved installing pygltflib.");
+  // Once the run has moved on to the build step, the card goes; the steps keep the outcome.
+  await expect(page.locator("#approval .approval")).toHaveCount(0);
+  await expect(page.locator(".step").filter({ hasText: "Your approval" })).toHaveClass(/step--done/);
+  await expect(page.locator(".step").filter({ hasText: "Check requested packages" })).toContainText("pygltflib 1.16.2");
+  expect(calls.filter((c) => c.path === "/api/jobs/job-1/approval")).toHaveLength(1);
+  expect(errors).toEqual([]);
+});
+
+test("Decline answers the request; the step shows it was declined, not failed", async ({ page }) => {
+  let answer = null;
+  const { calls, errors } = await setup(page, {
+    senses: [],
+    job: () => waitingJob(answer),
+    approval: (route, req) => {
+      answer = JSON.parse(req.postData()).approve;
+      return route.fulfill({ json: { answered: true, approve: answer } });
+    },
+  });
+  await runOnMesh(page);
+  const card = page.getByRole("region", { name: "Install pygltflib?" });
+  await card.getByRole("button", { name: "Decline" }).click();
+  await expect(card.locator(".approval-outcome")).toHaveText(/^Declined\. Nothing is installed/);
+  expect(JSON.parse(calls.find((c) => c.path === "/api/jobs/job-1/approval").body)).toEqual({ id: "req-1", approve: false });
+  await expect(card.getByRole("button", { name: /^(Approve|Decline)$/ })).toHaveCount(0);
+  await expect(page.locator("#approval .approval")).toHaveCount(0);
+  const approval = page.locator(".step").filter({ hasText: "Your approval" });
+  await expect(approval).toHaveClass(/step--declined/);
+  await expect(approval.locator(".step-state")).toHaveText("Declined");
+  await expect(page.locator(".step").filter({ hasText: "Check requested packages" })).toHaveClass(/step--declined/);
+  await expect(page.locator(".msg--agent").filter({ hasText: "You declined installing pygltflib" })).toBeVisible();
+  expect(errors).toEqual([]);
+});
+
+test("an answer to a request that is no longer open says so and changes nothing", async ({ page }) => {
+  await setup(page, {
+    senses: [],
+    job: () => waitingJob(null),
+    approval: (route) => route.fulfill({ status: 409, json: { detail: "Request req-1 of job job-1 is not open: it timed out." } }),
+  });
+  await runOnMesh(page);
+  const card = page.getByRole("region", { name: "Install pygltflib?" });
+  await card.getByRole("button", { name: "Approve" }).click();
+  await expect(card.getByRole("alert")).toContainText("is not open: it timed out.");
+  await expect(card.getByRole("button", { name: "Approve" })).toBeDisabled();
+  await expect(card.locator(".approval-outcome")).toHaveCount(0);
+});
+
+test("an adapter run shows its design, attempts and code, where the probe files came from, and both honesty controls", async ({ page }) => {
+  let scenario = adapterJob();
+  const { errors } = await setup(page, {
+    senses: [{ bridge: adapterCard.bridge, kind: "text", modality: "3d", dataset: adapterCard.dataset, card: adapterCard }],
+    job: () => scenario,
+  });
+  await runOnMesh(page, "chair.obj");
+  await expect(page.locator("#trace-status")).toHaveText("Sense installed");
+  await page.getByRole("tab", { name: "Run", exact: true }).click();
+  await expect(page.locator(".step-title")).toHaveText([
+    "Detect the input", "Design an adapter", "Write and run the adapter", "Find labelled probe files",
+    "Verify on probe files", "Install or refuse", "Install",
+  ]);
+  const design = page.locator(".step").filter({ hasText: "Design an adapter" });
+  await expect(design.locator(".facts")).toContainText("Reads3D model (obj)");
+  await expect(design.locator(".facts")).toContainText("Routetext, which the model reads");
+  await expect(design.locator(".facts")).toContainText("ExtractsCounts the mesh's vertices and faces");
+  await expect(design.locator(".facts")).toContainText("Librariestrimesh");
+
+  const build = page.locator(".step").filter({ hasText: "Write and run the adapter" });
+  await expect(build.locator(".facts")).toContainText("Attempts2");
+  await expect(build.locator(".attempts li")).toHaveText(["1: ModuleNotFoundError: No module named 'pygltf'"]);
+  await expect(build.locator(".facts")).toContainText("Ran in0.4 s");
+  const code = build.locator("details.code-block");
+  await expect(code.locator("summary")).toHaveText("The adapter's code · 5 lines · sha256 7fef4b7682f5");
+  await expect(code.locator("pre")).toBeHidden();
+  await code.locator("summary").click();
+  await expect(code.locator("pre")).toContainText("def adapt(path):");
+
+  const data = page.locator(".step").filter({ hasText: "Find labelled probe files" });
+  await expect(data.locator(".facts")).toContainText("Provenancea public dataset");
+  await expect(data.getByRole("link", { name: "shapes/chairs" })).toHaveAttribute("href", "https://huggingface.co/datasets/shapes/chairs");
+  await expect(data.locator(".facts")).toContainText("Licencecc-by-4.0 (from the Hub dataset card)");
+  await expect(data.locator(".facts")).toContainText("Labelsarmchair 20, stool 20 · 40 files");
+  await expect(data.getByRole("link", { name: "other/benches" })).toHaveAttribute("href", "https://huggingface.co/datasets/other/benches");
+  await expect(data.locator(".facts")).toContainText("bench 5, sofa 5, table 5 · mit");
+
+  // The report card: the native and unseen-categories controls, each against its own chance, and the rule.
+  await page.getByRole("tab", { name: "Report", exact: true }).click();
+  await expect(page.locator("#report-verdict")).toHaveText("Installed");
+  await expect(page.locator("#report .report-sub")).toHaveText("3D model → Fake model · agent-written adapter (text) · probe files: shapes/chairs");
+  const native = page.locator(".metric").filter({ hasText: "Model reads the raw file" });
+  await expect(native.locator(".metric-value")).toHaveText("50.0%");
+  await expect(native.locator(".tick")).toHaveAttribute("style", "left: 50%");
+  const unseen = page.locator(".metric").filter({ hasText: "Unseen categories" });
+  await expect(unseen.locator(".metric-value")).toHaveText("60.0%");
+  await expect(unseen.locator(".metric-chance")).toHaveText("own chance 33.3%");
+  await expect(unseen.locator(".tick")).toHaveAttribute("style", "left: 33.33%");
+  await expect(page.locator("#report")).toContainText("Install rule for adapters");
+  await expect(page.locator("#report")).toContainText("at least 10 points above the model reading the raw file");
+  await expect(page.locator(".msg--agent").last()).toContainText("3D model installed");
+  await expect(page.locator(".msg--agent").last()).toContainText("probe files: shapes/chairs");
+  await expect(page.locator("#senses-list .sense-title")).toHaveText(["Text", "3D model"]);
+  await expect(page.locator("#senses-list")).toContainText("Agent-written adapter (text)");
+  await page.getByRole("tab", { name: "Graph", exact: true }).click();
+  await expect(page.locator(".node").filter({ hasText: "Adapter (text)" })).toContainText("Counts the mesh's vertices");
+  await expect(page.locator(".node").filter({ hasText: "shapes/chairs" })).toContainText("2 labels · 40 dataset probe files");
+
+  // A run whose unseen categories could not be found says so in the data step.
+  scenario = adapterJob({ unseen: false, card: { ...adapterCard, controls: { swapped: 0.45, no_input: 0.5, native: 0.5 }, control_chance: {} } });
+  await runOnMesh(page, "chair.obj");
+  await expect(page.locator("#trace-status")).toHaveText("Sense installed");
+  await page.getByRole("tab", { name: "Run", exact: true }).click();
+  await expect(page.locator(".step").filter({ hasText: "Find labelled probe files" }).locator(".fact-warn"))
+    .toHaveText("Unseen categories not measured: the Hub search found no other open dataset with other labels.");
+  await page.getByRole("tab", { name: "Report", exact: true }).click();
+  await expect(page.locator(".metric").filter({ hasText: "Unseen categories" })).toHaveCount(0);
+  await expect(page.locator("#report .metric-chance")).toHaveCount(0);
+  expect(errors).toEqual([]);
+});
+
+test("chat takes any file: a .glb goes through its adapter sense, and a file the adapter cannot read is reported", async ({ page }) => {
+  const viaAdapter = { kind: "text", bridge: "adapter:3d-glb", source: "chair.glb", detail: 'text from the agent-written adapter: "The mesh has 412 vertices."' };
+  const failed = { kind: "none", bridge: "adapter:3d-glb", source: "broken.glb", detail: "the adapter adapter:3d-glb failed on this file: ValueError: not a glTF file" };
+  const { calls, errors } = await setup(page, {
+    senses: [adapterSense],
+    chat: (route) => route.fulfill({ json: { reply: "An armchair.", used: [viaAdapter, failed] } }),
+  });
+  expect(await page.locator("#file-input").getAttribute("accept")).toBeNull();
+  await expect(page.locator(".drop-sub")).toContainText("Any file: audio, video, 3D models, molecules, coordinates or anything else.");
+  await expect(page.locator("#sense-chips .chip-label")).toHaveText(["Text", "3D model"]);
+  await expect(page.locator("#senses-list .sense-title")).toHaveText(["Text", "3D model"]);
+  await page.locator("#file-input").setInputFiles([
+    { name: "chair.glb", mimeType: "model/gltf-binary", buffer: Buffer.from("glTF") },
+    { name: "broken.glb", mimeType: "application/octet-stream", buffer: Buffer.from("nope") },
+  ]);
+  await expect(page.locator("#attachments .attachment-meta")).toHaveText(["3D model · upload", "3D model · upload"]);
+  await send(page, "What kind of chair is this?");
+  const body = calls.filter((c) => c.path === "/api/chat").at(-1).body;
+  expect(body).toContain('filename="chair.glb"');
+  await expect(page.locator(".used-item").first()).toHaveText(`chair.glb: Read via adapter:3d-glb · ${viaAdapter.detail}`);
+  await expect(page.locator(".used-item--warn")).toContainText("broken.glb not received: the adapter adapter:3d-glb failed on this file");
+  await expect(page.locator(".msg--model .name-line-tags .tag")).toHaveText(["Read via adapter", "File not received"]);
+  await expect(page.locator(".msg--model")).not.toContainText("Heard via text bridge");
+  await expect(page.locator(".msg--user .attachment-meta")).toHaveText(["3D model · upload", "3D model · upload"]);
   expect(errors).toEqual([]);
 });
