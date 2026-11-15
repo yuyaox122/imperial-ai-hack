@@ -4,8 +4,7 @@ Status: approved by the team lead (Yuyao) on Saturday 14 November at 18:17, as p
 about 17:45. Four workloads, one per teammate, built on the prototype on `main` (PR #13).
 
 Owners: Jayden has workload 1, Michael workload 2 and Alex workload 3. Yuyao took workload 4
-at 19:00 (issue #39). From 15 November Michael owns the whole codebase (the owner table in `AGENTS.md`);
-this split is kept as the history of who built what.
+at 19:00 (issue #39). The owner table is in `AGENTS.md`.
 
 The lead also confirmed the main track, Autonomous Agents, and the sponsor prizes, Databricks and
 Linkup.
