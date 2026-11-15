@@ -51,6 +51,27 @@ def _fake_home(tmp_path, monkeypatch):
     monkeypatch.setenv("SENSE_FAKE", "1")
     monkeypatch.setenv("SENSE_HOME", str(tmp_path / "home"))
     monkeypatch.setattr(adapters, "_cache", type(adapters._cache)())
+    if not SANDBOXED:  # inside another sandbox (an agent's shell, say): run the adapters without one
+        monkeypatch.setenv(adapters.UNSANDBOXED_ENV, "1")
+
+
+def _alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def _gone(pids: list[int], within: float = 5.0) -> bool:
+    deadline = time.monotonic() + within
+    while time.monotonic() < deadline:
+        if not any(_alive(p) for p in pids):
+            return True
+        time.sleep(0.1)
+    return False
 
 
 @pytest.fixture
@@ -101,9 +122,20 @@ def adapt(path):
     assert out["seconds"] >= 0
 
 
-def test_run_adapter_gets_the_path_as_a_str(a_file):
-    out = run_adapter('def adapt(path):\n    return {"text": type(path).__name__ + " " + path}\n', a_file)
-    assert out["text"] == f"str {a_file.resolve()}"
+def test_run_adapter_gets_a_private_copy_as_a_str(a_file):
+    code = '''
+import json, os
+def adapt(path):
+    return {"text": json.dumps([type(path).__name__, path, sorted(os.listdir(os.path.dirname(path))),
+                                open(path).read()])}
+'''
+    kind, seen, neighbours, content = json.loads(run_adapter(code, a_file)["text"])
+    assert kind == "str" and os.path.isabs(seen) and seen.endswith("/input/input.dat")
+    assert str(a_file.parent) not in seen  # the original's folder and name are never shown
+    assert neighbours == ["input.dat"]  # nothing beside it to compare with
+    assert content == a_file.read_text()
+    run_adapter('def adapt(path):\n    open(path, "a").write("changed")\n    return {"text": "x"}\n', a_file)
+    assert a_file.read_text() == "hello world\nsecond line\n"  # the adapter wrote to its copy only
 
 
 def test_run_adapter_normalises_images_to_png_of_at_most_512_px(a_file):
@@ -145,6 +177,159 @@ def test_run_adapter_stops_an_adapter_that_runs_too_long(a_file):
     assert caught.value.cause == "timeout"
     assert "longer than 1 s" in caught.value.reason
     assert time.monotonic() - started < 10
+
+
+def test_run_adapter_timeout_holds_when_a_child_keeps_the_result_pipe(a_file):
+    # The forked child inherits the runner's result pipe and leaves the process group: reading until the pipe
+    # closes would wait for it, not for the timeout.
+    code = '''
+import os, time
+def adapt(path):
+    if os.fork() == 0:
+        os.setsid()
+        time.sleep(30)
+        os._exit(0)
+    time.sleep(30)
+'''
+    started = time.monotonic()
+    with pytest.raises(AdapterError) as caught:
+        run_adapter(code, a_file, timeout=2)
+    assert caught.value.cause == "timeout"
+    assert time.monotonic() - started < 8
+
+
+def test_run_adapter_kills_what_the_adapter_left_running(a_file):
+    code = '''
+import json, os, subprocess, time
+def adapt(path):
+    forked = os.fork()
+    if forked == 0:
+        os.setsid()
+        os.closerange(0, 256)
+        time.sleep(30)
+        os._exit(0)
+    started = subprocess.Popen(["/bin/sleep", "30"], start_new_session=True, close_fds=True,
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    return {"text": json.dumps([forked, started.pid])}
+'''
+    started = time.monotonic()
+    pids = json.loads(run_adapter(code, a_file, timeout=20)["text"])
+    assert time.monotonic() - started < 8
+    assert _gone(pids), [p for p in pids if _alive(p)]
+
+
+def test_run_adapter_caps_what_it_reads_from_the_runner(a_file, monkeypatch):
+    monkeypatch.setattr(adapters, "MAX_RESULT_BYTES", 1 << 20)
+    code = '''
+import sys
+def adapt(path):
+    out = sys._getframe(1).f_locals["out"]  # the runner's own result stream
+    for _ in range(8):
+        out.write("x" * (1 << 20))
+    out.flush()
+    return {"text": "fine"}
+'''
+    started = time.monotonic()
+    with pytest.raises(AdapterError) as caught:
+        run_adapter(code, a_file, timeout=30)
+    assert caught.value.cause == "output" and "more than 1 MB of result data" in caught.value.reason
+    assert time.monotonic() - started < 10
+
+
+def test_run_adapter_applies_the_caps_again_to_a_forged_result(a_file):
+    forge = '''
+import base64, io, json, os, sys
+from PIL import Image
+def adapt(path):
+    out = sys._getframe(1).f_locals["out"]
+    buf = io.BytesIO()
+    Image.new("RGB", SIZE, "red").save(buf, "PNG")
+    image = base64.b64encode(buf.getvalue()).decode()
+    out.write(json.dumps(PAYLOAD))
+    out.flush()
+    os._exit(0)
+'''
+    many = forge.replace("SIZE", "(2000, 1000)").replace("PAYLOAD", '{"ok": True, "images": [image] * 20}')
+    out = run_adapter(many, a_file)
+    assert len(out["images"]) == adapters.MAX_IMAGES and "20 images" in out["notes"][0]
+    assert all(_png_size(b) == (512, 256) for b in out["images"])
+
+    long_text = forge.replace("SIZE", "(1, 1)").replace("PAYLOAD", '{"ok": True, "text": "y" * 100000}')
+    out = run_adapter(long_text, a_file)
+    assert len(out["text"]) <= adapters.MAX_TEXT_CHARS and "cut by the harness" in out["text"]
+
+    huge = forge.replace("SIZE", "(5000, 5000)").replace("PAYLOAD", '{"ok": True, "images": [image]}')
+    with pytest.raises(AdapterError, match="too large to decode") as caught:
+        run_adapter(huge, a_file)
+    assert caught.value.cause == "output"
+
+
+def test_run_adapter_stops_an_adapter_that_writes_or_holds_too_much(a_file, monkeypatch):
+    monkeypatch.setattr(adapters, "CHECK_EVERY", 0.1)
+    monkeypatch.setattr(adapters, "DISK_BUDGET", 5 << 20)
+    writes = '''
+import time
+def adapt(path):
+    with open("big.bin", "wb") as f:
+        for _ in range(8):
+            f.write(b"x" * (1 << 20))
+    time.sleep(20)
+'''
+    with pytest.raises(AdapterError) as caught:
+        run_adapter(writes, a_file, timeout=30)
+    assert caught.value.cause == "limit" and "more than 5 MB of files" in caught.value.reason
+
+    monkeypatch.setattr(adapters, "MEMORY_BUDGET", 300 << 20)
+    holds = 'import time\ndef adapt(path):\n    data = b"x" * (700 << 20)\n    time.sleep(20)\n'
+    with pytest.raises(AdapterError) as caught:
+        run_adapter(holds, a_file, timeout=30)
+    assert caught.value.cause == "limit" and "more than 300 MB of memory" in caught.value.reason
+
+    monkeypatch.setattr(adapters, "FILE_SIZE_LIMIT", 1 << 20)
+    one_file = 'def adapt(path):\n    open("big.bin", "wb").write(b"x" * (2 << 20))\n    return {"text": "x"}\n'
+    with pytest.raises(AdapterError, match="File too large"):
+        run_adapter(one_file, a_file)
+
+
+def test_run_adapter_redacts_secrets_and_cuts_long_errors(a_file, monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-canary-0123456789abcdefghij")
+    monkeypatch.setenv("MY_SERVICE_TOKEN", "plain-canary-value")
+    secrets = "sk-canary-0123456789abcdefghij plain-canary-value ghp_ABCDEFGHIJKLMNOPQRSTUV12"
+    code = f'def adapt(path):\n    return {{"text": "{secrets}"}}\n'
+    text = run_adapter(code, a_file)["text"]
+    assert "canary" not in text and "ghp_" not in text and text.count("[redacted]") == 3
+    with pytest.raises(AdapterError) as caught:
+        run_adapter('def adapt(path):\n    raise ValueError("the key is plain-canary-value")\n', a_file)
+    assert "canary" not in str(caught.value) and "[redacted]" in caught.value.reason
+
+    with pytest.raises(AdapterError) as caught:
+        run_adapter('def adapt(path):\n    raise ValueError("x" * 3_000_000)\n', a_file)
+    err = caught.value
+    assert len(err.reason) <= adapters.REASON_CHARS and "more characters cut" in err.reason
+    assert len(err.traceback) <= adapters.TRACEBACK_CHARS + 10
+    assert len(json.dumps(err.to_dict())) < 20_000
+
+
+@pytest.mark.skipif(sys.platform != "darwin" or not os.path.exists(adapters.SANDBOX_EXEC), reason="macOS only")
+def test_run_adapter_refuses_to_run_where_the_sandbox_cannot_be_applied(a_file, monkeypatch):
+    monkeypatch.setattr(adapters, "sandboxed", lambda: False)
+    monkeypatch.delenv(adapters.UNSANDBOXED_ENV, raising=False)
+    assert "sandbox" in adapters.sandbox_problem()
+    with pytest.raises(AdapterError) as caught:
+        run_adapter(FIRST_LINE, a_file)
+    assert caught.value.cause == "sandbox" and adapters.UNSANDBOXED_ENV in caught.value.reason
+    monkeypatch.setenv(adapters.UNSANDBOXED_ENV, "1")
+    assert adapters.sandbox_problem() is None
+    assert run_adapter(FIRST_LINE, a_file)["text"] == "hello world"
+
+
+def test_sandboxed_tries_again_after_a_failed_check(monkeypatch):
+    answers = iter([False, True])
+    monkeypatch.setattr(adapters, "_sandbox_works", False)
+    monkeypatch.setattr(adapters, "_probe_sandbox", lambda: next(answers))
+    assert adapters.sandboxed() is False
+    assert adapters.sandboxed() is True
+    assert adapters.sandboxed() is True  # a working sandbox is remembered: no third check
 
 
 def test_run_adapter_reports_the_error_with_the_traceback_tail(a_file):
@@ -293,6 +478,50 @@ def adapt(path):
 '''
     assert run_adapter(code, a_file)["text"] == "ok"
 
+    elsewhere = Path("/private/tmp") / f"sense-adapter-escape-{uuid.uuid4().hex}"
+    try:
+        with pytest.raises(AdapterError, match="Operation not permitted"):
+            run_adapter(f'def adapt(path):\n    open({str(elsewhere)!r}, "w").write("x")\n', a_file)
+        assert not elsewhere.exists()
+    finally:
+        if elsewhere.exists():
+            elsewhere.unlink()
+
+
+@pytest.mark.skipif(not SANDBOXED, reason="needs macOS sandbox-exec")
+def test_sandbox_hides_the_probe_store_the_examples_and_the_users_files(tmp_path, a_file):
+    root = _probe_tree(tmp_path / "colours", ["red", "blue"], 5)
+    probes = probe_folder(root, question="Which colour?", modality="colour file")
+    targets = {
+        "probe store": ("listdir", probes.files[0].parent),
+        "a probe copy": ("open", probes.files[0]),
+        "examples folder": ("listdir", root),
+        "an example": ("open", next((root / "red").iterdir())),
+        "the repository": ("open", Path(adapters.__file__).resolve()),
+        "home": ("listdir", Path.home()),
+        "codex credentials": ("open", Path.home() / ".codex" / "auth.json"),
+        "shell profile": ("open", Path.home() / ".zshrc"),
+    }
+    code = f'''
+import json, os
+TARGETS = {json.dumps({k: [how, str(p)] for k, (how, p) in targets.items()})}
+def adapt(path):
+    seen = {{}}
+    for name, (how, target) in TARGETS.items():
+        try:
+            os.listdir(target) if how == "listdir" else open(target, "rb").close()
+            seen[name] = "read"
+        except PermissionError:
+            seen[name] = "denied"
+        except FileNotFoundError:
+            seen[name] = "missing"
+    return {{"text": json.dumps(seen)}}
+'''
+    seen = json.loads(run_adapter(code, a_file)["text"])
+    assert "read" not in seen.values(), seen
+    for name in ["probe store", "a probe copy", "examples folder", "an example", "the repository", "home"]:
+        assert seen[name] == "denied", seen
+
 
 # ----------------------------------------------------------------------------- probe folders
 def _probe_tree(root: Path, labels: list[str], per_label: int, *, line=lambda label, k: f"colour: {label}") -> Path:
@@ -322,8 +551,11 @@ def test_probe_folder_splits_dedups_and_anonymises(tmp_path):
     assert np.bincount(probes.y).tolist() == [6, 6]
     assert probes.meta["duplicates_collapsed"] == 1
     assert sorted(probes.meta["conflicts_dropped"]) == ["dog-bark/shared.thing", "sea_waves/shared.thing"]
-    assert probes.meta["skipped"] == {"hidden": 1, "empty": 1, "subfolders": 0}
+    assert probes.meta["skipped"] == {"hidden": 1, "empty": 1, "subfolders": 0, "other_types": 0}
+    assert probes.meta["warnings"] == []
     assert probes.provenance == "user" and probes.source == "test"
+    # every copy has the same times, so neither times nor names line up with labels
+    assert {p.stat().st_mtime for p in probes.files} == {adapters._PROBE_TIME}
 
     splits = [set(probes.fit_idx.tolist()), set(probes.dev_idx.tolist()), set(probes.test_idx.tolist())]
     assert not (splits[0] & splits[1]) and not (splits[0] & splits[2]) and not (splits[1] & splits[2])
@@ -351,6 +583,27 @@ def test_probe_folder_caps_each_label(tmp_path):
     probes = probe_folder(root, question="q?", modality="m", max_per_label=5)
     assert np.bincount(probes.y).tolist() == [5, 5]
     assert probes.meta["capped"] == 8
+
+
+def test_probe_folder_keeps_one_file_type_and_warns_when_extensions_differ(tmp_path):
+    shapes = tmp_path / "shapes"
+    for label in ["chair", "table"]:
+        (shapes / label).mkdir(parents=True)
+        for k in range(5):
+            (shapes / label / f"m{k}.obj").write_text(f"mtllib m{k}.mtl\nv {k} 0 0\n# {label}\n")
+            (shapes / label / f"m{k}.mtl").write_text(f"newmtl {label}_{k}\n")
+    probes = probe_folder(shapes, question="Which piece of furniture?", modality="3d-model", suffixes=[".OBJ"])
+    assert len(probes.items) == 10 and {p.suffix for p in probes.files} == {".obj"}
+    assert probes.meta["skipped"]["other_types"] == 10 and probes.meta["suffixes"] == [".obj"]
+    assert probes.meta["warnings"] == []
+
+    clips = tmp_path / "clips"
+    for label, ext in [("walk", ".mov"), ("run", ".mp4")]:
+        (clips / label).mkdir(parents=True)
+        for k in range(5):
+            (clips / label / f"c{k}{ext}").write_bytes(f"{label} clip {k}".encode())
+    warned = probe_folder(clips, question="What motion?", modality="video")
+    assert len(warned.meta["warnings"]) == 1 and ".mov" in warned.meta["warnings"][0]
 
 
 def test_probe_folder_explains_what_to_fix(tmp_path):
@@ -414,6 +667,26 @@ def test_adapter_bridge_caches_per_file_content(a_file, tmp_path, monkeypatch):
     assert len(calls) == 2
 
 
+def test_adapter_bridge_does_not_cache_a_crash(a_file, monkeypatch):
+    outcomes = [AdapterError("killed by SIGKILL", cause="exit"), AdapterError("too slow", cause="timeout"),
+                {"text": "fine", "notes": [], "seconds": 0.1}]
+
+    def flaky(code, path, *, timeout=60):
+        outcome = outcomes.pop(0)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+    monkeypatch.setattr(adapters, "run_adapter", flaky)
+    bridge = AdapterBridge(kind="text", modality="mystery", model_name="fake", code=FIRST_LINE)
+    for cause in ["exit", "timeout"]:
+        with pytest.raises(AdapterError) as caught:
+            bridge.prepare(a_file)
+        assert caught.value.cause == cause
+    assert bridge.prepare(a_file).text == "fine"  # the crash was not remembered
+    assert bridge.prepare(a_file).text == "fine" and outcomes == []  # the success was
+
+
 def test_image_bridge_tiles_the_images_into_one_contact_sheet(a_file):
     code = '''
 from PIL import Image
@@ -458,8 +731,13 @@ def test_verify_files_scores_a_working_adapter_high_and_swapped_input_low(tmp_pa
     assert card.n == len(probes.test_idx) and card.chance == 0.2
     assert card.accuracy >= 0.9
     assert card.controls["swapped"] <= 0.3
+    assert card.controls["no_input"] <= 0.5  # with no input the model guesses
     assert set(card.controls) == {"swapped", "no_input"}
     assert card.interval[0] <= card.accuracy <= card.interval[1]
+
+    every = verify_files(model, bridge, probes, FitRequest(model="fake", dataset=probes.name),
+                         idx=np.arange(len(probes.items)))
+    assert every.n == len(probes.items) == 60 and every.accuracy >= 0.9
 
     from agent.planner import RulePlanner
 
@@ -494,6 +772,80 @@ def test_verify_files_counts_adapter_failures_as_wrong(tmp_path):
     with pytest.raises(AdapterError) as caught:
         verify_files(_fake_model(), broken, probes, FitRequest(model="fake", dataset=probes.name))
     assert caught.value.cause == "verify" and "more than half" in caught.value.reason
+
+
+def _fails_on(colours: list[str]) -> str:
+    return (
+        f"FAIL = {colours!r}\n"
+        "def adapt(path):\n"
+        "    line = open(path).readline().strip()\n"
+        "    if any(c in line for c in FAIL):\n"
+        "        raise RuntimeError('cannot read this one')\n"
+        "    return {'text': line}\n"
+    )
+
+
+def test_verify_files_raises_only_when_more_than_half_of_the_files_fail(tmp_path):
+    root = _probe_tree(tmp_path / "four", ["red", "green", "blue", "yellow"], 5)
+    probes = probe_folder(root, question="Which colour?", modality="colour file")
+    every = np.arange(len(probes.items))
+    request = FitRequest(model="fake", dataset=probes.name)
+
+    def card_for(colours):
+        bridge = AdapterBridge(kind="text", modality="colour file", model_name="fake", code=_fails_on(colours))
+        return verify_files(_fake_model(), bridge, probes, request, idx=every)
+
+    assert "failed on 5 of 20" in card_for(["red"]).reason  # a quarter fails: a card
+    assert "failed on 10 of 20" in card_for(["red", "green"]).reason  # half fails: still a card
+    with pytest.raises(AdapterError) as caught:
+        card_for(["red", "green", "blue"])  # three quarters fail: no card
+    assert caught.value.cause == "verify" and "15 of 20" in caught.value.reason
+
+
+def _skewed(root: Path, counts: dict[str, int], *, header=lambda label: "") -> Path:
+    for label, n in counts.items():
+        (root / label).mkdir(parents=True)
+        for k in range(n):
+            (root / label / f"n{k:02d}.txt").write_text(f"{header(label)}{label} note {k} of {n}\n")
+    return root
+
+
+def test_verify_files_swapped_control_catches_a_constant_label_on_a_skewed_set(tmp_path):
+    root = _skewed(tmp_path / "skewed", {"red": 40, "green": 4, "blue": 4, "yellow": 4})
+    probes = probe_folder(root, question="Which colour is the note about?", modality="colour note")
+    says_red = 'def adapt(path):\n    return {"text": "This note is about the colour red."}\n'
+    bridge = AdapterBridge(kind="text", modality="colour note", model_name="fake", code=says_red)
+    request = FitRequest(model="fake", dataset=probes.name)
+    card = verify_files(_fake_model(), bridge, probes, request, idx=np.arange(len(probes.items)))
+    assert card.n == 52 and card.accuracy >= card.chance + 0.15  # the majority label alone clears the chance bar
+    assert card.controls["swapped"] == card.accuracy  # but any other file's input does as well
+    assert card.controls["no_input"] <= 0.5
+
+    from agent.planner import RulePlanner
+
+    assert not RulePlanner().assess(request, card)[0]
+
+
+def test_verify_files_never_swaps_in_a_file_the_adapter_failed_on(tmp_path):
+    # A constant answer plus a crash on every file of the minority label: with failed files as swap partners
+    # (asked with no input), the swapped control would fall to a guess and the constant answer would pass.
+    root = _skewed(tmp_path / "crashy", {"red": 40, "blue": 6}, header=lambda label: "V2 " if label == "blue" else "")
+    probes = probe_folder(root, question="Which colour is the note about?", modality="colour note")
+    code = '''
+def adapt(path):
+    if open(path).read().startswith("V2"):
+        raise ValueError("version 2 header")
+    return {"text": "This note is about the colour red."}
+'''
+    bridge = AdapterBridge(kind="text", modality="colour note", model_name="fake", code=code)
+    request = FitRequest(model="fake", dataset=probes.name)
+    card = verify_files(_fake_model(), bridge, probes, request, idx=np.arange(len(probes.items)))
+    assert card.n == 46 and "failed on 6 of 46" in card.reason
+    assert card.controls["swapped"] == card.accuracy == round(40 / 46, 4)
+
+    from agent.planner import RulePlanner
+
+    assert not RulePlanner().assess(request, card)[0]
 
 
 def test_verify_files_respects_max_items_and_the_model(tmp_path):

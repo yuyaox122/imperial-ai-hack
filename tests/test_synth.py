@@ -72,6 +72,21 @@ def _fake_home(tmp_path, monkeypatch):
     monkeypatch.setenv("SENSE_FAKE", "1")
     monkeypatch.setenv("SENSE_HOME", str(tmp_path / "home"))
     monkeypatch.setattr(adapters, "_cache", type(adapters._cache)())
+    if not adapters.sandboxed():  # inside another sandbox (an agent's shell, say): run the adapters without one
+        monkeypatch.setenv(adapters.UNSANDBOXED_ENV, "1")
+
+
+@pytest.fixture
+def registry_reads_adapters(monkeypatch):
+    """What integration will do: sense.bridges.load_bridge (as the registry calls it) loads adapter bridges."""
+    real = registry.load_bridge
+
+    def load(directory):
+        if json.loads((Path(directory) / "bridge.json").read_text()).get("adapter"):
+            return load_adapter_bridge(directory)
+        return real(directory)
+
+    monkeypatch.setattr(registry, "load_bridge", load)
 
 
 class FakeLLM:
@@ -277,9 +292,26 @@ def test_write_adapter_prompt_holds_the_contract_and_the_rules(monkeypatch, note
     (schema, data, instruction), = fake.calls
     assert "adapt(path)" in instruction and "no network" in instruction
     assert data["toolbox"] == adapters.toolbox() and data["design"]["question"].startswith("Which colour")
+    # the adapter's author never sees the candidate labels or where the probes will come from
+    assert not {"labels", "probe_plan", "probe_reason"} & set(data["design"])
+    prompt = json.dumps(data)
+    assert not [c for c in COLOURS if c != "blue" and re.search(rf"\b{c}\b", prompt)]  # blue: the sample says it
     assert '{"text": str}' in data["contract"]
     rules = " ".join(data["rules"])
     assert "file name" in rules and "Never guess or state a label" in rules and "No network" in rules
+    assert "not a verdict" in rules and "say what they imply" not in rules
+
+
+def test_write_adapter_cuts_long_errors_before_they_reach_the_llm(monkeypatch, note):
+    huge = 'def adapt(path):\n    raise ValueError("bad header: " + "x" * 3_000_000)\n'
+    fake = FakeLLM(codes=[huge, huge, huge])
+    monkeypatch.setattr(llm, "ask_json", fake)
+    with pytest.raises(AdapterError) as caught:
+        synth.write_adapter(design_of(colour_design()), note, attempts=3)
+    sizes = [len(json.dumps(data)) for data in fake.of(synth.CODE_SCHEMA)]
+    assert len(sizes) == 3 and max(sizes) < 40_000, sizes
+    assert len(json.dumps(caught.value.to_dict())) < 20_000
+    assert all(len(a["reason"]) <= 1000 for a in caught.value.attempts)
 
 
 def test_write_adapter_gives_up_with_every_attempts_error(monkeypatch, note):
@@ -319,6 +351,7 @@ def test_code_checks_before_running():
     missing = synth._static_problem("import no_such_module_here\ndef adapt(p):\n    pass\n", box, "adapt")
     assert "no_such_module_here, which is neither in the standard library nor in the toolbox" in missing
     assert "network" in synth._static_problem("import urllib.request\ndef adapt(p):\n    pass\n", box, "adapt")
+    assert "foreign calls" in synth._static_problem("import ctypes\ndef adapt(p):\n    pass\n", box, "adapt")
     assert "no top-level function adapt" in synth._static_problem("def adapt2(p):\n    pass\n", box, "adapt")
     assert "no top-level function generate" in synth._static_problem(READS_CONTENT, box, "generate")
     assert synth._code_from({"code": "```py\ndef adapt(p):\n    return 1\n```"}) == "def adapt(p):\n    return 1\n"
@@ -360,6 +393,40 @@ def test_label_leaks_finds_labels_written_into_their_own_files(tmp_path):
     assert synth.label_leaks({"a b": groups["cube"], "red": groups["cube"]}) == []
 
 
+@pytest.mark.parametrize(
+    "how",
+    ["plural", "numbered", "camel", "gzipped", "zip archive", "zip member name", "two words"],
+)
+def test_label_leaks_sees_ordinary_ways_of_writing_a_label(tmp_path, how):
+    import gzip
+    import zipfile
+
+    def content(label: str, k: int) -> bytes:
+        name = {"plural": f"o {label}s", "numbered": f"o {label.title()}00{k}", "camel": f"o {label.title()}Mesh",
+                "two words": f"o {label.title().replace(' ', '')}"}.get(how, f"o {label}")
+        return f"{name}\nv {k} 0 0\n".encode()
+
+    groups = {}
+    for label in (["sci fi", "cube"] if how == "two words" else ["sphere", "cube"]):
+        files = []
+        for k in range(4):
+            p = tmp_path / f"{label.replace(' ', '')}{k}.bin"
+            if how == "gzipped":
+                p.write_bytes(gzip.compress(content(label, k)))
+            elif how.startswith("zip"):
+                with zipfile.ZipFile(p, "w", zipfile.ZIP_DEFLATED) as z:
+                    if how == "zip archive":
+                        z.writestr("3D/3dmodel.model", f'<object name="{label}"><mesh/></object> {k}')
+                    else:
+                        z.writestr(f"{label.title()}.model", f"<mesh/> {k}")
+            else:
+                p.write_bytes(content(label, k))
+            files.append(p)
+        groups[label] = files
+    leaks = synth.label_leaks(groups)
+    assert len(leaks) == 2, leaks  # both labels are written into their own files
+
+
 def test_generate_probes_repairs_a_leaky_generator(monkeypatch):
     fake = FakeLLM(generators=[LEAKY_GENERATOR, NUMBER_GENERATOR])
     monkeypatch.setattr(llm, "ask_json", fake)
@@ -379,12 +446,33 @@ def test_generate_probes_repairs_a_leaky_generator(monkeypatch):
         synth.write_generator(design_of(colour_design()), COLOURS, 8)
 
 
+def test_generate_probes_shows_the_llm_its_rejected_code_and_short_counts(monkeypatch):
+    networked = "import requests\n\ndef generate(out_dir, labels, n):\n    pass\n"
+    short = NUMBER_GENERATOR.replace("for k in range(n):", "for k in range(n if label != 'large' else 2):")
+    fake = FakeLLM(generators=[networked, short, NUMBER_GENERATOR])
+    monkeypatch.setattr(llm, "ask_json", fake)
+    probes, code, used = synth.generate_probes(design_of(size_design()), n_per_label=8, suffix=".txt")
+    assert used == 3 and code.strip() == NUMBER_GENERATOR.strip()
+    second, third = fake.of(synth.GENERATOR_SCHEMA)[1:]
+    assert "network module" in second["earlier_attempts"][0]["reason"]
+    assert second["last_code"].strip() == networked.strip()  # the rejected code goes back for repair
+    assert "wrote too few .txt files ('large': 2)" in third["earlier_attempts"][1]["reason"]
+    assert third["extension"] == ".txt"
+    assert "consistency check" in probes.source and "same LLM" in probes.source
+
+
 def test_run_generator_writes_in_the_sandbox(tmp_path):
     out = synth.scratch_dir() / "out"
     report = synth.run_generator(NUMBER_GENERATOR, out, SIZES, 5)
     assert report["per_label"] == {"small": 5, "medium": 5, "large": 5}
     with pytest.raises(AdapterError, match="boom"):
         synth.run_generator("def generate(out_dir, labels, n):\n    raise RuntimeError('boom')\n", out, SIZES, 5)
+    if adapters.sandboxed():  # it may write into out_dir, and nowhere else outside its own folder
+        beside = out.parent / "beside.txt"
+        code = f"def generate(out_dir, labels, n):\n    open({str(beside)!r}, 'w').write('x')\n"
+        with pytest.raises(AdapterError, match="Operation not permitted"):
+            synth.run_generator(code, out, SIZES, 5)
+        assert not beside.exists()
 
 
 # ----------------------------------------------------------------------------- assess
@@ -401,9 +489,33 @@ def test_assess_holds_an_image_card_to_the_text_bars():
     assert card.kind == "image"  # the caller's card is untouched
 
 
+def test_assess_wants_enough_files_and_an_interval_clear_of_chance():
+    from sense.verify import _wilson
+
+    request = FitRequest(model="fake", dataset="p", modality="note")
+
+    def card(n, accuracy, chance=0.5, swapped=0.0):
+        return ReportCard("fake", "note", "p", "closed", "adapter:note-txt", "text", n, chance, accuracy,
+                          {"swapped": swapped, "no_input": chance}, interval=_wilson(accuracy, n))
+
+    # 2 of 2 right on two labels: the point bars pass, but two files tell nothing
+    ok, sentence = synth.assess(request, card(2, 1.0))
+    assert not ok and "only 2 probe files" in sentence
+    # 9 of 12 right on two labels: 75% clears the 65% bar, but the interval reaches down to chance
+    ok, sentence = synth.assess(request, card(12, 0.75))
+    assert not ok and "reaches down to the 50.0% chance level" in sentence
+    assert synth.assess(request, card(40, 0.75))[0]  # the same score on 40 files is clear of chance
+    assert synth.assess(request, card(10, 1.0))[0]
+    no_interval = card(40, 0.75)
+    no_interval.interval = None
+    assert synth.assess(request, no_interval)[0]  # computed when the card has none
+
+
 # ----------------------------------------------------------------------------- run_synth
-def test_run_synth_installs_a_working_adapter_from_user_examples(monkeypatch, tmp_path, note):
+def test_run_synth_installs_a_working_adapter_from_user_examples(monkeypatch, tmp_path, note, registry_reads_adapters):
     examples = colour_tree(tmp_path / "notes")
+    for colour in COLOURS:  # a sidecar file of another type beside the examples is not an example
+        (examples / colour / "README.md").write_text(f"notes about {colour}\n")
     monkeypatch.setattr(llm, "ask_json", FakeLLM(design=colour_design(), codes=[READS_CONTENT]))
     cards, installed, events = run("fake", note, "know which colour a note is about", examples=examples)
 
@@ -426,8 +538,13 @@ def test_run_synth_installs_a_working_adapter_from_user_examples(monkeypatch, tm
     data = last(events, "data", "ok").data
     assert data["provenance"] == "user" and data["licence"] == "user supplied" and data["source"] == str(examples)
     assert data["labels"] == sorted(COLOURS) and data["counts"] == dict.fromkeys(sorted(COLOURS), 10)
+    assert data["meta"]["skipped"]["other_types"] == 4 and data["meta"]["suffixes"] == [".txt"]
+    assert re.fullmatch(r"colour-note-examples-[0-9a-f]{10}", data["name"])  # nothing points back at the folder
+    # these notes say their colour in words, so the probes name their labels: a warning that travels with the card
+    assert len(data["label_leaks"]) == 4 and "Warning" in last(events, "data", "ok").message
     card = last(events, "verify", "ok").data["card"]
     assert card["dataset"] == data["name"] and card["kind"] == "text" and card["accuracy"] >= 0.9
+    assert card["n"] == 40  # every probe file is scored: the adapter was written before any existed
     decide = last(events, "decide", "ok").data
     assert decide["accepted"] is True and decide["install"] == installed
     done = last(events, "done").data
@@ -435,15 +552,34 @@ def test_run_synth_installs_a_working_adapter_from_user_examples(monkeypatch, tm
 
     (only,) = cards
     assert only.verdict == "installed" and "passed" in only.reason
+    assert "Warning about the probe files" in only.reason and "'red' is written" in only.reason
     (row,) = registry.installed("fake")
     assert row["bridge"] == installed and row["modality"] == "colour-note" and row["card"]["verdict"] == "installed"
+    assert "Warning about the probe files" in row["card"]["reason"]
     directory = registry.sense_dir("fake", "colour-note")
     assert (directory / "adapter.py").read_text().strip() == READS_CONTENT.strip()
     bridge = load_adapter_bridge(directory)
     manifest = bridge.manifest
     assert manifest["route"] == "text" and manifest["attempts"] == 1 and manifest["probes"]["provenance"] == "user"
+    assert len(manifest["probes"]["label_leaks"]) == 4
     assert manifest["question"] == "Which colour does the note describe?" and manifest["written_by"]
     assert bridge.prepare(note).text.endswith("colour blue. Serial 1")
+    assert [b.name for b in registry.get_bridges("fake")] == [installed]  # chat can load it
+
+
+def test_run_synth_installs_nothing_the_registry_cannot_load(monkeypatch, tmp_path, note):
+    # Until sense.bridges.load_bridge knows adapter bridges, installing one would make registry.get_bridges fail
+    # for the whole model, and with it every chat with an attached file.
+    examples = colour_tree(tmp_path / "notes")
+    monkeypatch.setattr(llm, "ask_json", FakeLLM(design=colour_design(), codes=[READS_CONTENT]))
+    cards, installed, events = run("fake", note, "know which colour a note is about", examples=examples)
+    assert installed is None and cards[0].verdict == "candidate" and "Not installed" in cards[0].reason
+    assert last(events, "decide").data["accepted"] is True
+    blocked = last(events, "install")
+    assert blocked.status == "info" and "cannot load an adapter bridge" in blocked.data["blocked"]
+    assert registry.installed("fake") == [] and registry.get_bridges("fake") == []
+    assert last(events, "done").data["installed"] is None
+    json.dumps([e.to_dict() for e in events], allow_nan=False)
 
 
 def test_run_synth_refuses_an_adapter_that_ignores_the_file(monkeypatch, tmp_path, note):
@@ -462,6 +598,24 @@ def test_run_synth_refuses_an_adapter_that_ignores_the_file(monkeypatch, tmp_pat
     json.dumps([e.to_dict() for e in events], allow_nan=False)
 
 
+def test_run_synth_refuses_a_constant_label_on_a_skewed_folder(monkeypatch, tmp_path, note, registry_reads_adapters):
+    # Saying "red" for every file scores 40 of 52 on a folder that is mostly red, well over the chance bar; only
+    # the swapped-input control, which scores the same, shows that the file made no difference.
+    examples = tmp_path / "skewed"
+    for colour, n in {"red": 40, "green": 4, "blue": 4, "yellow": 4}.items():
+        (examples / colour).mkdir(parents=True)
+        for k in range(n):
+            (examples / colour / f"note_{k:02d}.txt").write_text(f"Serial {colour} {k}\n")
+    says_red = 'def adapt(path):\n    return {"text": "This note is about the colour red."}\n'
+    monkeypatch.setattr(llm, "ask_json", FakeLLM(design=colour_design(), codes=[says_red]))
+    monkeypatch.setattr(synth, "MIN_PER_LABEL", 4)
+    cards, installed, events = run("fake", note, "know which colour a note is about", examples=examples)
+    (card,) = cards
+    assert card.n == 52 and card.accuracy >= card.chance + 0.15
+    assert card.controls["swapped"] == card.accuracy and card.controls["no_input"] <= 0.5
+    assert installed is None and card.verdict == "rejected" and "swapped input" in card.reason
+
+
 def test_labels_never_leak_through_file_names(monkeypatch, tmp_path, note):
     examples = colour_tree(tmp_path / "notes", name_after_label=True)
     monkeypatch.setattr(llm, "ask_json", FakeLLM(design=colour_design(), codes=[READS_NAME]))
@@ -473,7 +627,7 @@ def test_labels_never_leak_through_file_names(monkeypatch, tmp_path, note):
     assert not any(colour in str(p.relative_to(config.home())) for p in copies for colour in COLOURS)
 
 
-def test_run_synth_verifies_on_generated_probe_files(monkeypatch, tmp_path):
+def test_run_synth_verifies_on_generated_probe_files(monkeypatch, tmp_path, registry_reads_adapters):
     monkeypatch.setattr(synth, "GENERATED_PER_LABEL", 10)
     number = tmp_path / "reading.txt"
     number.write_text("512.25\n")
@@ -490,10 +644,14 @@ def test_run_synth_verifies_on_generated_probe_files(monkeypatch, tmp_path):
     assert data["provenance"] == "generated" and data["labels"] == sorted(SIZES)
     assert data["counts"] == dict.fromkeys(sorted(SIZES), 10) and data["label_leaks"] == []
     assert data["generator_code"].strip() == NUMBER_GENERATOR.strip() and len(data["generator_sha256"]) == 64
-    assert cards[0].verdict == "installed" and cards[0].accuracy >= 0.9
+    assert cards[0].verdict == "installed" and cards[0].accuracy >= 0.9 and cards[0].n == 30
+    # what generated labels are worth is said in the trace, on the card and in the manifest
+    assert "consistency check" in data["source"] and "consistency check" in data["caveat"]
+    assert "consistency check" in cards[0].reason
     directory = registry.sense_dir("fake", "number-file")
     assert (directory / "generator.py").read_text().strip() == NUMBER_GENERATOR.strip()
-    assert load_adapter_bridge(directory).manifest["probes"]["provenance"] == "generated"
+    probes_manifest = load_adapter_bridge(directory).manifest["probes"]
+    assert probes_manifest["provenance"] == "generated" and "consistency check" in probes_manifest["caveat"]
     # the adapter was written before any probe file existed, from the user's file alone
     (adapter_ask,) = fake.of(synth.CODE_SCHEMA)
     assert "512.25" in adapter_ask["sample"]["head"] and "generator" not in json.dumps(adapter_ask).lower()
@@ -530,6 +688,28 @@ def test_run_synth_stops_cleanly_without_an_llm(note):
     cards, installed, events = run("fake", note, "know the colour")  # fake mode: ask_json answers None
     assert (cards, installed) == ([], None)
     assert [(e.step, e.status) for e in events] == [("design", "start"), ("design", "fail"), ("done", "ok")]
+
+
+def test_run_synth_writes_no_code_where_the_sandbox_cannot_be_applied(monkeypatch, note):
+    fake = FakeLLM(design=colour_design(), codes=[READS_CONTENT])
+    monkeypatch.setattr(llm, "ask_json", fake)
+    monkeypatch.setattr(adapters, "sandbox_problem", lambda: "The macOS sandbox cannot be applied here.")
+    cards, installed, events = run("fake", note, "colour")
+    assert (cards, installed) == ([], None) and steps(events) == ["design", "build", "done"]
+    assert last(events, "build").status == "fail" and "cannot be applied" in last(events, "done").message
+    assert fake.of(synth.CODE_SCHEMA) == []  # no code was asked for, so none ran
+    with pytest.raises(AdapterError) as caught:
+        synth.write_adapter(design_of(colour_design()), note)
+    assert caught.value.cause == "sandbox"
+
+
+def test_run_synth_warns_when_there_is_no_sandbox(monkeypatch, note):
+    monkeypatch.setattr(llm, "ask_json", FakeLLM(design=colour_design(probe_plan="user"), codes=[READS_CONTENT]))
+    monkeypatch.setattr(adapters, "sandboxed", lambda: False)
+    monkeypatch.setattr(adapters, "sandbox_problem", lambda: None)
+    _, _, events = run("fake", note, "colour")
+    warnings = [e for e in events if e.step == "build" and e.data.get("warning") == "unsandboxed"]
+    assert len(warnings) == 1 and "no sandbox" in warnings[0].message
 
 
 def test_run_synth_stops_when_no_adapter_works(monkeypatch, note):

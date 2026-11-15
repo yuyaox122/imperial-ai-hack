@@ -12,16 +12,25 @@ Public surface (do not rename):
   code_imports(code) -> list[str]
       the top-level modules the code imports (and "ffmpeg"/"ffprobe" when it names them), for a manifest
   AdapterError(reason, traceback="", *, cause="error")
-      .reason (one line: what went wrong), .traceback (the tail of the traceback, or of the process's error output
-      when there is none), .cause ("exception", "output", "timeout", "exit" or "verify"); str() gives both texts
+      .reason (one line: what went wrong, at most REASON_CHARS), .traceback (the tail of the traceback, or of the
+      process's error output when there is none, at most TRACEBACK_CHARS), .cause ("exception", "output",
+      "timeout", "exit", "limit", "sandbox" or "verify"); str() gives both texts
   sandboxed() -> bool
-      whether adapters run under macOS sandbox-exec here (checked once: the binary exists and can apply a profile)
-  run_adapter(code, path, *, timeout=60) -> dict
-      runs adapt(path) on one file in a separate Python process and returns {"text": str} or
-      {"images": [PNG bytes, ...]}, each with "notes" (what the caps cut) and "seconds"
+      whether adapters run under macOS sandbox-exec here (the binary exists and can apply a profile; a working
+      sandbox is remembered, a failed check is tried again on the next call)
+  sandbox_problem() -> str | None
+      why run_adapter would refuse to run code here: on macOS it refuses whenever the sandbox cannot be applied
+      (for example inside another sandbox), unless SENSE_ADAPTER_UNSANDBOXED=1; None when it would run
+  redact(text) -> str
+      text with the values of secret-looking environment variables and key-shaped strings replaced
+  run_adapter(code, path, *, timeout=60, writable=None) -> dict
+      runs adapt(<a private copy of path>) in a separate Python process and returns {"text": str} or
+      {"images": [PNG bytes, ...]}, each with "notes" (what the caps cut) and "seconds"; `writable` is one more
+      folder the code may read and write (a probe generator's output folder)
   AdapterBridge(*, kind, modality, model_name, code, manifest=None, slug=None, timeout=60)
       a contracts.Bridge for files: kind "text" or "image", name "adapter:<slug>"; prepare(path) runs the adapter
-      (results cached per code and file sha256 within the process; errors too, but not timeouts) and returns a
+      (results cached per code and file sha256 within the process; so are the adapter's own exceptions and broken
+      output, but not crashes, kills, timeouts, limits or a missing sandbox, which may not recur) and returns a
       SenseInput: kind "text" with the adapter's text, or kind "image" with one PNG contact sheet of its images;
       run(path) gives the cached raw result; from_embedding raises ValueError; save(directory) writes bridge.json
       ({"kind", "name", "modality", "model_name", "adapter": true, "manifest", "timeout"}) and adapter.py. The
@@ -34,56 +43,79 @@ Public surface (do not rename):
       labelled probe files: name, title, modality, question, labels, items [(path, label index)], fit_idx, dev_idx,
       test_idx, source, licence, provenance ("user" | "dataset" | "generated"), meta; .y, .files and to_dict()
   probe_folder(path, *, name=None, question, modality, provenance="user", source="", licence="",
-               min_per_label=4, max_per_label=40, seed=0) -> ProbeSet
-  verify_files(model, bridge, probes, request, *, max_items=None, seed=0) -> contracts.ReportCard
+               min_per_label=4, max_per_label=40, seed=0, suffixes=None) -> ProbeSet
+  verify_files(model, bridge, probes, request, *, max_items=None, seed=0, idx=None) -> contracts.ReportCard
 
-The adapter contract. The code must define adapt(path), called once per file with the file's absolute path as a
-str, returning {"text": str} or {"images": [...]} (exactly one of those keys). Each image may be PNG or JPEG bytes
-(any format PIL reads is accepted), a PIL image, a path to an image file (relative paths are read from the
-adapter's working directory) or a uint8 numpy array; a single image not in a list is accepted too. The runner
-normalises every image to PNG, at most MAX_IMAGE_SIDE (512) px on the long side, and keeps at most MAX_IMAGES (9);
-text is cut to MAX_TEXT_CHARS (4000) characters including a note saying it was cut. Anything else (another return
-value, an exception, a non-zero exit, a crash, a timeout) raises AdapterError with the reason and the tail of the
-traceback, so the agent can show it to the LLM and ask for a repair.
+The adapter contract. The code must define adapt(path), called once per file with the absolute path of a private
+copy of the file as a str (<run folder>/input/input<extension>: the original's name and folder are never shown),
+returning {"text": str} or {"images": [...]} (exactly one of those keys). Each image may be PNG or JPEG bytes (any
+format PIL reads is accepted), a PIL image, a path to an image file (relative paths are read from the adapter's
+working directory) or a uint8 numpy array; a single image not in a list is accepted too. The runner normalises
+every image to PNG, at most MAX_IMAGE_SIDE (512) px on the long side, and keeps at most MAX_IMAGES (9); text is cut
+to MAX_TEXT_CHARS (4000) characters including a note saying it was cut. The harness applies those caps again to
+what it receives (the adapter shares the runner's interpreter, so it could forge the runner's payload): it reads at
+most MAX_RESULT_BYTES, cuts the text, keeps MAX_IMAGES images and decodes, scales and re-encodes each one itself,
+refusing images over MAX_IMAGE_PIXELS. Text and error messages are passed through redact() before they leave
+run_adapter. Anything else (another return value, an exception, a non-zero exit, a crash, a timeout, too much disk
+or memory) raises AdapterError with the reason and the tail of the traceback, so the agent can show it to the LLM
+and ask for a repair.
 
 The sandbox. run_adapter writes the code and a small runner script to a fresh temporary directory and runs
-`sys.executable -I -B runner.py adapter.py <path>` there, in a new session (process group), with:
+`sys.executable -I -B runner.py adapter.py <copy of the file>` there, in a new session (process group), with:
   - its own working directory (<tmp>/work), also its HOME and TMPDIR, so caches and stray files land there;
   - an environment without any variable whose name contains KEY, TOKEN, SECRET, PASSWORD, PASSWD, CREDENTIAL or
-    AUTH, or starts with DATABRICKS_, OPENAI_, LINKUP_, ANTHROPIC_, AWS_, AZURE_, GOOGLE_, GH_ or GITHUB_;
+    AUTH, or starts with DATABRICKS_, OPENAI_, LINKUP_, ANTHROPIC_, AWS_, AZURE_, GOOGLE_, GH_ or GITHUB_, and with
+    SENSE_ADAPTER_RUN set to a random token for this run;
   - HTTP_PROXY, HTTPS_PROXY and ALL_PROXY (and the lowercase forms) set to BLOCKED_PROXY, a closed local port
     (http://127.0.0.1:9), and NO_PROXY empty, so ordinary HTTP fails at once instead of hanging;
-  - on macOS, when /usr/bin/sandbox-exec exists and works (sandboxed()), a sandbox profile that denies all
-    network access, denies reading any file named .env* and the usual credential stores in the user's home
-    (~/.ssh, ~/.aws, ~/.netrc, ~/.config/gh, ...), and denies writing anywhere but the temporary directory,
-    /private/tmp, the per-user temporary folders (/private/var/folders) and /dev;
-  - a wall-clock timeout, after which the whole process group is killed (it is killed after a normal exit too, so
-    nothing the adapter started lives on).
-Without a working sandbox-exec (another OS, or already inside a sandbox) only the environment and proxy measures
-apply. Whatever the adapter prints, to
-stdout or stderr, and whatever its child processes print, goes to a log file; the runner keeps the real stdout for
-its one JSON result (images as base64).
+  - on macOS, a sandbox-exec profile that denies all network access; denies reading /Users, /Volumes,
+    /private/tmp, /private/var/folders, the user's home and config.home() (the probe store), except the
+    interpreter's prefixes and site-packages and this run's own folders; denies reading .env* files and credential
+    stores (~/.ssh, ~/.aws, ~/.codex, ~/.config, shell profiles, ...) even there; and denies writing anywhere but
+    this run's temporary folder, `writable` and /dev. When sandbox-exec exists but cannot apply a profile (for
+    example inside another sandbox), run_adapter refuses (AdapterError, cause "sandbox") unless
+    SENSE_ADAPTER_UNSANDBOXED=1. On other systems there is no sandbox: only the environment and proxy measures and
+    the limits below apply;
+  - RLIMIT_FSIZE (FILE_SIZE_LIMIT, 1 GB) on every file the run writes, and checks every CHECK_EVERY seconds of the
+    bytes in its folders (DISK_BUDGET, 2 GB) and of the resident memory of its processes (MEMORY_BUDGET, 2 GB);
+    past either it is stopped (cause "limit");
+  - a wall-clock timeout, enforced while the harness reads the result (a child left holding the result pipe
+    cannot stall it). Afterwards, timeout or not, the harness kills the run's process group, the descendants it
+    saw while the run lasted, and every process whose environment holds the run's token or whose command line
+    names the run's folder. That catches forked children and the programs the adapter starts; a process that
+    leaves the session, clears its environment and is reparented before it was seen can still escape, so this
+    sweep is a best effort, not a guarantee.
+Whatever the adapter prints, to stdout or stderr, and whatever its child processes print, goes to a log file; the
+runner keeps the real stdout for its one JSON result (images as base64). The sandbox cannot stop an adapter from
+reading other same-user processes' command lines and environments through sysctl (KERN_PROCARGS2): keep API keys
+in .env files the server loads, not exported in the shell that starts it. redact() is the last line of defence for
+text; an image can carry anything.
 
-Probe files. A bridge is verified on files whose labels come from a source independent of the adapter: a user's
-examples folder, a public dataset, or files generated so that the label is true by construction (provenance
-"user", "dataset" or "generated"). probe_folder reads a folder with one sub-folder per label: labels come from the
-folder names ("_" and "-" read as spaces; folders starting with "." or "_" are ignored), files of any type directly
-inside a label folder are used (hidden and empty files and sub-folders are skipped and counted), exact duplicates
-by sha256 are collapsed (the same bytes under two labels are dropped everywhere and listed), at most max_per_label
-files per label are kept (a seeded pick), every label needs min_per_label files (at least 3) and there must be 2
-labels, and each label is split 60/20/20 (seeded; at least one dev and one test file per label). Every file is
-copied to <config.home()>/probes/<name>/<sha256[:16]><extension> (extension lowercased) and the items point at the
-copies, so no adapter ever sees a file name that gives the label away.
+Probe files. A bridge is verified on files whose labels come from a source other than the adapter: a user's
+examples folder, a public dataset, or files a generator script built to have their label (provenance "user",
+"dataset" or "generated"; generated labels are only as independent as the generator, see agent.synth).
+probe_folder reads a folder with one sub-folder per label: labels come from the folder names ("_" and "-" read as
+spaces; folders starting with "." or "_" are ignored), files directly inside a label folder are used (with
+`suffixes`, only files with those extensions; hidden, empty and other-type files and sub-folders are skipped and
+counted), exact duplicates by sha256 are collapsed (the same bytes under two labels are dropped everywhere and
+listed), at most max_per_label files per label are kept (a seeded pick), every label needs min_per_label files (at
+least 3) and there must be 2 labels, and each label is split 60/20/20 (seeded; at least one dev and one test file
+per label). Every file is copied, in a shuffled order across labels and with one fixed modification time, to
+<config.home()>/probes/<name>/<sha256[:16]><extension> (extension lowercased) and the items point at the copies, so
+that file names, inode order and times say nothing about the labels. The extension is kept, since many formats are
+read by it: when extensions differ between labels, meta["warnings"] says so (pass `suffixes` to avoid it). Each
+file must stand alone: a format that refers to sidecar files (OBJ with .mtl, glTF with .bin) loses them in the copy.
 
-Verification. verify_files is sense.verify.verify for files: each held-out item (probes.test_idx, at most max_items;
-None means 200 for an open-weight model and config.api_verify_items() otherwise, drawn with `seed`) becomes a
-question with probes.question and up to five options (the true label and others, seeded, sense.bridges.five_options),
-answered by model.choose with [bridge.prepare(file)]. Controls: "swapped" (the same question with the bridged input
-of a held-out file of another label) and "no_input". Chance is 1/min(5, n_labels); the interval is the 95% Wilson
-interval of sense.verify; card.dataset is probes.name, card.kind is bridge.kind and the verdict is "candidate". An
-adapter that fails on a held-out file counts that question as wrong (the model is not asked); in the swapped control
-a failed partner file is asked with no input. Failures are listed in card.reason. When the adapter fails on more than
-half of the held-out files, verify_files raises AdapterError (cause "verify") instead of returning a card.
+Verification. verify_files is sense.verify.verify for files: each scored item (`idx`, by default probes.test_idx;
+at most max_items, None meaning 200 for an open-weight model and config.api_verify_items() otherwise, drawn with
+`seed`) becomes a question with probes.question and up to five options (the true label and others, seeded,
+sense.bridges.five_options), answered by model.choose with [bridge.prepare(file)]. Controls: "swapped" (the same
+question with the bridged input of another scored file of another label that the adapter could read; when there is
+none, that question counts as answered correctly) and "no_input". Chance is 1/min(5, n_labels); the interval is the
+95% Wilson interval of sense.verify; card.dataset is probes.name, card.kind is bridge.kind and the verdict is
+"candidate". An adapter that fails on a scored file counts that question as wrong (the model is not asked), and a
+failed file never serves as a swapped input. Failures are listed in card.reason. When the adapter fails on more
+than half of the scored files, verify_files raises AdapterError (cause "verify") instead of returning a card.
 Adapter bridges are prepared in up to PREPARE_WORKERS processes at once.
 
 Fake mode needs nothing special: FakeModel picks the option a text input names, so a tiny adapter that reads, for
@@ -94,14 +126,18 @@ from __future__ import annotations
 
 import ast
 import base64
+import binascii
 import hashlib
 import importlib.util
 import io
 import json
 import os
 import re
+import secrets
+import selectors
 import shutil
 import signal
+import site
 import subprocess
 import sys
 import tempfile
@@ -111,7 +147,6 @@ from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from functools import lru_cache
 from pathlib import Path
 from typing import Any, Literal
 
@@ -123,14 +158,25 @@ from sense.contracts import BaseModel, Bridge, ChoiceItem, FitRequest, ReportCar
 MAX_TEXT_CHARS = 4000
 MAX_IMAGES = 9
 MAX_IMAGE_SIDE = 512
+MAX_IMAGE_PIXELS = 4096 * 4096  # an image in a result larger than this is refused rather than decoded
 SHEET_WIDTH = 1024  # the contact sheet of an image bridge is at most this wide
 SHEET_GAP = 8
 DEFAULT_TIMEOUT = 60.0
 TAIL_CHARS = 2500  # how much of a traceback or error log an AdapterError keeps
+REASON_CHARS = 1000  # an AdapterError's one-line reason is cut to this
+TRACEBACK_CHARS = 8000  # and its traceback to this (a repair round's combined tracebacks fit)
+MAX_RESULT_BYTES = 16 * 1024 * 1024  # what the harness reads from the runner's result pipe, at most
+DISK_BUDGET = 2 * 1024**3  # bytes an adapter run may write (its temporary folder and `writable`), checked while it runs
+MEMORY_BUDGET = 2 * 1024**3  # resident bytes of the adapter's processes, checked while it runs
+FILE_SIZE_LIMIT = 1024**3  # RLIMIT_FSIZE in the runner: no single file it writes grows past this
+CHECK_EVERY = 0.5  # seconds between the disk and memory checks of a running adapter
 PREPARE_WORKERS = 4
 BLOCKED_PROXY = "http://127.0.0.1:9"  # the discard port, closed: a request through it is refused at once
 SANDBOX_EXEC = "/usr/bin/sandbox-exec"
+UNSANDBOXED_ENV = "SENSE_ADAPTER_UNSANDBOXED"  # "1": run adapters even where the macOS sandbox cannot be applied
+RUN_TOKEN_ENV = "SENSE_ADAPTER_RUN"  # a random token in every adapter process's environment, to find them all
 _CACHE_SIZE = 1024
+_CACHED_CAUSES = ("exception", "output")  # deterministic failures; a crash, a kill or a timeout may not recur
 
 _CORE_LIBRARIES = [
     "numpy", "scipy", "PIL", "json", "csv", "math", "struct", "zipfile", "gzip", "io", "re", "xml.etree", "statistics",
@@ -142,10 +188,18 @@ _BINARY_DIRS = ["/opt/homebrew/bin", "/usr/local/bin"]
 _SECRET_WORDS = ("KEY", "TOKEN", "SECRET", "PASSWORD", "PASSWD", "CREDENTIAL", "AUTH")
 _SECRET_PREFIXES = ("DATABRICKS_", "OPENAI_", "LINKUP_", "ANTHROPIC_", "AWS_", "AZURE_", "GOOGLE_", "GH_", "GITHUB_")
 _PROXY_VARS = ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy")
-_HOME_SECRETS = [  # relative to the user's home; never readable by an adapter under sandbox-exec
-    ".ssh", ".aws", ".netrc", ".config/gh", ".git-credentials", ".docker", ".kube", ".config/gcloud",
-    ".databrickscfg", ".azure", ".gnupg", "Library/Keychains",
+# Folders an adapter may not read under sandbox-exec (the interpreter, its libraries and the run's own temporary
+# folder are allowed back), then credential stores denied even inside what was allowed back.
+_READ_DENIED_ROOTS = ["/Users", "/Volumes", "/private/tmp", "/private/var/folders"]
+_HOME_SECRETS = [  # relative to the user's home
+    ".ssh", ".aws", ".netrc", ".config", ".git-credentials", ".docker", ".kube", ".databrickscfg", ".azure", ".gnupg",
+    ".codex", ".claude", ".claude.json", ".zshrc", ".zprofile", ".zshenv", ".zlogin", ".bashrc", ".bash_profile",
+    ".profile", ".npmrc", ".pypirc", "Library/Keychains", "Library/Cookies", "Library/Application Support",
 ]
+# Key-shaped strings, redacted from whatever an adapter returns or raises before it reaches a trace or an LLM.
+_KEY_SHAPES = re.compile(
+    r"(?<![A-Za-z0-9])(?:sk|pk|rk|lk|ghp|gho|ghs|ghu|github_pat|xox[abprs]|dapi|AKIA|ASIA)[-_A-Za-z0-9]{16,}"
+)
 
 
 # ----------------------------------------------------------------------------- toolbox
@@ -196,12 +250,14 @@ def code_imports(code: str) -> list[str]:
 class AdapterError(Exception):
     """An adapter failed: `reason` says what went wrong in one line, `traceback` holds the tail of the traceback
     (or of the process's error output when there is no traceback), `cause` is "exception", "output", "timeout",
-    "exit" or "verify"."""
+    "exit", "limit", "sandbox" or "verify". The reason is cut to REASON_CHARS and the traceback to TRACEBACK_CHARS,
+    so an error that quotes a whole file stays small in prompts and traces."""
 
     def __init__(self, reason: str, traceback: str = "", *, cause: str = "error"):
+        reason = _clip(str(reason), REASON_CHARS)
         super().__init__(reason)
         self.reason = reason
-        self.traceback = traceback
+        self.traceback = _tail(str(traceback or ""), TRACEBACK_CHARS)
         self.cause = cause
 
     def __str__(self) -> str:
@@ -209,6 +265,14 @@ class AdapterError(Exception):
 
     def to_dict(self) -> dict[str, str]:
         return {"reason": self.reason, "traceback": self.traceback, "cause": self.cause}
+
+
+def _clip(text: str, limit: int) -> str:
+    """`text` cut to `limit` characters, saying how much was cut."""
+    if len(text) <= limit:
+        return text
+    note = f" [... {len(text) - limit} more characters cut]"
+    return text[: max(0, limit - len(note))] + note
 
 
 def _tail(text: str, limit: int = TAIL_CHARS) -> str:
@@ -220,11 +284,31 @@ def _tail(text: str, limit: int = TAIL_CHARS) -> str:
     return "..." + (cut[newline:] if 0 <= newline < 200 else cut)
 
 
+def _secret_name(name: str) -> bool:
+    upper = name.upper()
+    return any(word in upper for word in _SECRET_WORDS) or upper.startswith(_SECRET_PREFIXES)
+
+
+def redact(text: str) -> str:
+    """`text` with the values of this process's secret-looking environment variables (names with KEY, TOKEN,
+    SECRET, ...; at least 8 characters long) and key-shaped strings (sk-..., ghp_..., AKIA...) replaced by
+    "[redacted]". Applied to everything an adapter returns as text or raises, before it reaches a trace or an LLM."""
+    for name, value in os.environ.items():
+        if len(value) >= 8 and _secret_name(name) and value in text:
+            text = text.replace(value, "[redacted]")
+    return _KEY_SHAPES.sub("[redacted]", text)
+
+
 # ----------------------------------------------------------------------------- the runner (child process)
 _RUNNER = r'''
 import base64, io, json, os, sys, traceback
 
-MAX_TEXT, MAX_IMAGES, MAX_SIDE = int(sys.argv[3]), int(sys.argv[4]), int(sys.argv[5])
+MAX_TEXT, MAX_IMAGES, MAX_SIDE, FSIZE = int(sys.argv[3]), int(sys.argv[4]), int(sys.argv[5]), int(sys.argv[6])
+try:  # no file this process or its children write grows past FSIZE (Python ignores SIGXFSZ: writes fail instead)
+    import resource
+    resource.setrlimit(resource.RLIMIT_FSIZE, (FSIZE, FSIZE))
+except Exception:
+    pass
 
 
 class BadOutput(Exception):
@@ -342,46 +426,60 @@ def _sbpl(text: str) -> str:
     return '"' + text.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
-def _profile(tmp: Path) -> str:
-    """macOS sandbox profile: no network, no secrets, writes only to temporary places."""
+def _interpreter_paths() -> list[str]:
+    """What the child interpreter must read: its prefixes, its site-packages and the folders of ffmpeg/ffprobe."""
+    paths = [sys.prefix, sys.base_prefix, sys.exec_prefix, sys.base_exec_prefix]
+    paths.append(os.path.dirname(os.path.realpath(sys.executable)))
+    try:
+        paths += site.getsitepackages()
+    except AttributeError:  # an old virtualenv's site module
+        pass
+    paths += [os.path.dirname(os.path.realpath(b)) for b in map(_binary, _BINARIES) if b]
+    return [p for p in dict.fromkeys(os.path.realpath(p) for p in paths if p) if p != "/"]
+
+
+def _profile(tmp: Path, writable: Path | None = None) -> str:
+    """macOS sandbox profile: no network; no reads of the user's folders and temporary folders except the
+    interpreter, its libraries and this run's own folders; no credential stores or .env files even there; writes
+    only to this run's temporary folder (and `writable`)."""
     home = Path.home()
-    secrets = " ".join(f"(subpath {_sbpl(str(home / p))})" for p in _HOME_SECRETS)
-    writable = " ".join(
-        f"(subpath {_sbpl(p)})" for p in dict.fromkeys([os.path.realpath(tmp), "/private/tmp", "/private/var/folders"])
-    )
+    own = [os.path.realpath(tmp)] + ([os.path.realpath(writable)] if writable is not None else [])
+    denied = list(dict.fromkeys(_READ_DENIED_ROOTS + [os.path.realpath(home), os.path.realpath(config.home())]))
+    allowed = list(dict.fromkeys(own + _interpreter_paths()))
+    ancestors = sorted({str(parent) for p in allowed for parent in Path(p).parents})
+    secrets_ = " ".join(f"(subpath {_sbpl(str(home / p))})" for p in _HOME_SECRETS)
     return (
         "(version 1)\n"
         "(allow default)\n"
         "(deny network*)\n"
-        f'(deny file-read* (regex #"/\\.env[^/]*$") {secrets})\n'
+        f"(deny file-read* {' '.join(f'(subpath {_sbpl(p)})' for p in denied)})\n"
+        f"(allow file-read* {' '.join(f'(subpath {_sbpl(p)})' for p in allowed)})\n"
+        f"(allow file-read-metadata {' '.join(f'(literal {_sbpl(p)})' for p in ancestors)})\n"
+        f'(deny file-read* (regex #"/\\.env[^/]*$") {secrets_})\n'
         "(deny file-write*)\n"
-        f'(allow file-write* {writable} (regex #"^/dev/"))\n'
+        f"(allow file-write* {' '.join(f'(subpath {_sbpl(p)})' for p in own)} (regex #\"^/dev/\"))\n"
     )
 
 
-def _child_env(work: Path) -> dict[str, str]:
-    env = {}
-    for name, value in os.environ.items():
-        upper = name.upper()
-        if any(word in upper for word in _SECRET_WORDS) or upper.startswith(_SECRET_PREFIXES):
-            continue
-        env[name] = value
+def _child_env(work: Path, token: str) -> dict[str, str]:
+    env = {name: value for name, value in os.environ.items() if not _secret_name(name)}
     for name in _PROXY_VARS:
         env[name] = BLOCKED_PROXY
     env["NO_PROXY"] = env["no_proxy"] = ""
     tmp = work / "tmp"
     tmp.mkdir(exist_ok=True)
     env.update(HOME=str(work), TMPDIR=str(tmp), MPLCONFIGDIR=str(work), XDG_CACHE_HOME=str(work / "cache"))
+    env[RUN_TOKEN_ENV] = token
     path = env.get("PATH", os.defpath).split(os.pathsep)
     extra = [str(Path(b).parent) for b in map(_binary, _BINARIES) if b]
     env["PATH"] = os.pathsep.join(dict.fromkeys(path + extra))
     return env
 
 
-@lru_cache(maxsize=1)
-def sandboxed() -> bool:
-    """Whether adapters run under sandbox-exec here: macOS, the binary exists, and it can apply a profile (it
-    cannot inside another sandbox). Checked once per process."""
+_sandbox_works = False
+
+
+def _probe_sandbox() -> bool:
     if sys.platform != "darwin" or not os.path.exists(SANDBOX_EXEC):
         return False
     try:
@@ -394,6 +492,30 @@ def sandboxed() -> bool:
     return done.returncode == 0
 
 
+def sandboxed() -> bool:
+    """Whether adapters run under sandbox-exec here: macOS, the binary exists, and it can apply a profile (it
+    cannot inside another sandbox). A working sandbox is remembered; a failed check is tried again next time."""
+    global _sandbox_works
+    if not _sandbox_works:
+        _sandbox_works = _probe_sandbox()
+    return _sandbox_works
+
+
+def sandbox_problem() -> str | None:
+    """Why run_adapter would refuse to run anything here, or None. On macOS (where /usr/bin/sandbox-exec exists)
+    adapters run only inside the sandbox, unless SENSE_ADAPTER_UNSANDBOXED=1; elsewhere there is no sandbox to
+    apply and only the environment and proxy measures stand."""
+    if sys.platform != "darwin" or not os.path.exists(SANDBOX_EXEC) or sandboxed():
+        return None
+    if os.environ.get(UNSANDBOXED_ENV, "") == "1":
+        return None
+    return (
+        "The macOS sandbox (sandbox-exec) cannot be applied here, perhaps because this process already runs inside "
+        "another sandbox, so agent-written code is not run. Start the server from an ordinary terminal, or set "
+        f"{UNSANDBOXED_ENV}=1 to run adapters without the sandbox (they then have network and file access)."
+    )
+
+
 def _kill_group(proc: subprocess.Popen) -> None:
     try:
         os.killpg(proc.pid, signal.SIGKILL)
@@ -401,53 +523,311 @@ def _kill_group(proc: subprocess.Popen) -> None:
         pass
 
 
-def run_adapter(code: str, path: Path, *, timeout: float = DEFAULT_TIMEOUT) -> dict:
+def _place_input(path: Path, folder: Path) -> Path:
+    """A private copy of `path` as <folder>/input<extension>: the adapter sees no name, folder or neighbours of the
+    original, and cannot change it. An APFS clone (copy-on-write, instant) when possible, else a full copy."""
+    suffix = path.suffix.lower()
+    if not re.fullmatch(r"\.[a-z0-9]{1,10}", suffix):
+        suffix = ""
+    folder.mkdir()
+    dest = folder / f"input{suffix}"
+    if sys.platform == "darwin":
+        try:
+            import ctypes
+
+            libc = ctypes.CDLL(None, use_errno=True)
+            if libc.clonefile(os.fsencode(path), os.fsencode(dest), 0) == 0:
+                return dest
+        except (OSError, AttributeError):
+            pass
+    shutil.copyfile(path, dest)
+    return dest
+
+
+def run_adapter(
+    code: str, path: Path, *, timeout: float = DEFAULT_TIMEOUT, writable: Path | None = None
+) -> dict:
     """Run adapt(path) from `code` on one file in a separate, sandboxed Python process (see the module docstring).
 
+    The adapter gets a private copy of the file (<its folder>/input<extension>), not `path` itself. `writable` is a
+    folder it may also read and write (for a probe generator's output); everything else it writes goes to its own
+    temporary folder, removed afterwards.
+
     Returns {"text": str, "notes": [...], "seconds": float} or {"images": [PNG bytes, ...], "notes": [...],
-    "seconds": float}. Raises AdapterError when the adapter raises, returns anything else, exits non-zero, crashes
-    or runs longer than `timeout` seconds; ValueError when `path` is not a file or `timeout` is not positive."""
+    "seconds": float}. Raises AdapterError when the adapter raises, returns anything else, exits non-zero, crashes,
+    runs longer than `timeout` seconds, writes too much or uses too much memory, or when the sandbox it needs cannot
+    be applied (sandbox_problem()); ValueError when `path` is not a file or `timeout` is not positive."""
     path = Path(path).expanduser().resolve()
     if not path.is_file():
         raise ValueError(f"{path} is not a file; give the path of the file to adapt.")
     if not timeout or timeout <= 0:
         raise ValueError(f"timeout must be a positive number of seconds, not {timeout!r}.")
+    if writable is not None:
+        writable = Path(writable).expanduser().resolve()
+        if not writable.is_dir():
+            raise ValueError(f"{writable} is not a folder; give an existing folder the code may write to.")
+    problem = sandbox_problem()
+    if problem is not None:
+        raise AdapterError(problem, cause="sandbox")
     tmp = Path(tempfile.mkdtemp(prefix="sense-adapter-")).resolve()
     started = time.monotonic()
     try:
         work = tmp / "work"
         work.mkdir()
+        target = _place_input(path, tmp / "input")
         code_file, runner = tmp / "adapter.py", tmp / "runner.py"
         code_file.write_text(code, encoding="utf-8")
         runner.write_text(_RUNNER, encoding="utf-8")
         cmd = [
-            sys.executable, "-I", "-B", str(runner), str(code_file), str(path),
-            str(MAX_TEXT_CHARS), str(MAX_IMAGES), str(MAX_IMAGE_SIDE),
+            sys.executable, "-I", "-B", str(runner), str(code_file), str(target),
+            str(MAX_TEXT_CHARS), str(MAX_IMAGES), str(MAX_IMAGE_SIDE), str(FILE_SIZE_LIMIT),
         ]
         if sandboxed():
-            cmd = [SANDBOX_EXEC, "-p", _profile(tmp), *cmd]
+            cmd = [SANDBOX_EXEC, "-p", _profile(tmp, writable), *cmd]
+        token = secrets.token_hex(12)
         log_path = tmp / "log.txt"
         with open(log_path, "wb") as log:
             proc = subprocess.Popen(
-                cmd, cwd=work, env=_child_env(work), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=log,
-                start_new_session=True,
+                cmd, cwd=work, env=_child_env(work, token), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                stderr=log, start_new_session=True,
             )
+            watch = _Watch(proc, token, [tmp] + ([writable] if writable is not None else []))
             try:
-                stdout, _ = proc.communicate(timeout=timeout)
-            except subprocess.TimeoutExpired:
-                _kill_group(proc)
-                proc.communicate()
-                raise AdapterError(
-                    f"The adapter ran for longer than {timeout:g} s on {path.name} and was stopped.",
-                    _log_tail(log_path, tmp),
-                    cause="timeout",
-                ) from None
+                stdout, stopped = _collect(proc, started + timeout, watch)
             finally:
-                _kill_group(proc)
+                watch.stop()
+                proc.stdout.close()
+        if stopped is not None:
+            raise _stopped(stopped, timeout, path, _log_tail(log_path, tmp))
         seconds = round(time.monotonic() - started, 3)
         return _result(stdout, proc.returncode, log_path, tmp, seconds)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+
+
+def _stopped(why: str, timeout: float, path: Path, tail: str) -> AdapterError:
+    if why == "timeout":
+        return AdapterError(
+            f"The adapter ran for longer than {timeout:g} s on {path.name} and was stopped.", tail, cause="timeout"
+        )
+    if why == "output":
+        return AdapterError(
+            f"The adapter sent more than {_size(MAX_RESULT_BYTES)} of result data for {path.name} and was "
+            "stopped; return less (the text and image caps apply anyway).", tail, cause="output",
+        )
+    if why == "disk":
+        return AdapterError(
+            f"The adapter wrote more than {_size(DISK_BUDGET)} of files on {path.name} and was stopped; "
+            "write less (sample, or work in memory).", tail, cause="limit",
+        )
+    return AdapterError(
+        f"The adapter used more than {_size(MEMORY_BUDGET)} of memory on {path.name} and was stopped; "
+        "read the file in parts or sample it.", tail, cause="limit",
+    )
+
+
+def _size(n: int) -> str:
+    return f"{n / 2**30:g} GB" if n >= 2**30 else f"{n / 2**20:g} MB"
+
+
+def _collect(proc: subprocess.Popen, deadline: float, watch: "_Watch") -> tuple[bytes, str | None]:
+    """The runner's result from its stdout, read with a deadline and a byte cap, never blocking past the deadline
+    (a child the adapter left holding the pipe cannot stall the harness). (bytes, None) when the runner finished;
+    (b"", "timeout" | "output" | "disk" | "memory") when it was stopped."""
+    fd = proc.stdout.fileno()
+    os.set_blocking(fd, False)
+    chunks: list[bytes] = []
+    size = 0
+    exited = False
+    with selectors.DefaultSelector() as selector:
+        selector.register(fd, selectors.EVENT_READ)
+        while True:
+            now = time.monotonic()
+            if now >= deadline:
+                return b"", "timeout"
+            if selector.select(min(CHECK_EVERY, deadline - now)):
+                try:
+                    data = os.read(fd, 1 << 16)
+                except BlockingIOError:
+                    data = None
+                if data == b"":
+                    return b"".join(chunks), None
+                if data:
+                    size += len(data)
+                    if size > MAX_RESULT_BYTES:
+                        return b"", "output"
+                    chunks.append(data)
+                    continue
+            elif exited:  # the runner is gone and nothing more is waiting in the pipe
+                return b"".join(chunks), None
+            if proc.poll() is not None:
+                exited = True  # read once more what is already in the pipe, then stop
+                continue
+            problem = watch.check()
+            if problem is not None:
+                return b"", problem
+
+
+class _Watch:
+    """Watches one adapter run: its disk use and the memory of its processes while it runs, then kills every
+    process it can tie to the run (its process group, descendants seen while it ran, and any process whose
+    environment carries the run's token or whose command line names its temporary folder)."""
+
+    def __init__(self, proc: subprocess.Popen, token: str, folders: list[Path]):
+        self.proc, self.token, self.folders = proc, token, folders
+        self.tmp = str(folders[0])
+        self.seen: dict[int, str] = {}  # descendant pid -> its command line when seen
+        self.next_check = time.monotonic() + CHECK_EVERY
+
+    def check(self) -> str | None:
+        now = time.monotonic()
+        if now < self.next_check:
+            return None
+        self.next_check = now + CHECK_EVERY
+        if sum(_folder_size(f, DISK_BUDGET) for f in self.folders) > DISK_BUDGET:
+            return "disk"
+        if self._resident() > MEMORY_BUDGET:
+            return "memory"
+        return None
+
+    def _resident(self) -> int:
+        """Resident bytes of the runner's process group and descendants; remembers the descendants."""
+        rows = _process_table()
+        children: dict[int, list[int]] = {}
+        for pid, ppid, _, _, _ in rows:
+            children.setdefault(ppid, []).append(pid)
+        ours, stack = set(), [self.proc.pid]
+        while stack:
+            pid = stack.pop()
+            if pid not in ours:
+                ours.add(pid)
+                stack += children.get(pid, [])
+        total = 0
+        for pid, _, pgid, rss, command in rows:
+            if pid in ours or pgid == self.proc.pid:
+                total += rss
+                if pid != self.proc.pid:
+                    self.seen[pid] = command
+        return total
+
+    def stop(self) -> None:
+        _kill_group(self.proc)
+        victims = set()
+        for pid, line in _environment_table():
+            if f"{RUN_TOKEN_ENV}={self.token}" in line or self.tmp in line:
+                victims.add(pid)
+            elif pid in self.seen and line.startswith(self.seen[pid]):
+                victims.add(pid)
+        # macOS shows no environment for its own programs (/bin/sleep, say): their working folder gives them away
+        victims |= {pid for pid, cwd in _working_dirs().items() if cwd == self.tmp or cwd.startswith(self.tmp + "/")}
+        victims.discard(os.getpid())
+        for pid in victims:
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError, OSError):
+                pass
+        try:
+            self.proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            pass
+
+
+def _folder_size(folder: Path, stop_above: int) -> int:
+    total = 0
+    try:
+        for root, _, files in os.walk(folder):
+            for name in files:
+                try:
+                    total += os.lstat(os.path.join(root, name)).st_size
+                except OSError:
+                    pass
+                if total > stop_above:
+                    return total
+    except OSError:
+        pass
+    return total
+
+
+def _process_table() -> list[tuple[int, int, int, int, str]]:
+    """(pid, ppid, pgid, resident bytes, command line) of every process; [] when ps fails."""
+    try:
+        out = subprocess.run(
+            ["/bin/ps" if os.path.exists("/bin/ps") else "ps", "-A", "-o", "pid=,ppid=,pgid=,rss=,command="],
+            capture_output=True, text=True, timeout=10,
+            errors="replace",
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        return []
+    rows = []
+    for line in out.splitlines():
+        parts = line.split(None, 4)
+        if len(parts) >= 4 and all(p.isdigit() for p in parts[:4]):
+            pid, ppid, pgid, rss = (int(p) for p in parts[:4])
+            rows.append((pid, ppid, pgid, rss * 1024, parts[4] if len(parts) > 4 else ""))
+    return rows
+
+
+def _working_dirs() -> dict[int, str]:
+    """pid -> working folder of every process of this user that can be inspected; {} when that is not possible."""
+    out: dict[int, str] = {}
+    if sys.platform != "darwin":
+        proc_root = Path("/proc")
+        for entry in proc_root.iterdir() if proc_root.is_dir() else []:
+            if entry.name.isdigit():
+                try:
+                    out[int(entry.name)] = os.readlink(entry / "cwd")
+                except OSError:
+                    pass
+        return out
+    try:
+        import ctypes
+
+        libproc = ctypes.CDLL("/usr/lib/libproc.dylib", use_errno=True)
+        libproc.proc_listallpids.argtypes = [ctypes.c_void_p, ctypes.c_int]
+        libproc.proc_pidinfo.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_uint64, ctypes.c_void_p, ctypes.c_int]
+        count = libproc.proc_listallpids(None, 0)
+        pids = (ctypes.c_int * (max(count, 0) + 256))()
+        count = libproc.proc_listallpids(pids, ctypes.sizeof(pids))
+        # struct proc_vnodepathinfo: the working folder's vnode_info (152 bytes), then its path (MAXPATHLEN)
+        size, offset = 2352, 152
+        buf = ctypes.create_string_buffer(size)
+        for pid in pids[: max(count, 0)]:
+            if pid > 0 and libproc.proc_pidinfo(pid, 9, 0, buf, size) == size:  # 9: PROC_PIDVNODEPATHINFO
+                out[pid] = buf.raw[offset : offset + 1024].split(b"\0", 1)[0].decode("utf-8", "replace")
+    except (OSError, AttributeError, ValueError):
+        return {}
+    return out
+
+
+def _environment_table() -> list[tuple[int, str]]:
+    """(pid, command line followed by the environment) of every process of this user that can be read."""
+    rows: list[tuple[int, str]] = []
+    if sys.platform == "darwin":
+        try:
+            out = subprocess.run(
+                ["/bin/ps", "-E", "-A", "-ww", "-o", "pid=,command="], capture_output=True, text=True, timeout=10,
+                errors="replace",
+            ).stdout
+        except (OSError, subprocess.SubprocessError):
+            return rows
+        for line in out.splitlines():
+            pid, _, rest = line.strip().partition(" ")
+            if pid.isdigit():
+                rows.append((int(pid), rest.strip()))
+        return rows
+    proc_root = Path("/proc")
+    if not proc_root.is_dir():
+        return rows
+    for entry in proc_root.iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            command = (entry / "cmdline").read_bytes().replace(b"\0", b" ").decode("utf-8", "replace")
+            environ = (entry / "environ").read_bytes().replace(b"\0", b" ").decode("utf-8", "replace")
+        except OSError:
+            continue
+        rows.append((int(entry.name), f"{command.strip()} {environ}"))
+    return rows
 
 
 def _log_tail(log_path: Path, tmp: Path) -> str:
@@ -459,7 +839,7 @@ def _log_tail(log_path: Path, tmp: Path) -> str:
             text = f.read().decode("utf-8", "replace")
     except OSError:
         return ""
-    return _tail(_scrub(text, tmp))
+    return _tail(redact(_scrub(text, tmp)))
 
 
 def _scrub(text: str, tmp: Path) -> str:
@@ -470,9 +850,11 @@ def _scrub(text: str, tmp: Path) -> str:
 
 
 def _result(stdout: bytes, returncode: int, log_path: Path, tmp: Path, seconds: float) -> dict:
+    """The runner's payload, checked again on this side: the adapter runs in the runner's interpreter and could
+    have written its own payload, so the caps are applied anew and every image is decoded and re-encoded here."""
     try:
         payload = json.loads(stdout.decode("utf-8")) if stdout.strip() else None
-    except (UnicodeDecodeError, json.JSONDecodeError):
+    except (UnicodeDecodeError, json.JSONDecodeError, RecursionError):
         payload = None
     if not isinstance(payload, dict):
         if returncode and returncode < 0:
@@ -488,14 +870,56 @@ def _result(stdout: bytes, returncode: int, log_path: Path, tmp: Path, seconds: 
         raise AdapterError(reason, _log_tail(log_path, tmp), cause="exit")
     if not payload.get("ok"):
         cause = payload.get("cause") if payload.get("cause") in ("exception", "output") else "exception"
-        error = str(payload.get("error") or "unknown error")
+        error = _clip(str(payload.get("error") or "unknown error"), REASON_CHARS)
         lead = "adapt(path) raised " if cause == "exception" else ""
-        tail = _scrub(str(payload.get("traceback") or ""), tmp) or _log_tail(log_path, tmp)
-        raise AdapterError(f"{lead}{_scrub(error, tmp)}", _tail(tail), cause=cause)
-    notes = [str(n) for n in payload.get("notes", [])]
-    if "text" in payload:
-        return {"text": str(payload["text"]), "notes": notes, "seconds": seconds}
-    return {"images": [base64.b64decode(b) for b in payload["images"]], "notes": notes, "seconds": seconds}
+        tail = _scrub(str(payload.get("traceback") or "")[-4 * TAIL_CHARS :], tmp) or _log_tail(log_path, tmp)
+        raise AdapterError(redact(f"{lead}{_scrub(error, tmp)}"), _tail(redact(tail)), cause=cause)
+    raw_notes = payload.get("notes") if isinstance(payload.get("notes"), list) else []
+    notes = [_clip(str(n), 300) for n in raw_notes[:10]]
+    if isinstance(payload.get("text"), str):
+        text = payload["text"]
+        if len(text) > MAX_TEXT_CHARS:
+            note = f"\n[cut by the harness: the adapter returned {len(text)} characters]"
+            notes.append(f"text cut from {len(text)} characters")
+            text = text[: MAX_TEXT_CHARS - len(note)] + note
+        return {"text": redact(text), "notes": notes, "seconds": seconds}
+    images = payload.get("images")
+    if not isinstance(images, list) or not images:
+        raise AdapterError("The adapter's result held neither text nor images.", cause="output")
+    if len(images) > MAX_IMAGES:
+        notes.append(f"the result held {len(images)} images; the first {MAX_IMAGES} are used")
+        images = images[:MAX_IMAGES]
+    return {"images": [_trusted_png(item, k) for k, item in enumerate(images)], "notes": notes, "seconds": seconds}
+
+
+def _trusted_png(item: Any, k: int) -> bytes:
+    """One result image, decoded here with a pixel cap, scaled to MAX_IMAGE_SIDE and re-encoded as PNG."""
+    from PIL import Image
+
+    try:
+        data = base64.b64decode(item, validate=True) if isinstance(item, str) else None
+    except (binascii.Error, ValueError):
+        data = None
+    if not data:
+        raise AdapterError(f"Image {k + 1} of the adapter's result is not base64 image data.", cause="output")
+    try:
+        img = Image.open(io.BytesIO(data))
+        if img.width * img.height > MAX_IMAGE_PIXELS:
+            raise AdapterError(
+                f"Image {k + 1} of the adapter's result is {img.width}x{img.height}, too large to decode.",
+                cause="output",
+            )
+        img.load()
+        if img.mode not in ("RGB", "RGBA", "L", "LA"):
+            img = img.convert("RGBA" if img.mode in ("P", "PA", "RGBa", "La") else "RGB")
+        img.thumbnail((MAX_IMAGE_SIDE, MAX_IMAGE_SIDE))
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+    except AdapterError:
+        raise
+    except Exception as exc:
+        raise AdapterError(f"Image {k + 1} of the adapter's result cannot be read: {exc}", cause="output") from None
+    return buf.getvalue()
 
 
 # ----------------------------------------------------------------------------- the bridge
@@ -588,7 +1012,9 @@ class AdapterBridge:
 
     def run(self, path: Path) -> dict:
         """The adapter's normalised output for one file, {"text": ...} or {"sheet": PNG bytes, "n": images}, cached
-        per code and file sha256 within the process. Raises AdapterError (also cached, except timeouts)."""
+        per code and file sha256 within the process. Raises AdapterError; an exception the adapter raised or output
+        that breaks the contract is cached too (the same code on the same bytes fails the same way), but a crash, a
+        kill, a timeout, a limit or a missing sandbox is not, since those may not happen again."""
         path = Path(path)
         key = (self._code_sha, f"{self.timeout:g}", _sha256_file(path))
         with _cache_lock:
@@ -603,7 +1029,7 @@ class AdapterBridge:
                 else:
                     hit = {"sheet": contact_sheet(out["images"]), "n": len(out["images"])}
             except AdapterError as err:
-                if err.cause == "timeout":
+                if err.cause not in _CACHED_CAUSES:
                     raise
                 hit = err
             with _cache_lock:
@@ -736,8 +1162,11 @@ def probe_folder(
     min_per_label: int = 4,
     max_per_label: int = 40,
     seed: int = 0,
+    suffixes: list[str] | None = None,
 ) -> ProbeSet:
-    """A ProbeSet from a folder with one sub-folder of files per label (see the module docstring)."""
+    """A ProbeSet from a folder with one sub-folder of files per label (see the module docstring). `suffixes`
+    (for example [".obj"]) keeps only files with those extensions, case-insensitively; others are skipped and
+    counted, so that sidecar files (.mtl, .bin, textures) are not taken for examples."""
     root = Path(path).expanduser().resolve()
     if not root.is_dir():
         raise ValueError(f"{root} is not a folder; give a folder with one sub-folder of example files per label.")
@@ -747,11 +1176,14 @@ def probe_folder(
         raise ValueError(f"min_per_label is {min_per_label}, but each label needs at least 3 files (fit, dev, test).")
     if max_per_label < min_per_label:
         raise ValueError(f"max_per_label ({max_per_label}) is below min_per_label ({min_per_label}); raise it.")
+    wanted = None
+    if suffixes is not None:
+        wanted = {("." + s.lower().lstrip(".")) if s else "" for s in suffixes}
     set_name = _slug(name or root.name)
     folders = _probe_label_folders(root)
     labels = [label for label, _ in folders]
 
-    skipped = {"hidden": 0, "empty": 0, "subfolders": 0}
+    skipped = {"hidden": 0, "empty": 0, "subfolders": 0, "other_types": 0}
     copies: dict[str, list[tuple[int, Path]]] = {}
     for c, (_, directory) in enumerate(folders):
         for p in sorted(directory.iterdir()):
@@ -760,6 +1192,9 @@ def probe_folder(
             elif p.is_dir():
                 skipped["subfolders"] += 1
             elif p.is_file():
+                if wanted is not None and p.suffix.lower() not in wanted:
+                    skipped["other_types"] += 1
+                    continue
                 if p.stat().st_size == 0:
                     skipped["empty"] += 1
                     continue
@@ -793,12 +1228,19 @@ def probe_folder(
 
     target = config.home() / "probes" / set_name
     target.mkdir(parents=True, exist_ok=True)
+    # Copy in a shuffled order across labels and give every copy the same times, so that neither inode numbers,
+    # creation order nor modification times line up with the labels.
+    flat = [(p, digest) for files in kept for p, digest in files]
+    copied: dict[str, Path] = {}
+    for k in rng.permutation(len(flat)):
+        p, digest = flat[k]
+        copied[digest] = _copy_probe(p, digest, target)
     items: list[tuple[Path, int]] = []
     fit, dev, test = [], [], []
     for c, files in enumerate(kept):
         start = len(items)
         for p, digest in files:
-            items.append((_copy_probe(p, digest, target), c))
+            items.append((copied[digest], c))
         order = start + rng.permutation(len(files))
         n = len(files)
         n_dev = max(1, int(round(0.2 * n)))
@@ -808,6 +1250,15 @@ def probe_folder(
         test += order[n_fit + n_dev :].tolist()
 
     counts = {labels[c]: len(files) for c, files in enumerate(kept)}
+    warnings = []
+    by_label = [{Path(p).suffix.lower() for p, _ in files} for files in kept]
+    telling = sorted(set.union(*by_label) - set.intersection(*by_label))
+    if telling:
+        warnings.append(
+            f"the file extensions differ between labels ({', '.join(e or 'none' for e in telling)} appear under some "
+            "labels only), and the copies keep their extensions, so an extension can give a label away; use one "
+            "file type for every label"
+        )
     return ProbeSet(
         name=set_name,
         title=f"{root.name}: {len(labels)} labels, {len(items)} files",
@@ -829,6 +1280,8 @@ def probe_folder(
             "conflicts_dropped": sorted(conflicts),
             "capped": capped,
             "skipped": skipped,
+            "suffixes": sorted(wanted) if wanted is not None else None,
+            "warnings": warnings,
             "seed": seed,
             "min_per_label": min_per_label,
             "max_per_label": max_per_label,
@@ -868,12 +1321,15 @@ def _copy_probe(src: Path, digest: str, target: Path) -> Path:
     if not re.fullmatch(r"\.[a-z0-9]{1,10}", suffix):
         suffix = ""
     dest = target / f"{digest[:16]}{suffix}"
-    if dest.is_file() and dest.stat().st_size == src.stat().st_size:
-        return dest
-    partial = target / f".{dest.name}.{os.getpid()}.{threading.get_ident()}.part"
-    shutil.copyfile(src, partial)
-    os.replace(partial, dest)
+    if not (dest.is_file() and dest.stat().st_size == src.stat().st_size):
+        partial = target / f".{dest.name}.{os.getpid()}.{threading.get_ident()}.part"
+        shutil.copyfile(src, partial)
+        os.replace(partial, dest)
+    os.utime(dest, (_PROBE_TIME, _PROBE_TIME))
     return dest
+
+
+_PROBE_TIME = 946684800  # 2000-01-01: every probe copy gets this access and modification time
 
 
 # ----------------------------------------------------------------------------- verification
@@ -885,10 +1341,13 @@ def verify_files(
     *,
     max_items: int | None = None,
     seed: int = 0,
+    idx: np.ndarray | list[int] | None = None,
 ) -> ReportCard:
-    """Score a file-based bridge on the held-out probe files against swapped-input and no-input controls."""
+    """Score a file-based bridge on held-out probe files against swapped-input and no-input controls. `idx` names
+    the probe items to score (None: probes.test_idx); an adapter written before any probe existed was fitted on
+    none of them, so the caller may pass every item."""
     from sense.bridges import five_options
-    from sense.verify import _subsample, _swap_partners, _wilson
+    from sense.verify import _subsample, _wilson
 
     if bridge.model_name != model.info.name:
         raise ValueError(f"{bridge.name} was built for {bridge.model_name}, not {model.info.name}; build it for this model.")
@@ -902,15 +1361,17 @@ def verify_files(
     if max_items is None:
         max_items = 200 if model.info.open_weights else config.api_verify_items()
     rng = np.random.default_rng(seed)
-    test = _subsample(probes.test_idx, max_items, rng)
+    pool = probes.test_idx if idx is None else np.asarray(idx, dtype=np.int64)
+    test = _subsample(pool, max_items, rng)
     if len(test) == 0:
         raise ValueError(f"Probe set {probes.name} has no held-out files to verify on.")
     y = probes.y
+    if len(set(y[test].tolist())) < 2:
+        raise ValueError(f"The held-out files of {probes.name} hold one label; verification needs at least two.")
     options, answers = five_options(y[test], n_labels, rng)
-    swap = _swap_partners(test, y, rng)
 
-    prepared = _prepare_all(bridge, [probes.items[i][0] for i in sorted(set(test.tolist()) | set(swap.tolist()))])
-    inputs = {i: prepared[probes.items[i][0]] for i in set(test.tolist()) | set(swap.tolist())}
+    prepared = _prepare_all(bridge, [probes.items[i][0] for i in sorted(set(test.tolist()))])
+    inputs = {int(i): prepared[probes.items[int(i)][0]] for i in test}
     failed = [int(i) for i in test if isinstance(inputs[int(i)], AdapterError)]
     if len(failed) * 2 > len(test):
         first = inputs[failed[0]]
@@ -921,35 +1382,49 @@ def verify_files(
             cause="verify",
         )
 
-    def ask(per_item: list[SenseInput | AdapterError | None]) -> float:
-        """Accuracy over the questions; an AdapterError counts as wrong without asking, None asks with no input."""
-        idx = [k for k, inp in enumerate(per_item) if not isinstance(inp, AdapterError)]
+    # Swap partners come only from files the adapter read: a failed partner would turn the control into a
+    # no-input question and flatter an adapter that fails on one label. With no readable file of another label,
+    # the swapped question counts as answered correctly (the conservative mirror of "a failure counts as wrong").
+    failed_set = set(failed)
+    readable = np.array([int(i) for i in test if int(i) not in failed_set], dtype=np.int64)
+    swap: list[int | None] = []
+    for i in test:
+        partners = readable[y[readable] != y[int(i)]] if len(readable) else readable
+        swap.append(int(partners[rng.integers(len(partners))]) if len(partners) else None)
+
+    def ask(per_item: list[SenseInput | AdapterError | None | bool]) -> float:
+        """Accuracy over the questions: an AdapterError counts as wrong and True as right, without asking; None
+        asks with no input."""
+        asked = [k for k, inp in enumerate(per_item) if not isinstance(inp, (AdapterError, bool))]
         items = [
             ChoiceItem(
                 question=probes.question,
                 options=[probes.labels[c] for c in options[k]],
                 inputs=[] if per_item[k] is None else [per_item[k]],
             )
-            for k in idx
+            for k in asked
         ]
         picks = np.full(len(per_item), -1, dtype=np.int64)
         if items:
-            picks[idx] = model.choose(items)
-        return round(float((picks == answers).mean()), 4)
+            picks[asked] = model.choose(items)
+        right = picks == answers
+        right[[k for k, inp in enumerate(per_item) if inp is True]] = True
+        return round(float(right.mean()), 4)
 
     accuracy = ask([inputs[int(i)] for i in test])
-    swapped = [inputs[int(j)] for j in swap]
     controls = {
-        "swapped": ask([None if isinstance(inp, AdapterError) else inp for inp in swapped]),
+        "swapped": ask([True if j is None else inputs[j] for j in swap]),
         "no_input": ask([None for _ in test]),
     }
     reason = ""
     if failed:
-        shown = "; ".join(f"{Path(probes.items[i][0]).name}: {inputs[i].reason}" for i in failed[:5])
+        shown = "; ".join(
+            f"{Path(probes.items[i][0]).name}: {_clip(' '.join(inputs[i].reason.split()), 200)}" for i in failed[:5]
+        )
         more = f"; and {len(failed) - 5} more" if len(failed) > 5 else ""
         reason = (
-            f"The adapter failed on {len(failed)} of {len(test)} held-out files; those questions count as wrong. "
-            f"{shown}{more}."
+            f"The adapter failed on {len(failed)} of {len(test)} held-out files; those questions count as wrong, and "
+            f"no failed file serves as a swapped input. {shown}{more}."
         )
     return ReportCard(
         model=model.info.name,
