@@ -1510,7 +1510,7 @@ function renderAttachments() {
   const list = $("attachments");
   const chips = [
     ...state.files.map((file) =>
-      attachmentChip(file.name, file.type && file.type.startsWith("audio") ? "audio" : "other", "upload", () => {
+      attachmentChip(file.name, fileModality(file), "upload", () => {
         state.files = state.files.filter((f) => f !== file);
         renderAttachments();
       }),
@@ -1521,6 +1521,12 @@ function renderAttachments() {
   ];
   list.replaceChildren(...chips);
   list.hidden = chips.length === 0;
+}
+
+/** The modality an upload's MIME type suggests, for its icon only; the server decides from the file's bytes. */
+function fileModality(file) {
+  const type = (file && file.type) || "";
+  return ["audio", "image", "text"].find((m) => type.startsWith(`${m}/`)) || "other";
 }
 
 /** A file attached to the next message, as a compact Attachment (Figma 22:234). */
@@ -1752,7 +1758,6 @@ function cancelEdit() {
 /** A user turn (name line, attachments, message) and the model's answer under its own name line. */
 function appendTurn(model, message, files, samples) {
   const modality = (currentDataset() || {}).modality || "audio";
-  const fileModality = (f) => (f.type && f.type.startsWith("audio") ? "audio" : "other");
   const sent = [
     ...samples.map((s) =>
       h("li", { class: "attachment" },
@@ -1806,7 +1811,7 @@ function fillReply(turn, result) {
   const missing = used.some((u) => u.kind === "none");
   const uncalled = used.some(toolNotCalled);
   turn.tags.replaceChildren(
-    ...kinds.map((k) => tag(`Heard via ${kindLabel(k).toLowerCase()} bridge`, "info")),
+    ...kinds.map((k) => tag(k === "native" ? "Read as is" : `Heard via ${kindLabel(k).toLowerCase()} bridge`, "info")),
     ...(uncalled ? [tag("Tool not called", "warning")] : []),
     ...(missing ? [tag("File not received", "danger")] : []),
   );
@@ -1835,9 +1840,11 @@ function fillReply(turn, result) {
 /** One line per file: how it reached the model, or a warning when it did not. */
 function usedItem(used) {
   const missing = used.kind === "none";
+  // Kind "native" (bridge ""): the model took the file as it is, a text file's text or an image.
+  const how = used.kind === "native" ? "Read as is" : `${kindLabel(used.kind)} bridge ${used.bridge || ""}`.trim();
   const detail = missing
     ? used.detail || "No sense for this kind of file is installed, so the model did not receive it."
-    : [`${kindLabel(used.kind)} bridge ${used.bridge || ""}`.trim(), used.detail].filter(Boolean).join(" · ");
+    : [how, used.detail].filter(Boolean).join(" · ");
   return h(
     "li",
     { class: missing ? "used-item used-item--warn" : "used-item" },

@@ -147,8 +147,8 @@
         <div id="thread-empty" class="thread-empty">
           <div class="drop-zone brackets">
             <span class="drop-icon" data-icon="download"></span>
-            <p class="drop-title">Drop an audio file here</p>
-            <p class="drop-sub">Or press Samples next to the message box to attach a clip, then ask a question. Each reply says how every file reached the model, and warns when one did not.</p>
+            <p class="drop-title">Drop a file here</p>
+            <p class="drop-sub">An audio clip, or a text file or image the model reads as is. Or press Samples next to the message box to attach a clip, then ask a question. Each reply says how every file reached the model, and warns when one did not.</p>
             <ul id="drop-modalities" class="mods" aria-label="What the model can take in now"></ul>
           </div>
         </div>
@@ -173,10 +173,11 @@
             <label class="sr-only" for="message">Message</label>
              <textarea id="message" rows="1" aria-describedby="composer-hint" placeholder="Ask about the attached clip, or type / for commands"></textarea>
             <button id="samples-button" class="btn btn--small samples-button" type="button" aria-expanded="false" aria-controls="samples-pop" title="Attach a sample clip">Samples</button>
-            <label class="icon-button file-button" title="Attach audio">
+            <label class="icon-button file-button" title="Attach a file">
               <span data-icon="paperclip"></span>
-              <span class="sr-only">Attach audio</span>
-              <input id="file-input" class="sr-only" type="file" accept=".wav,.mp3,.flac,.ogg,.opus,.aif,.aiff,.au" multiple>
+              <span class="sr-only">Attach a file</span>
+              <!-- Audio in the formats the server reads (sense.specialists.AUDIO_EXTENSIONS), text, and images. -->
+              <input id="file-input" class="sr-only" type="file" accept=".wav,.mp3,.flac,.ogg,.opus,.aif,.aiff,.au,.txt,.md,.png,.jpg,.jpeg" multiple>
             </label>
             <button id="send-button" class="send" type="submit" disabled aria-label="Send"><span data-icon="arrow-up"></span></button>
             <button id="chat-stop" class="btn btn--small" type="button" hidden>Stop receiving</button>

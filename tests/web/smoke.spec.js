@@ -261,6 +261,17 @@ test("the stream's done.used is final: a tool the model did not call is not repo
   await expect(page.locator("#thread")).not.toContainText("can call the listen tool");
 });
 
+test("a file the model takes as it is (kind native) reads as is, not as a bridge", async ({ page }) => {
+  const native = { kind: "native", bridge: "", source: "note.txt", detail: "its text was given to the model with the message" };
+  await setup(page, { chat: (route) => route.fulfill({ json: { reply: "It says hello.", used: [native] } }) });
+  expect(await page.locator("#file-input").getAttribute("accept")).toContain(".txt");
+  await page.locator("#file-input").setInputFiles({ name: "note.txt", mimeType: "text/plain", buffer: Buffer.from("hello") });
+  await send(page, "What does it say?");
+  await expect(page.locator(".used-item")).toHaveText("note.txt: Read as is · its text was given to the model with the message");
+  await expect(page.locator(".msg--model .name-line-tags")).toHaveText("Read as is");
+  await expect(page.locator(".msg--model")).not.toContainText("bridge");
+});
+
 test("a bridge that failed its checks is refused whatever the plan order; one that passed and lost is not", async ({ page }) => {
   // socket_pilot/artifacts/run_qwen3.5-0.8b_esc50_open.json: the planner put text first; vector failed on unseen classes.
   const open = { ...request, scope: "open" };
