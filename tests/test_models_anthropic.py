@@ -71,6 +71,20 @@ def assert_claude_request(kwargs):
 
 
 # ----------------------------------------------------------------------------- registration and listing
+def test_importing_models_api_first_still_loads_claude_sonnet():
+    """sense.models_api imported before sense.models used to leave claude-sonnet out with a circular-import
+    warning (seen in a script); a fresh interpreter with warnings as errors must load it either way."""
+    import subprocess
+    from pathlib import Path
+
+    repo = str(Path(__file__).resolve().parent.parent)
+    code = ("import sys; sys.path.insert(0, {repo!r}); import sense.models_api, sense.models; "
+            "assert 'sense.models_anthropic' in sys.modules").format(repo=repo)
+    done = subprocess.run([sys.executable, "-I", "-W", "error::UserWarning", "-c", code], cwd=repo,
+                          capture_output=True, text=True, timeout=120)
+    assert done.returncode == 0, done.stderr[-2000:]
+
+
 def test_registers_a_closed_model_that_can_call_tools(claude):
     info, loader = claude.registration.call_args.args
     assert (info.name, info.label, info.native) == ("claude-sonnet", "Claude Sonnet 5.5", ["text", "image"])
@@ -213,7 +227,7 @@ def cache_files(tmp_path):
 
 def test_choose_returns_option_indices_and_repeats_from_the_cache(claude, tmp_path):
     def answer(**kwargs):
-        return reply("B" if "dog barks" in kwargs["messages"][0]["content"] else "A")
+        return reply('{"answer": "B"}' if "dog barks" in kwargs["messages"][0]["content"] else '{"answer": "A"}')
 
     claude.create.side_effect = answer
     items = [
@@ -223,8 +237,15 @@ def test_choose_returns_option_indices_and_repeats_from_the_cache(claude, tmp_pa
     assert claude.module.AnthropicChatModel().choose(items) == [1, 0]
     assert claude.create.call_count == 2
     kwargs = claude.create.call_args.kwargs
-    assert "exactly one uppercase" in kwargs["system"] and kwargs["max_tokens"] == 16
-    assert_claude_request(kwargs)
+    # A choice lets the model think, then constrains the reply to the option letters (16 tokens with thinking off
+    # cut Claude off mid-reasoning on raw files).
+    assert "exactly one uppercase" in kwargs["system"] and kwargs["max_tokens"] == claude.module.CHOICE_TOKENS
+    assert kwargs["thinking"] == {"type": "adaptive"}
+    assert kwargs["output_config"] == {"effort": "low", "format": {"type": "json_schema", "schema": {
+        "type": "object", "properties": {"answer": {"type": "string", "enum": ["A", "B"]}},
+        "required": ["answer"], "additionalProperties": False}}}
+    assert not FORBIDDEN & set(kwargs)
+    assert kwargs["betas"] == ["server-side-fallback-2026-07-01"] and kwargs["fallbacks"] == "default"
     again = claude.module.AnthropicChatModel()  # a new instance: the answers come from disk
     assert again.choose(items) == [1, 0]
     assert claude.create.call_count == 2

@@ -69,13 +69,16 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import importlib
 import json
 import logging
 import os
 import re
 import string
+import sys
 import tempfile
 import threading
+import warnings
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
@@ -151,6 +154,11 @@ class APIChatModel:
             instruction += TOOL_INSTRUCTION
         return self._complete(instruction, message, inputs, max_new_tokens, allow_truncated=True, history=history)
 
+    def _complete_choice(self, instruction: str, message: str, inputs: list[SenseInput], limit: int, valid: str) -> str:
+        """The reply to one multiple-choice item (`valid`: its option letters). A subclass may let its model think
+        first (the Claude model does); this one answers within `limit` tokens."""
+        return self._complete(instruction, message, inputs, limit)
+
     def _choose(self, item: ChoiceItem) -> int:
         options = "\n".join(f"{letter}. {text}" for letter, text in zip(string.ascii_uppercase, item.options))
         instruction = _instruction(
@@ -168,7 +176,7 @@ class APIChatModel:
             if cached is not None:
                 return string.ascii_uppercase.index(cached)
         try:
-            answer = _letter(self._complete(instruction, message, item.inputs, limit), valid)
+            answer = _letter(self._complete_choice(instruction, message, item.inputs, limit, valid), valid)
         except ValueError:  # cut off while explaining, refused, or no text at all
             answer = None
         if answer is None:
@@ -514,3 +522,14 @@ def _safe_model_id(model: str) -> str:
 
 
 register_model(MODEL_INFO, OpenAIChatModel)
+
+# When this module is imported before sense.models, sense.models skips claude-sonnet while this module is half made
+# (sense.models_anthropic builds on it); load it now that this module is complete.
+if "sense.models_anthropic" not in sys.modules:
+    try:
+        importlib.import_module("sense.models_anthropic")
+    except ModuleNotFoundError as err:
+        if err.name != "sense.models_anthropic":
+            warnings.warn(f"sense.models_anthropic was not loaded: {err}", stacklevel=1)
+    except ImportError as err:
+        warnings.warn(f"sense.models_anthropic was not loaded: {err}", stacklevel=1)

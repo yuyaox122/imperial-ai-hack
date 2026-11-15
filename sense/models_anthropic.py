@@ -45,6 +45,7 @@ holds here too, with these differences:
 from __future__ import annotations
 
 import base64
+import json
 import os
 from typing import Iterator
 
@@ -70,6 +71,7 @@ MODEL_INFO = ModelInfo(
 
 DEFAULT_MODEL = "claude-sonnet-5-5"
 EFFORT = "low"
+CHOICE_TOKENS = 2048  # a multiple-choice request: room to think (thinking counts toward max_tokens), then one letter
 FALLBACK_BETA = "server-side-fallback-2026-07-01"
 
 
@@ -123,6 +125,30 @@ class AnthropicChatModel(APIChatModel):
     def _messages(self, message: str, inputs: list[SenseInput], history: list[dict] | None = None) -> list[dict]:
         """The earlier turns (oldest first, text only), then the user message with the inputs."""
         return [*chat_history(history), {"role": "user", "content": self._content(message, inputs)}]
+
+    def _complete_choice(self, instruction: str, message: str, inputs: list[SenseInput], limit: int, valid: str) -> str:
+        """A multiple-choice reply. With thinking off and 16 tokens, Claude Sonnet 5.5 starts to reason in its reply
+        ("The coordinates 51.3167, 9.5000...") and is cut off before the letter, which made the native control
+        (the raw file) abstain while adapter text, which names its findings, did not. So a choice without tools
+        lets the model think (adaptive, effort low, CHOICE_TOKENS in all) and constrains the reply to one of the
+        option letters with a structured output; the tool loop for listen-tool inputs is unchanged."""
+        if _tool_handles(inputs):
+            return self._complete(instruction, message, inputs, limit)
+        schema = {"type": "object", "properties": {"answer": {"type": "string", "enum": list(valid)}},
+                  "required": ["answer"], "additionalProperties": False}
+        request = self._request(
+            instruction, self._messages(message, inputs), CHOICE_TOKENS,
+            thinking={"type": "adaptive"},
+            output_config={"effort": EFFORT, "format": {"type": "json_schema", "schema": schema}},
+        )
+        text = _answer(self._send(**request), False)
+        try:
+            answer = json.loads(text)
+        except ValueError:
+            return text  # not JSON (the format should prevent it): read as a plain reply; one letter still counts
+        if not isinstance(answer, dict) or not isinstance(answer.get("answer"), str):
+            raise ValueError("The API model returned no complete answer")
+        return answer["answer"]
 
     def _complete(
         self, instruction: str, message: str, inputs: list[SenseInput], limit: int,
