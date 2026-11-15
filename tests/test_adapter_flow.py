@@ -249,7 +249,7 @@ def test_a_mesh_gets_an_adapter_sense_from_web_probes_and_chat_uses_it(client, h
     senses = client.get("/api/senses", params={"model": "fake"}).json()
     assert [(s["bridge"], s["kind"], s["modality"]) for s in senses] == [("adapter:3d-obj", "text", "3d")]
     manifest = registry.get_bridges("fake")[0].manifest
-    assert manifest["detected"] == {"modality": "3d", "format": "obj", "suffix": ".obj"}
+    assert manifest["detected"] == {"modality": "3d", "format": "obj", "suffix": ".obj", "formats": ["obj"]}
     assert manifest["probes"]["fetched"]["source"] == "shapes/solids"
 
     # chat: another mesh goes through the installed adapter, not as text
@@ -314,6 +314,8 @@ def test_an_install_request_is_answered_over_http_and_the_run_goes_on(client, mo
     assert pending["payload"]["summary"].startswith("OK to install meshkit")
     assert pending["payload"]["review"] == "A small, well-known mesh library."
     assert last(state["events"], "approval", "start")["data"]["id"] == pending["id"]
+    # a tab that did not start the run can find it, and its open request, while it holds the one run slot
+    assert client.get("/api/jobs/latest").json() == {"job_id": job_id}
 
     # bad answers change nothing
     answer = f"/api/jobs/{job_id}/approval"
@@ -333,6 +335,7 @@ def test_an_install_request_is_answered_over_http_and_the_run_goes_on(client, mo
     state = wait_until(client, job_id, finished)
     assert state["status"] == "done", state["error"]
     assert state["pending_approval"] is None and state["installed"] == "adapter:3d-obj"
+    assert client.get("/api/jobs/latest").json() == {"job_id": None}
     steps = list(dict.fromkeys(e["step"] for e in state["events"]))
     assert steps[:5] == ["detect", "design", "install_request", "approval", "build"]
     answered = last(state["events"], "approval")
@@ -553,16 +556,129 @@ def test_files_detect_calls_other_find_their_adapter_by_format_or_extension(clie
     assert other["kind"] == "none"
 
 
+GLB = b"glTF" + (2).to_bytes(4, "little") + bytes(12)  # agent.detect: 3d, glb (binary, so never given as text)
+TRI_PLY = (b"ply\nformat ascii 1.0\nelement vertex 3\nproperty float x\nproperty float y\nproperty float z\n"
+           b"element face 1\nproperty list uchar int vertex_indices\nend_header\n0 0 0\n1 0 0\n0 1 0\n3 0 1 2\n")
+OBJ_ONLY = {"modality": "3d", "format": "obj", "suffix": ".obj", "formats": ["obj"]}
+
+
 def test_an_adapter_that_fails_on_a_file_leaves_it_out_and_says_why(client):
+    # A text mesh falls back to its text, as it went before any sense, and says why; a binary one is left out.
     install_adapter("fake", "3d", 'def adapt(path):\n    raise ValueError("cannot parse this mesh")\n', format="obj")
-    used = chat(client, "fake", [("broken.obj", mesh("box", 1)), ("notes.txt", b"hello")])["used"]
-    assert used[0]["kind"] == "none" and "could not read it" in used[0]["detail"]
-    assert "cannot parse this mesh" in used[0]["detail"] and used[1]["kind"] == "native"
+    used = chat(client, "fake", [("broken.obj", mesh("box", 1)), ("scene.glb", GLB), ("notes.txt", b"hello")])["used"]
+    as_text, left_out, notes = used
+    assert as_text["kind"] == "native" and as_text["detail"].startswith("its text was given to the model")
+    assert "could not read it" in as_text["detail"] and "cannot parse this mesh" in as_text["detail"]
+    assert left_out["kind"] == "none" and "cannot parse this mesh" in left_out["detail"]
+    assert notes["kind"] == "native"
 
 
 def test_a_text_mesh_with_no_sense_is_still_given_as_text(client):
     (used,) = chat(client, "fake", [("tri.obj", b"v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n")])["used"]
     assert used["kind"] == "native" and used["bridge"] == ""
+
+
+def test_chat_gives_an_adapter_only_the_formats_it_was_verified_on(client):
+    # An adapter written and scored on OBJ files is not handed a PLY or a GLB: its card covers neither. The PLY,
+    # which is text, still goes as text, as it did before the adapter was installed.
+    lenient = 'def adapt(path):\n    return {"text": "a smoothly curved surface, like a ball"}\n'
+    install_adapter("fake", "3d", lenient, format="obj", detected=OBJ_ONLY)
+    ply, glb, obj = chat(client, "fake", [("tri.ply", TRI_PLY), ("scene.glb", GLB), ("ball.obj", mesh("ball", 2))])["used"]
+    assert ply["kind"] == "native" and ply["bridge"] == ""
+    assert "adapter:3d-obj was built and checked on OBJ files only" in ply["detail"]
+    assert glb["kind"] == "none" and "built and checked on OBJ files only, so it is not given a GLB file" in glb["detail"]
+    assert obj["bridge"] == "adapter:3d-obj" and obj["kind"] == "text"
+    # the formats of its probe files count too
+    install_adapter("fake", "3d", lenient, format="obj", detected=OBJ_ONLY | {"formats": ["obj", "ply"]})
+    (ply,) = chat(client, "fake", [("tri.ply", TRI_PLY)])["used"]
+    assert ply["bridge"] == "adapter:3d-obj"
+
+
+def m4a(size: int, seed: int = 0) -> bytes:
+    """An M4A header (agent.detect: other, unknown) and `size` bytes."""
+    return b"\x00\x00\x00\x20ftypM4A \x00\x00\x02\x00M4A mp42isom\x00\x00\x00\x00" + bytes([seed % 251]) * size
+
+
+# The adapter tells a voice memo from music by its length; FakeModel picks the option its text names.
+MEMO_ADAPTER = '''
+import os
+
+def adapt(path):
+    size = os.path.getsize(path)
+    return {"text": f"A clip of {size} bytes: short, like speech." if size < 600 else f"A clip of {size} bytes: long, like music."}
+'''
+
+
+def test_an_adapter_for_a_file_detect_calls_other_never_takes_an_audio_sense_or_wavs(client, monkeypatch, tmp_path):
+    from sense.specialists import FAKE_CONCEPTS, FakeSpecialist
+
+    # A verified audio sense first: CLAP's vector bridge, from the specialist flow.
+    monkeypatch.setattr(planner_mod, "_preferred", None)
+    clip = tmp_path / "song.wav"
+    FakeSpecialist.write_sample(FAKE_CONCEPTS.index("rock"), clip, seed=1)
+    _, installed, _ = run_auto(clip, "Make it recognise music genres")
+    assert installed == "vector:gtzan"
+
+    # Then an M4A voice memo, which agent.detect calls other: the designer names its modality "audio".
+    folder = tmp_path / "memos"
+    for label, size in (("speech", 200), ("music", 2000)):
+        (folder / label).mkdir(parents=True)
+        for k in range(6):
+            (folder / label / f"c{k}.m4a").write_bytes(m4a(size + 10 * k, k))
+    memo = tmp_path / "memo.m4a"
+    memo.write_bytes(m4a(250))
+    design = shape_design(modality="audio", format="m4a", question="Is this clip speech or music?",
+                          label_hint="speech or music", labels=["speech", "music"], probe_plan="user",
+                          description="Measures the clip's length.")
+    monkeypatch.setattr(llm, "ask_json", FakeLLM(design, MEMO_ADAPTER))
+    cards, installed, events = run_auto(memo, "Tell speech from music", examples=folder)
+    designed = last_event(events, "design", "ok").data
+    assert last_event(events, "detect", "ok").data["modality"] == "other"
+    assert designed["modality"] == "audio-m4a" and designed["designed_modality"] == "audio"
+    assert installed == "adapter:audio-m4a", cards and cards[0].reason
+    assert sorted((s["bridge"], s["modality"]) for s in registry.installed("fake")) == [
+        ("adapter:audio-m4a", "audio-m4a"), ("vector:gtzan", "audio")]  # nothing was replaced
+
+    # Chat: a WAV still goes through the audio sense, and an M4A, alone or with a WAV, through its adapter.
+    (wav,) = chat(client, "fake", [("song.wav", clip.read_bytes())])["used"]
+    assert wav["bridge"] == "vector:gtzan"
+    (alone,) = chat(client, "fake", [("memo2.m4a", m4a(300))])["used"]
+    assert alone["bridge"] == "adapter:audio-m4a" and "like speech" in alone["detail"]
+    with_wav = chat(client, "fake", [("memo3.m4a", m4a(3000)), ("song.wav", clip.read_bytes())])["used"]
+    assert [u["bridge"] for u in with_wav] == ["adapter:audio-m4a", "vector:gtzan"]
+
+
+def still_gif() -> bytes:
+    """A 1x1 GIF89a with one frame: agent.detect calls it an image."""
+    return (b"GIF89a" + (1).to_bytes(2, "little") * 2 + b"\x00\x00\x00" + b"\x2c" + bytes(4)
+            + (1).to_bytes(2, "little") * 2 + b"\x00" + b"\x02\x02\x44\x01\x00" + b"\x3b")
+
+
+def test_a_still_gif_needs_a_sense_even_for_a_model_that_takes_images(client, monkeypatch, tmp_path):
+    # Chat shows an API model PNG and JPEG images only, so the agent must not say a GIF needs no sense.
+    started = []
+    monkeypatch.setattr(synth, "run_synth", lambda *args, **kwargs: started.append(args) or ([], None))
+    picture = tmp_path / "pic.gif"
+    picture.write_bytes(still_gif())
+    events: list[TraceEvent] = []
+    auto.run_auto("fake-api", picture, "Tell what is in the picture", events.append)
+    detected = last_event(events, "detect", "ok")
+    assert detected.data["flow"] == "adapter" and len(started) == 1
+    assert "can be shown only PNG and JPEG images in chat, and this is a GIF image" in detected.message
+    png_file = tmp_path / "pic.png"
+    png_file.write_bytes(png())
+    events = []
+    auto.run_auto("fake-api", png_file, "Tell what is in the picture", events.append)
+    assert last_event(events, "detect", "ok").data["flow"] == "native"
+
+    # Chat: no sense, so the GIF is not shown and says why; with a GIF adapter installed, it goes through it.
+    (gif,) = chat(client, "fake-api", [("pic.gif", still_gif())])["used"]
+    assert gif["kind"] == "none" and "only PNG and JPEG images can be shown to it" in gif["detail"]
+    install_adapter("fake-api", "image", ECHO, format="gif",
+                    detected={"modality": "image", "format": "gif", "suffix": ".gif", "formats": ["gif"]})
+    gif, photo = chat(client, "fake-api", [("pic.gif", still_gif()), ("pic.png", png())])["used"]
+    assert gif["bridge"] == "adapter:image-gif" and gif["kind"] == "text"
+    assert photo["kind"] == "native" and photo["detail"] == "shown to the model as an image"
 
 
 # ----------------------------------------------------------------------------- python -m agent
@@ -615,6 +731,22 @@ def test_cli_asks_on_the_terminal_and_defaults_to_no(monkeypatch, tmp_path, caps
     out = capsys.readouterr().out
     assert "OK to install meshkit 1.0." in out and "meshkit 1.0: ok" in out
     assert jobs._cli_handler is None  # removed after the run
+
+
+def test_cli_prints_the_checks_verdict_and_labels_the_llm_review_as_an_opinion(monkeypatch, capsys):
+    from agent.__main__ import ask_on_terminal
+
+    monkeypatch.setattr("builtins.input", lambda prompt: "n")
+    payload = {"summary": "Caution: meshkit 1.0 was first released 3 days ago.",
+               "plan": {"verdict": "caution", "packages": [
+                   {"name": "meshkit", "version": "1.0", "verdict": "caution", "reasons": ["first release 3 days ago"]}]},
+               "review": "Looks safe to install; a well-known library."}
+    assert ask_on_terminal("install", payload) is False
+    lines = capsys.readouterr().out.splitlines()
+    assert "What the checks found: caution" in lines
+    assert "  meshkit 1.0: caution (first release 3 days ago)" in lines
+    assert "An LLM's opinion, not one of the checks: Looks safe to install; a well-known library." in lines
+    assert not any(line.strip().startswith("Review:") for line in lines)
 
 
 def test_cli_approve_installs_approves_without_asking_and_says_so(monkeypatch, tmp_path, capsys):

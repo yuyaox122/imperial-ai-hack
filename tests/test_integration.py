@@ -99,7 +99,7 @@ def test_files_that_cannot_reach_the_model_are_reported(client):
                     files=[("files", ("table.bin", bytes(range(256)), "application/octet-stream"))])
     assert r.status_code == 200, r.text
     upload, sample = r.json()["used"]  # uploads are listed before samples
-    assert upload["kind"] == "none" and "audio files in these formats" in upload["detail"]
+    assert upload["kind"] == "none" and "no installed sense takes this kind of file" in upload["detail"]
     assert sample["kind"] == "none" and "has no installed audio sense" in sample["detail"]
     assert "No audio reached me" in r.json()["reply"]
 

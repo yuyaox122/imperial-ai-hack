@@ -182,10 +182,11 @@ def test_files_that_cannot_be_given_say_why(doubles):
     empty, table, blob = used
     assert empty["kind"] == "none" and empty["detail"] == "'empty.txt' was not shown to the model: it is empty."
     for entry in (table, blob):
-        assert entry["kind"] == "none"
-        assert "only text files, images (PNG or JPEG) and audio files in these formats" in entry["detail"]
+        assert entry["kind"] == "none" and "no installed sense takes this kind of file" in entry["detail"]
+        assert "the model can be given only text files, PNG and JPEG images and audio files" in entry["detail"]
+    assert "(a CSV file)" in table["detail"] and "(a .bin file in a format agent.detect does not know)" in blob["detail"]
     local = chat(client, "/api/chat", "local", [("blob.bin", bytes(range(256)))])[0]
-    assert "only text files and audio files in these formats" in local["detail"]  # no images offered to it
+    assert "the model can be given only text files and audio files" in local["detail"]  # no images offered to it
     assert state["models"]["api"].calls[-1] == ("What is this?", [])
 
 
@@ -365,9 +366,9 @@ def test_upload_folders_left_a_day_ago_are_removed(fake, rock_clip, monkeypatch)
 
 def test_only_png_and_jpeg_images_are_shown(doubles, monkeypatch):
     client, state = doubles
-    gif = b"GIF89a" + bytes(32)
-    monkeypatch.setattr(server_app, "_modality_of", lambda name, path: "image")  # as if agent.detect knew GIF
-    used = chat(client, "/api/chat", "api", [("anim.gif", gif), ("photo.jpg", b"\xff\xd8\xff\xe0" + bytes(16))])
+    gif = b"GIF89a" + bytes(32)  # agent.detect: a still GIF, an image, which no installed sense takes here
+    used = chat(client, "/api/chat", "api", [("still.gif", gif), ("photo.jpg", b"\xff\xd8\xff\xe0" + bytes(16))])
     assert used[0]["kind"] == "none" and "only PNG and JPEG images" in used[0]["detail"]
+    assert "sense for GIF images" in used[0]["detail"]
     assert used[1]["kind"] == "native"
     assert [item.source for item in state["models"]["api"].calls[-1][1]] == ["photo.jpg"]
