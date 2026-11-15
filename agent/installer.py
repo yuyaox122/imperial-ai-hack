@@ -70,8 +70,10 @@ How install() works
   The main virtual environment is never touched: --target writes only into the toolbox.
 
 Using the toolbox
-  Adapters put sys_path_entry() on the path with sys.path.insert(0, entry), never site.addsitedir, so .pth files
-  that wheels may carry are never executed.
+  sense.adapters' runner puts sys_path_entry() on the adapter's path with sys.path.insert (right after the folder
+  holding adapter_kit), never site.addsitedir, so .pth files that wheels may carry are never executed; its sandbox
+  may read that folder and nothing else under config.home(). sense.adapters.toolbox() lists the top-level modules
+  of the packages installed.json records, so the adapter's author is told it may import them.
 
 Network and processes
   Every HTTP request goes through _http (urllib, https only, to pypi.org and api.osv.dev only, User-Agent
