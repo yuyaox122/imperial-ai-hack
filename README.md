@@ -36,7 +36,7 @@ Every number below comes from a recorded run in [`socket_pilot/artifacts/`](sock
 | coordinates, "which country" | Claude Sonnet 5.5 | world cities, found by the agent | 100.0% | raw coordinates 98% | refused: the model already reads coordinates |
 | MIDI, "what genre" (blind test) | Claude Sonnet 5.5 | 60 piano MIDI files we supplied | 32.0% [20.8, 45.8] | no input 20% | refused: below the 35% bar |
 
-The ESC-50 run turned down its best-scoring bridge because that score did not hold on sounds the bridge had never been fitted on. In the blind test, MIDI appears nowhere in the code. The agent wrote a working `mido` adapter on its first attempt. The only MIDI genre set its Hub search returned was one it could not read, so it asked for examples. With our examples it measured a weak adapter and refused it.
+The 3D run was repeated once, from an empty sense folder, and installed again at 100.0% (swapped input 8%, raw file 34%, unseen categories 70%). The ESC-50 run turned down its best-scoring bridge because that score did not hold on sounds the bridge had never been fitted on. In the blind test, MIDI appears nowhere in the code. The agent wrote a working `mido` adapter on its first attempt. The only MIDI genre set its Hub search returned was one it could not read, so it asked for examples. With our examples it measured a weak adapter and refused it.
 
 ## Try it
 
