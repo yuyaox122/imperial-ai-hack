@@ -1,0 +1,341 @@
+{
+ "dataset": "lewtun/music_genres",
+ "config": "default",
+ "split": "train",
+ "features": [
+  {
+   "feature_idx": 0,
+   "name": "audio",
+   "type": {
+    "_type": "Audio"
+   }
+  },
+  {
+   "feature_idx": 1,
+   "name": "song_id",
+   "type": {
+    "dtype": "int64",
+    "_type": "Value"
+   }
+  },
+  {
+   "feature_idx": 2,
+   "name": "genre_id",
+   "type": {
+    "dtype": "int64",
+    "_type": "Value"
+   }
+  },
+  {
+   "feature_idx": 3,
+   "name": "genre",
+   "type": {
+    "dtype": "string",
+    "_type": "Value"
+   }
+  }
+ ],
+ "rows": [
+  {
+   "row_idx": 0,
+   "row": {
+    "audio": [
+     {
+      "src": "https://datasets-server.huggingface.co/assets/lewtun/music_genres/--/default/train/0/audio/audio.wav?Expires=1794707193&Signature=trimmed&Key-Pair-Id=K3C0L9WB6U5DUC",
+      "type": "audio/wav"
+     }
+    ],
+    "song_id": 0,
+    "genre_id": 0,
+    "genre": "Electronic"
+   },
+   "truncated_cells": []
+  },
+  {
+   "row_idx": 1,
+   "row": {
+    "audio": [
+     {
+      "src": "https://datasets-server.huggingface.co/assets/lewtun/music_genres/--/default/train/1/audio/audio.wav?Expires=1794707193&Signature=trimmed&Key-Pair-Id=K3C0L9WB6U5DUC",
+      "type": "audio/wav"
+     }
+    ],
+    "song_id": 1,
+    "genre_id": 9,
+    "genre": "International"
+   },
+   "truncated_cells": []
+  },
+  {
+   "row_idx": 2,
+   "row": {
+    "audio": [
+     {
+      "src": "https://datasets-server.huggingface.co/assets/lewtun/music_genres/--/default/train/2/audio/audio.wav?Expires=1794707193&Signature=trimmed&Key-Pair-Id=K3C0L9WB6U5DUC",
+      "type": "audio/wav"
+     }
+    ],
+    "song_id": 2,
+    "genre_id": 6,
+    "genre": "Chiptune / Glitch"
+   },
+   "truncated_cells": []
+  },
+  {
+   "row_idx": 3,
+   "row": {
+    "audio": [
+     {
+      "src": "https://datasets-server.huggingface.co/assets/lewtun/music_genres/--/default/train/3/audio/audio.wav?Expires=1794707193&Signature=trimmed&Key-Pair-Id=K3C0L9WB6U5DUC",
+      "type": "audio/wav"
+     }
+    ],
+    "song_id": 4,
+    "genre_id": 4,
+    "genre": "Hip-Hop"
+   },
+   "truncated_cells": []
+  },
+  {
+   "row_idx": 4,
+   "row": {
+    "audio": [
+     {
+      "src": "https://datasets-server.huggingface.co/assets/lewtun/music_genres/--/default/train/4/audio/audio.wav?Expires=1794707193&Signature=trimmed&Key-Pair-Id=K3C0L9WB6U5DUC",
+      "type": "audio/wav"
+     }
+    ],
+    "song_id": 5,
+    "genre_id": 14,
+    "genre": "Country"
+   },
+   "truncated_cells": []
+  },
+  {
+   "row_idx": 5,
+   "row": {
+    "audio": [
+     {
+      "src": "https://datasets-server.huggingface.co/assets/lewtun/music_genres/--/default/train/5/audio/audio.wav?Expires=1794707193&Signature=trimmed&Key-Pair-Id=K3C0L9WB6U5DUC",
+      "type": "audio/wav"
+     }
+    ],
+    "song_id": 7,
+    "genre_id": 12,
+    "genre": "Old-Time / Historic"
+   },
+   "truncated_cells": []
+  },
+  {
+   "row_idx": 6,
+   "row": {
+    "audio": [
+     {
+      "src": "https://datasets-server.huggingface.co/assets/lewtun/music_genres/--/default/train/6/audio/audio.wav?Expires=1794707193&Signature=trimmed&Key-Pair-Id=K3C0L9WB6U5DUC",
+      "type": "audio/wav"
+     }
+    ],
+    "song_id": 9,
+    "genre_id": 4,
+    "genre": "Hip-Hop"
+   },
+   "truncated_cells": []
+  },
+  {
+   "row_idx": 7,
+   "row": {
+    "audio": [
+     {
+      "src": "https://datasets-server.huggingface.co/assets/lewtun/music_genres/--/default/train/7/audio/audio.wav?Expires=1794707193&Signature=trimmed&Key-Pair-Id=K3C0L9WB6U5DUC",
+      "type": "audio/wav"
+     }
+    ],
+    "song_id": 10,
+    "genre_id": 2,
+    "genre": "Punk"
+   },
+   "truncated_cells": []
+  },
+  {
+   "row_idx": 8,
+   "row": {
+    "audio": [
+     {
+      "src": "https://datasets-server.huggingface.co/assets/lewtun/music_genres/--/default/train/8/audio/audio.wav?Expires=1794707193&Signature=trimmed&Key-Pair-Id=K3C0L9WB6U5DUC",
+      "type": "audio/wav"
+     }
+    ],
+    "song_id": 12,
+    "genre_id": 0,
+    "genre": "Electronic"
+   },
+   "truncated_cells": []
+  },
+  {
+   "row_idx": 9,
+   "row": {
+    "audio": [
+     {
+      "src": "https://datasets-server.huggingface.co/assets/lewtun/music_genres/--/default/train/9/audio/audio.wav?Expires=1794707193&Signature=trimmed&Key-Pair-Id=K3C0L9WB6U5DUC",
+      "type": "audio/wav"
+     }
+    ],
+    "song_id": 13,
+    "genre_id": 7,
+    "genre": "Instrumental"
+   },
+   "truncated_cells": []
+  },
+  {
+   "row_idx": 10,
+   "row": {
+    "audio": [
+     {
+      "src": "https://datasets-server.huggingface.co/assets/lewtun/music_genres/--/default/train/10/audio/audio.wav?Expires=1794707193&Signature=trimmed&Key-Pair-Id=K3C0L9WB6U5DUC",
+      "type": "audio/wav"
+     }
+    ],
+    "song_id": 14,
+    "genre_id": 3,
+    "genre": "Experimental"
+   },
+   "truncated_cells": []
+  },
+  {
+   "row_idx": 11,
+   "row": {
+    "audio": [
+     {
+      "src": "https://datasets-server.huggingface.co/assets/lewtun/music_genres/--/default/train/11/audio/audio.wav?Expires=1794707193&Signature=trimmed&Key-Pair-Id=K3C0L9WB6U5DUC",
+      "type": "audio/wav"
+     }
+    ],
+    "song_id": 15,
+    "genre_id": 17,
+    "genre": "Blues"
+   },
+   "truncated_cells": []
+  },
+  {
+   "row_idx": 12,
+   "row": {
+    "audio": [
+     {
+      "src": "https://datasets-server.huggingface.co/assets/lewtun/music_genres/--/default/train/12/audio/audio.wav?Expires=1794707193&Signature=trimmed&Key-Pair-Id=K3C0L9WB6U5DUC",
+      "type": "audio/wav"
+     }
+    ],
+    "song_id": 16,
+    "genre_id": 4,
+    "genre": "Hip-Hop"
+   },
+   "truncated_cells": []
+  },
+  {
+   "row_idx": 13,
+   "row": {
+    "audio": [
+     {
+      "src": "https://datasets-server.huggingface.co/assets/lewtun/music_genres/--/default/train/13/audio/audio.wav?Expires=1794707193&Signature=trimmed&Key-Pair-Id=K3C0L9WB6U5DUC",
+      "type": "audio/wav"
+     }
+    ],
+    "song_id": 18,
+    "genre_id": 9,
+    "genre": "International"
+   },
+   "truncated_cells": []
+  },
+  {
+   "row_idx": 14,
+   "row": {
+    "audio": [
+     {
+      "src": "https://datasets-server.huggingface.co/assets/lewtun/music_genres/--/default/train/14/audio/audio.wav?Expires=1794707193&Signature=trimmed&Key-Pair-Id=K3C0L9WB6U5DUC",
+      "type": "audio/wav"
+     }
+    ],
+    "song_id": 19,
+    "genre_id": 0,
+    "genre": "Electronic"
+   },
+   "truncated_cells": []
+  },
+  {
+   "row_idx": 15,
+   "row": {
+    "audio": [
+     {
+      "src": "https://datasets-server.huggingface.co/assets/lewtun/music_genres/--/default/train/15/audio/audio.wav?Expires=1794707193&Signature=trimmed&Key-Pair-Id=K3C0L9WB6U5DUC",
+      "type": "audio/wav"
+     }
+    ],
+    "song_id": 20,
+    "genre_id": 4,
+    "genre": "Hip-Hop"
+   },
+   "truncated_cells": []
+  },
+  {
+   "row_idx": 16,
+   "row": {
+    "audio": [
+     {
+      "src": "https://datasets-server.huggingface.co/assets/lewtun/music_genres/--/default/train/16/audio/audio.wav?Expires=1794707193&Signature=trimmed&Key-Pair-Id=K3C0L9WB6U5DUC",
+      "type": "audio/wav"
+     }
+    ],
+    "song_id": 21,
+    "genre_id": 1,
+    "genre": "Rock"
+   },
+   "truncated_cells": []
+  },
+  {
+   "row_idx": 17,
+   "row": {
+    "audio": [
+     {
+      "src": "https://datasets-server.huggingface.co/assets/lewtun/music_genres/--/default/train/17/audio/audio.wav?Expires=1794707193&Signature=trimmed&Key-Pair-Id=K3C0L9WB6U5DUC",
+      "type": "audio/wav"
+     }
+    ],
+    "song_id": 22,
+    "genre_id": 2,
+    "genre": "Punk"
+   },
+   "truncated_cells": []
+  },
+  {
+   "row_idx": 18,
+   "row": {
+    "audio": [
+     {
+      "src": "https://datasets-server.huggingface.co/assets/lewtun/music_genres/--/default/train/18/audio/audio.wav?Expires=1794707193&Signature=trimmed&Key-Pair-Id=K3C0L9WB6U5DUC",
+      "type": "audio/wav"
+     }
+    ],
+    "song_id": 25,
+    "genre_id": 11,
+    "genre": "Classical"
+   },
+   "truncated_cells": []
+  },
+  {
+   "row_idx": 19,
+   "row": {
+    "audio": [
+     {
+      "src": "https://datasets-server.huggingface.co/assets/lewtun/music_genres/--/default/train/19/audio/audio.wav?Expires=1794707193&Signature=trimmed&Key-Pair-Id=K3C0L9WB6U5DUC",
+      "type": "audio/wav"
+     }
+    ],
+    "song_id": 26,
+    "genre_id": 9,
+    "genre": "International"
+   },
+   "truncated_cells": []
+  }
+ ],
+ "truncated": true
+}

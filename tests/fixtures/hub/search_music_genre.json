@@ -1,0 +1,80 @@
+[
+ {
+  "_id": "68c54bcbe80b1753d2c67cce",
+  "id": "storylinez/gtzan-music-genre-dataset",
+  "author": "storylinez",
+  "disabled": false,
+  "downloads": 1016,
+  "gated": false,
+  "likes": 0,
+  "private": false,
+  "lastModified": "2025-09-13T10:59:38.000Z",
+  "tags": [
+   "task_categories:audio-classification",
+   "language:en",
+   "license:mit",
+   "size_categories:1K<n<10K",
+   "modality:audio",
+   "audio",
+   "music",
+   "genre"
+  ],
+  "cardData": {
+   "license": "mit",
+   "task_categories": [
+    "audio-classification"
+   ]
+  }
+ },
+ {
+  "_id": "6362400a19cf373a5fbeac33",
+  "id": "lewtun/music_genres",
+  "author": "lewtun",
+  "disabled": false,
+  "downloads": 763,
+  "gated": false,
+  "likes": 39,
+  "private": false,
+  "lastModified": "2022-11-02T10:27:30.000Z",
+  "tags": [
+   "size_categories:10K<n<100K",
+   "format:parquet",
+   "modality:audio",
+   "modality:text",
+   "library:datasets",
+   "library:dask",
+   "library:mlcroissant",
+   "library:polars"
+  ],
+  "cardData": {}
+ },
+ {
+  "_id": "646f6c674c05cd5de6de89a4",
+  "id": "ccmusic-database/music_genre",
+  "author": "ccmusic-database",
+  "disabled": false,
+  "downloads": 423,
+  "gated": false,
+  "likes": 66,
+  "private": false,
+  "lastModified": "2026-02-27T08:00:22.000Z",
+  "tags": [
+   "task_categories:audio-classification",
+   "task_categories:image-classification",
+   "language:zh",
+   "language:en",
+   "license:cc-by-nc-nd-4.0",
+   "size_categories:10K<n<100K",
+   "format:arrow",
+   "modality:image"
+  ],
+  "cardData": {
+   "license": "cc-by-nc-nd-4.0",
+   "pretty_name": "Music Genre Dataset",
+   "task_categories": [
+    "audio-classification",
+    "image-classification"
+   ]
+  }
+ }
+]
