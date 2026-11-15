@@ -9,6 +9,7 @@ import io
 import json
 import os
 import shutil
+import subprocess
 import sys
 import time
 import uuid
@@ -104,6 +105,125 @@ def test_code_imports_names_top_level_modules_and_commands():
            "def adapt(p):\n    subprocess.run(['ffprobe', p])\n"
     assert code_imports(code) == ["PIL", "ffprobe", "numpy", "subprocess", "xml"]
     assert code_imports("def broken(:") == []
+
+
+# ----------------------------------------------------------------------------- the kit and the toolbox on the path
+def _fake_font_cache() -> Path:
+    """A stand-in for matplotlib's font cache in the harness's cache folder, so no test pays the 12 s scan."""
+    from sense import config
+
+    folder = config.home() / "cache" / "matplotlib"
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / "fontlist-v0.0.0.json").write_text('{"_version": "fake"}')
+    return folder
+
+
+def _toolbox_package(name: str = "meshkit", *, top_level: bool = True, recorded: bool = True) -> Path:
+    """A package installed into the toolbox the way agent.installer leaves it: files, dist-info, installed.json."""
+    from agent import installer
+
+    site_dir = installer.toolbox_dir()
+    (site_dir / name).mkdir(parents=True)
+    (site_dir / name / "__init__.py").write_text("VALUE = 42\n")
+    info = site_dir / f"{name}-1.0.dist-info"
+    info.mkdir()
+    (info / "METADATA").write_text(f"Metadata-Version: 2.1\nName: {name}\nVersion: 1.0\n\n")
+    if top_level:
+        (info / "top_level.txt").write_text(f"{name}\n")
+    (info / "RECORD").write_text(f"{name}/__init__.py,,\n{info.name}/METADATA,,\n")
+    (site_dir / "evil.pth").write_text("import builtins; builtins.PTH_RAN = True\n")  # must never run
+    ledger = site_dir.parent / "installed.json"
+    rows = json.loads(ledger.read_text()) if ledger.is_file() else []
+    if recorded:
+        rows.append({"name": name, "version": "1.0", "sha256": "0" * 64})
+    ledger.write_text(json.dumps(rows))
+    return site_dir
+
+
+def test_toolbox_lists_the_kit_and_the_approved_packages():
+    tools = toolbox()
+    kit = [t for t in tools if t.startswith("adapter_kit (")]
+    assert len(kit) == 1 and "mesh_views" in kit[0] and "video_frames" in kit[0] and "\n" not in kit[0]
+    assert kit[0] == f"adapter_kit ({adapters.KIT_SUMMARY})"
+    assert "meshkit" not in tools  # no toolbox yet
+
+    _toolbox_package("meshkit")
+    _toolbox_package("pointkit", top_level=False)  # no top_level.txt: the RECORD names its modules
+    _toolbox_package("stray", recorded=False)  # files in the toolbox that installed.json does not record
+    tools = toolbox()
+    assert tools[-2:] == ["meshkit", "pointkit"] and "stray" not in tools
+
+
+def test_adapters_import_the_kit_and_the_toolbox_without_running_pth_files(a_file):
+    _fake_font_cache()
+    site_dir = _toolbox_package("meshkit")
+    code = f'''
+import builtins, json, os, sys
+import adapter_kit
+import meshkit
+
+def adapt(path):
+    try:
+        open({str(site_dir.parent / "installed.json")!r}).read()
+        ledger = "read"
+    except PermissionError:
+        ledger = "denied"
+    return {{"text": json.dumps({{
+        "kit": os.path.basename(adapter_kit.__file__), "has_views": hasattr(adapter_kit, "mesh_views"),
+        "lib_first": sys.path[0] == os.path.dirname(adapter_kit.__file__), "toolbox_second": sys.path[1],
+        "value": meshkit.VALUE, "pth": hasattr(builtins, "PTH_RAN"), "ledger": ledger,
+    }})}}
+'''
+    seen = json.loads(run_adapter(code, a_file)["text"])
+    assert seen["kit"] == "adapter_kit.py" and seen["has_views"] and seen["lib_first"]
+    assert seen["toolbox_second"] == str(site_dir.resolve()) and seen["value"] == 42
+    assert seen["pth"] is False  # sys.path.insert, never site.addsitedir
+    if SANDBOXED:  # exactly the toolbox folder is readable, not the rest of config.home()
+        assert seen["ledger"] == "denied"
+
+
+def test_matplotlib_cache_is_built_once_and_copied_into_each_run(a_file, monkeypatch):
+    pytest.importorskip("matplotlib")
+    from sense import config
+
+    monkeypatch.setenv("SOME_API_KEY", "sk-secret-value-123456789")
+    monkeypatch.setattr(adapters, "_mpl_failed", set())
+    builds = []
+    real_run = subprocess.run
+
+    def fake_scan(cmd, **kwargs):  # what `import matplotlib.font_manager` leaves in MPLCONFIGDIR, without 12 s
+        if cmd[-1] != "import matplotlib.font_manager":
+            return real_run(cmd, **kwargs)
+        builds.append(kwargs["env"])
+        Path(kwargs["env"]["MPLCONFIGDIR"], "fontlist-v9.9.9.json").write_text('{"_version": "9.9.9"}')
+        return subprocess.CompletedProcess(cmd, 0)
+
+    monkeypatch.setattr(adapters.subprocess, "run", fake_scan)
+    folder = adapters.matplotlib_cache()
+    assert folder == config.home() / "cache" / "matplotlib" and (folder / "fontlist-v9.9.9.json").is_file()
+    assert len(builds) == 1 and "SOME_API_KEY" not in builds[0] and builds[0]["MPLBACKEND"] == "Agg"
+    assert adapters.matplotlib_cache() == folder and len(builds) == 1  # built once
+    assert [p.name for p in folder.parent.iterdir()] == ["matplotlib"]  # no staging folder left behind
+
+    code = '''
+import os
+import matplotlib
+
+def adapt(path):
+    here = os.environ["MPLCONFIGDIR"]
+    inside = os.path.dirname(os.getcwd()) == os.path.dirname(here)
+    return {"text": f"{inside} {sorted(os.listdir(here))}"}
+'''
+    assert run_adapter(code, a_file)["text"] == "True ['fontlist-v9.9.9.json']"
+    assert len(builds) == 1
+
+    # a build that fails is remembered, and the adapter still runs (matplotlib then scans on its own)
+    monkeypatch.setenv("SENSE_HOME", str(Path(config.home()).parent / "other-home"))
+    monkeypatch.setattr(adapters.subprocess, "run",
+                        lambda cmd, **kw: builds.append(kw["env"]) or subprocess.CompletedProcess(cmd, 1))
+    assert adapters.matplotlib_cache() is None and adapters.matplotlib_cache() is None and len(builds) == 2
+    monkeypatch.setattr(adapters.subprocess, "run", real_run)
+    assert run_adapter(code, a_file)["text"] == "True []"
 
 
 # ----------------------------------------------------------------------------- run_adapter

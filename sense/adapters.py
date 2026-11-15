@@ -7,8 +7,17 @@ Public surface (do not rename):
       what an adapter may use, checked at call time: the allow-list numpy, scipy, PIL, json, csv, math, struct,
       zipfile, gzip, io, re, xml.etree, statistics, plus trimesh, rdkit, soundfile, av, cv2, pandas and
       matplotlib when they are installed, plus "ffmpeg (via subprocess)" and "ffprobe (via subprocess)" when those
-      binaries are on PATH (or in /opt/homebrew/bin or /usr/local/bin). It is for the prompt that asks for an
-      adapter; run_adapter does not police imports.
+      binaries are on PATH (or in /opt/homebrew/bin or /usr/local/bin), plus "adapter_kit (...)" (sense.adapter_kit,
+      always on the adapter's path; the parentheses list its functions in one line, KIT_SUMMARY), plus the
+      importable top-level names of the packages agent.installer recorded in the toolbox's installed.json (only
+      those whose files are in the toolbox). It is for the prompt that asks for an adapter; run_adapter does not
+      police imports.
+  KIT_SUMMARY
+      the one-line description of adapter_kit that toolbox() shows
+  matplotlib_cache(*, build=True) -> Path | None
+      <config.home()>/cache/matplotlib holding matplotlib's font cache (fontlist-*.json), built once by a harness
+      subprocess (MPLCONFIGDIR set there, `import matplotlib.font_manager`) when it is missing and `build` is
+      true; None when matplotlib is not installed or the build failed (a failure is remembered for the process)
   code_imports(code) -> list[str]
       the top-level modules the code imports (and "ffmpeg"/"ffprobe" when it names them), for a manifest
   AdapterError(reason, traceback="", *, cause="error")
@@ -60,6 +69,16 @@ run_adapter. Anything else (another return value, an exception, a non-zero exit,
 or memory) raises AdapterError with the reason and the tail of the traceback, so the agent can show it to the LLM
 and ask for a repair.
 
+The adapter's path. The runner puts <tmp>/lib at sys.path[0], holding a copy of sense/adapter_kit.py, so an
+adapter can `import adapter_kit`; when the toolbox exists (agent.installer.toolbox_dir(), the packages a user
+approved, under config.home()) it is added right after with sys.path.insert, never site.addsitedir, so no .pth
+file in it runs.
+
+matplotlib. Its first font scan takes over 10 s, and every run has a fresh HOME. So the harness builds the font
+cache once (matplotlib_cache(), when the code imports matplotlib or adapter_kit and there is none yet; this is
+not counted in the adapter's timeout) and copies its fontlist-*.json into the run's own MPLCONFIGDIR
+(<tmp>/mplconfig), which the adapter's environment names.
+
 The sandbox. run_adapter writes the code and a small runner script to a fresh temporary directory and runs
 `sys.executable -I -B runner.py adapter.py <copy of the file>` there, in a new session (process group), with:
   - its own working directory (<tmp>/work), also its HOME and TMPDIR, so caches and stray files land there;
@@ -70,7 +89,8 @@ The sandbox. run_adapter writes the code and a small runner script to a fresh te
     (http://127.0.0.1:9), and NO_PROXY empty, so ordinary HTTP fails at once instead of hanging;
   - on macOS, a sandbox-exec profile that denies all network access; denies reading /Users, /Volumes,
     /private/tmp, /private/var/folders, the user's home and config.home() (the probe store), except the
-    interpreter's prefixes and site-packages and this run's own folders; denies reading .env* files and credential
+    interpreter's prefixes and site-packages, this run's own folders and, when it exists, exactly the toolbox
+    folder (not the rest of config.home(), not even its installed.json); denies reading .env* files and credential
     stores (~/.ssh, ~/.aws, ~/.codex, ~/.config, shell profiles, ...) even there; and denies writing anywhere but
     this run's temporary folder, `writable` and /dev. When sandbox-exec exists but cannot apply a profile (for
     example inside another sandbox), run_adapter refuses (AdapterError, cause "sandbox") unless
@@ -184,6 +204,16 @@ _CORE_LIBRARIES = [
 _OPTIONAL_LIBRARIES = ["trimesh", "rdkit", "soundfile", "av", "cv2", "pandas", "matplotlib"]
 _BINARIES = ["ffmpeg", "ffprobe"]
 _BINARY_DIRS = ["/opt/homebrew/bin", "/usr/local/bin"]
+KIT_FILE = Path(__file__).with_name("adapter_kit.py")  # copied into every run's lib/ folder
+KIT_SUMMARY = (
+    "this harness's helper module, on the adapter's path: import adapter_kit. video_frames(path, n=6) -> PIL "
+    "frames and video_summary(path) -> dict, for video; contact_sheet(images) -> one PIL image; load_mesh(path), "
+    "mesh_views(path, views=4) -> PIL renders and mesh_summary(path) -> dict with a plain description, for 3D "
+    "meshes; read_molecule(path), molecule_summary(path) -> dict with a plain description and molecule_image(path), "
+    "for molecules; read_coordinates(path) -> [(lat, lon)], coordinate_summary(lat, lon) -> dict and "
+    "nearest_places(lat, lon), for coordinates; ValueError when a file cannot be read"
+)
+MPL_BUILD_TIMEOUT = 180.0  # seconds the one-off matplotlib font scan may take
 
 _SECRET_WORDS = ("KEY", "TOKEN", "SECRET", "PASSWORD", "PASSWD", "CREDENTIAL", "AUTH")
 _SECRET_PREFIXES = ("DATABRICKS_", "OPENAI_", "LINKUP_", "ANTHROPIC_", "AWS_", "AZURE_", "GOOGLE_", "GH_", "GITHUB_")
@@ -205,10 +235,92 @@ _KEY_SHAPES = re.compile(
 # ----------------------------------------------------------------------------- toolbox
 def toolbox() -> list[str]:
     """What an adapter may use: the allow-listed modules that can be imported here (checked now, without importing
-    them), then "ffmpeg (via subprocess)" and "ffprobe (via subprocess)" when those binaries exist."""
+    them), then "ffmpeg (via subprocess)" and "ffprobe (via subprocess)" when those binaries exist, then
+    "adapter_kit (<KIT_SUMMARY>)", then the top-level modules of the packages installed into the toolbox."""
     out = [name for name in _CORE_LIBRARIES + _OPTIONAL_LIBRARIES if _importable(name)]
     out += [f"{name} (via subprocess)" for name in _BINARIES if _binary(name)]
+    out.append(f"adapter_kit ({KIT_SUMMARY})")
+    out += [name for name in _toolbox_modules() if name not in out]
     return out
+
+
+def _toolbox_site() -> Path | None:
+    """The folder of packages a user approved (agent.installer.toolbox_dir()), resolved, when it exists."""
+    from agent.installer import sys_path_entry  # imported here: sense does not need the agent package to load
+
+    entry = sys_path_entry()
+    return Path(entry).resolve() if entry else None
+
+
+def _norm(name: str) -> str:
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+
+def _toolbox_modules() -> list[str]:
+    """Top-level modules of the packages recorded in the toolbox's installed.json whose files are in the toolbox:
+    each package's dist-info top_level.txt, else the first parts of the paths in its RECORD. Names starting with
+    "_" (private extension modules) are left out."""
+    site_dir = _toolbox_site()
+    if site_dir is None:
+        return []
+    try:
+        records = json.loads((site_dir.parent / "installed.json").read_text())
+    except (OSError, ValueError):
+        return []
+    wanted = {_norm(r["name"]) for r in records if isinstance(r, dict) and isinstance(r.get("name"), str)} \
+        if isinstance(records, list) else set()
+    out: list[str] = []
+    for info in sorted(site_dir.glob("*.dist-info")):
+        if _norm(_dist_name(info)) not in wanted:
+            continue
+        for name in _top_levels(info):
+            if name not in out and name.isidentifier() and not name.startswith("_") and _module_there(site_dir, name):
+                out.append(name)
+    return out
+
+
+def _dist_name(info: Path) -> str:
+    try:
+        for line in (info / "METADATA").read_text(encoding="utf-8", errors="replace").splitlines():
+            if line.lower().startswith("name:"):
+                return line.split(":", 1)[1].strip()
+            if not line.strip():
+                break
+    except OSError:
+        pass
+    return info.name[: -len(".dist-info")].rsplit("-", 1)[0]
+
+
+def _top_levels(info: Path) -> list[str]:
+    try:
+        listed = [line.strip() for line in (info / "top_level.txt").read_text().splitlines() if line.strip()]
+        if listed:
+            return listed
+    except OSError:
+        pass
+    found: list[str] = []
+    try:
+        lines = (info / "RECORD").read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return found
+    for line in lines:
+        first = line.split(",", 1)[0].split("/", 1)
+        if len(first) == 2:
+            top = first[0]
+        elif first[0].endswith(".py"):
+            top = first[0][:-3]
+        elif re.search(r"\.(so|pyd)$", first[0]):
+            top = first[0].split(".", 1)[0]
+        else:
+            continue
+        if top.endswith((".dist-info", ".data")) or top in ("__pycache__", "bin", "..") or top in found:
+            continue
+        found.append(top)
+    return found
+
+
+def _module_there(site_dir: Path, name: str) -> bool:
+    return (site_dir / name).is_dir() or (site_dir / f"{name}.py").is_file() or any(site_dir.glob(f"{name}.*.so"))
 
 
 def _importable(name: str) -> bool:
@@ -304,6 +416,10 @@ _RUNNER = r'''
 import base64, io, json, os, sys, traceback
 
 MAX_TEXT, MAX_IMAGES, MAX_SIDE, FSIZE = int(sys.argv[3]), int(sys.argv[4]), int(sys.argv[5]), int(sys.argv[6])
+LIB, TOOLBOX = sys.argv[7], sys.argv[8]
+sys.path.insert(0, LIB)  # adapter_kit
+if TOOLBOX:  # the approved packages, after the kit; never site.addsitedir, so no .pth file runs
+    sys.path.insert(1, TOOLBOX)
 try:  # no file this process or its children write grows past FSIZE (Python ignores SIGXFSZ: writes fail instead)
     import resource
     resource.setrlimit(resource.RLIMIT_FSIZE, (FSIZE, FSIZE))
@@ -438,14 +554,15 @@ def _interpreter_paths() -> list[str]:
     return [p for p in dict.fromkeys(os.path.realpath(p) for p in paths if p) if p != "/"]
 
 
-def _profile(tmp: Path, writable: Path | None = None) -> str:
+def _profile(tmp: Path, writable: Path | None = None, toolbox_site: Path | None = None) -> str:
     """macOS sandbox profile: no network; no reads of the user's folders and temporary folders except the
-    interpreter, its libraries and this run's own folders; no credential stores or .env files even there; writes
-    only to this run's temporary folder (and `writable`)."""
+    interpreter, its libraries, this run's own folders and the toolbox folder; no credential stores or .env files
+    even there; writes only to this run's temporary folder (and `writable`)."""
     home = Path.home()
     own = [os.path.realpath(tmp)] + ([os.path.realpath(writable)] if writable is not None else [])
     denied = list(dict.fromkeys(_READ_DENIED_ROOTS + [os.path.realpath(home), os.path.realpath(config.home())]))
-    allowed = list(dict.fromkeys(own + _interpreter_paths()))
+    readable = [os.path.realpath(toolbox_site)] if toolbox_site is not None else []
+    allowed = list(dict.fromkeys(own + _interpreter_paths() + readable))
     ancestors = sorted({str(parent) for p in allowed for parent in Path(p).parents})
     secrets_ = " ".join(f"(subpath {_sbpl(str(home / p))})" for p in _HOME_SECRETS)
     return (
@@ -461,14 +578,14 @@ def _profile(tmp: Path, writable: Path | None = None) -> str:
     )
 
 
-def _child_env(work: Path, token: str) -> dict[str, str]:
+def _child_env(work: Path, token: str, mplconfig: Path | None = None) -> dict[str, str]:
     env = {name: value for name, value in os.environ.items() if not _secret_name(name)}
     for name in _PROXY_VARS:
         env[name] = BLOCKED_PROXY
     env["NO_PROXY"] = env["no_proxy"] = ""
     tmp = work / "tmp"
     tmp.mkdir(exist_ok=True)
-    env.update(HOME=str(work), TMPDIR=str(tmp), MPLCONFIGDIR=str(work), XDG_CACHE_HOME=str(work / "cache"))
+    env.update(HOME=str(work), TMPDIR=str(tmp), MPLCONFIGDIR=str(mplconfig or work), XDG_CACHE_HOME=str(work / "cache"))
     env[RUN_TOKEN_ENV] = token
     path = env.get("PATH", os.defpath).split(os.pathsep)
     extra = [str(Path(b).parent) for b in map(_binary, _BINARIES) if b]
@@ -523,6 +640,69 @@ def _kill_group(proc: subprocess.Popen) -> None:
         pass
 
 
+_mpl_lock = threading.Lock()
+_mpl_failed: set[str] = set()  # cache folders whose build failed in this process: not tried again
+
+
+def _font_cache_in(folder: Path) -> list[Path]:
+    try:
+        return sorted(folder.glob("fontlist-*.json"))
+    except OSError:
+        return []
+
+
+def matplotlib_cache(*, build: bool = True) -> Path | None:
+    """<config.home()>/cache/matplotlib with matplotlib's font cache in it, built once (see the module docstring).
+    None when matplotlib is not installed, when there is no cache and `build` is false, or when building failed."""
+    if not _importable("matplotlib"):
+        return None
+    folder = config.home() / "cache" / "matplotlib"
+    if _font_cache_in(folder):
+        return folder
+    if not build or str(folder) in _mpl_failed:
+        return None
+    with _mpl_lock:
+        if _font_cache_in(folder):
+            return folder
+        staging = folder.with_name(f".matplotlib-{os.getpid()}-{secrets.token_hex(4)}")
+        try:
+            staging.mkdir(parents=True)
+            env = {name: value for name, value in os.environ.items() if not _secret_name(name)}
+            env.update(MPLCONFIGDIR=str(staging), MPLBACKEND="Agg")
+            subprocess.run(
+                [sys.executable, "-I", "-B", "-c", "import matplotlib.font_manager"], env=env,
+                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                timeout=MPL_BUILD_TIMEOUT, check=False,
+            )
+            if _font_cache_in(staging) and not folder.exists():
+                os.rename(staging, folder)  # another process may have won the race: then its cache is used
+        except (OSError, subprocess.SubprocessError):
+            pass
+        finally:
+            shutil.rmtree(staging, ignore_errors=True)
+        if _font_cache_in(folder):
+            return folder
+        _mpl_failed.add(str(folder))
+        return None
+
+
+def _wants_matplotlib(code: str) -> bool:
+    return bool({"matplotlib", "adapter_kit"} & set(code_imports(code)))
+
+
+def _place_kit(tmp: Path) -> tuple[Path, Path]:
+    """<tmp>/lib with a copy of adapter_kit.py, and <tmp>/mplconfig with matplotlib's font cache copied in when
+    the harness has one."""
+    lib, mplconfig = tmp / "lib", tmp / "mplconfig"
+    lib.mkdir()
+    mplconfig.mkdir()
+    shutil.copyfile(KIT_FILE, lib / "adapter_kit.py")
+    cache = matplotlib_cache(build=False)
+    for font_list in _font_cache_in(cache) if cache is not None else []:
+        shutil.copyfile(font_list, mplconfig / font_list.name)
+    return lib, mplconfig
+
+
 def _place_input(path: Path, folder: Path) -> Path:
     """A private copy of `path` as <folder>/input<extension>: the adapter sees no name, folder or neighbours of the
     original, and cannot change it. An APFS clone (copy-on-write, instant) when possible, else a full copy."""
@@ -569,27 +749,32 @@ def run_adapter(
     problem = sandbox_problem()
     if problem is not None:
         raise AdapterError(problem, cause="sandbox")
+    if _wants_matplotlib(code):
+        matplotlib_cache()  # the one-off font scan, before the adapter's clock starts
+    toolbox_site = _toolbox_site()
     tmp = Path(tempfile.mkdtemp(prefix="sense-adapter-")).resolve()
     started = time.monotonic()
     try:
         work = tmp / "work"
         work.mkdir()
         target = _place_input(path, tmp / "input")
+        lib, mplconfig = _place_kit(tmp)
         code_file, runner = tmp / "adapter.py", tmp / "runner.py"
         code_file.write_text(code, encoding="utf-8")
         runner.write_text(_RUNNER, encoding="utf-8")
         cmd = [
             sys.executable, "-I", "-B", str(runner), str(code_file), str(target),
             str(MAX_TEXT_CHARS), str(MAX_IMAGES), str(MAX_IMAGE_SIDE), str(FILE_SIZE_LIMIT),
+            str(lib), str(toolbox_site or ""),
         ]
         if sandboxed():
-            cmd = [SANDBOX_EXEC, "-p", _profile(tmp, writable), *cmd]
+            cmd = [SANDBOX_EXEC, "-p", _profile(tmp, writable, toolbox_site), *cmd]
         token = secrets.token_hex(12)
         log_path = tmp / "log.txt"
         with open(log_path, "wb") as log:
             proc = subprocess.Popen(
-                cmd, cwd=work, env=_child_env(work, token), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                stderr=log, start_new_session=True,
+                cmd, cwd=work, env=_child_env(work, token, mplconfig), stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE, stderr=log, start_new_session=True,
             )
             watch = _Watch(proc, token, [tmp] + ([writable] if writable is not None else []))
             try:
