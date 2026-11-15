@@ -188,7 +188,9 @@ def main() -> int:
         print(folder_summary(ds), flush=True)
         dataset = ds.name
     try:
-        problem = datasets.fit_problem(datasets.load_labelled_set(dataset), args.scope)
+        info = next((m for m in models.available_models() if m.name == args.model), None)
+        problem = datasets.fit_problem(datasets.load_labelled_set(dataset), args.scope,
+                                       open_weights=info.open_weights if info else True)
     except (ValueError, FileNotFoundError):
         problem = None  # an unknown or missing set: the run's [inspect] step says so
     if problem:

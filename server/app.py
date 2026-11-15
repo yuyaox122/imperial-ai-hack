@@ -394,7 +394,9 @@ def api_fit(body: FitBody) -> dict:
         raise _bad_request(f"Unknown scope '{body.scope}'. Use 'closed' or 'open'.")
     if body.scope == "open" or dataset.get("origin") == "folder":  # a built-in set is always big enough for closed
         try:
-            problem = datasets.fit_problem(datasets.load_labelled_set(body.dataset), body.scope)
+            info = next(m for m in models.available_models() if m.name == body.model)  # _check_model passed
+            problem = datasets.fit_problem(datasets.load_labelled_set(body.dataset), body.scope,
+                                           open_weights=info.open_weights)
         except (ValueError, FileNotFoundError) as exc:
             raise _bad_request(str(exc))
         if problem:
