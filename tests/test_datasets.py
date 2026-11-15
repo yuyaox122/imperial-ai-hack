@@ -654,6 +654,22 @@ def test_open_scope_needs_three_labels(client, tmp_path):
     assert r.status_code == 400 and "can leave 4 examples" in r.json()["detail"]
 
 
+def test_an_api_model_may_fit_open_scope_on_two_labels(client, tmp_path):
+    """POST /api/fit passes the model's open_weights to fit_problem: an API model builds no vector bridge and
+    runs no unseen-classes control, so a 2-label set is enough for scope open (a local model is still refused)."""
+    two = make_folder(tmp_path / "two", {"dog": 6, "rooster": 6})
+    assert client.post("/api/datasets", json={"path": str(two)}).status_code == 200
+    assert client.post("/api/fit", json={"model": "fake", "dataset": "two", "scope": "open"}).status_code == 400
+    r = client.post("/api/fit", json={"model": "fake-api", "dataset": "two", "scope": "open"})
+    assert r.status_code == 200, r.text
+    for _ in range(400):
+        state = client.get(f"/api/jobs/{r.json()['job_id']}").json()
+        if state["status"] != "running":
+            break
+        time.sleep(0.02)
+    assert state["status"] == "done", state["error"]
+
+
 def test_posting_a_folder_again_keeps_what_the_agent_recorded(client, folder):
     datasets.from_folder(folder, "farm", title="Farm sounds", source="https://example.org/farm", licence="CC-BY 4.0")
     r = client.post("/api/datasets", json={"path": str(folder), "name": "farm"})
@@ -665,7 +681,7 @@ def test_posting_a_folder_again_keeps_what_the_agent_recorded(client, folder):
 
 def test_a_closed_fit_on_a_folder_set_is_checked_with_fit_problem(client, folder, monkeypatch):
     datasets.from_folder(folder, "farm")
-    monkeypatch.setattr(datasets, "fit_problem", lambda ds, scope="closed": f"{ds.name} was embedded elsewhere")
+    monkeypatch.setattr(datasets, "fit_problem", lambda ds, scope="closed", **kw: f"{ds.name} was embedded elsewhere")
     r = client.post("/api/fit", json={"model": "fake", "dataset": "farm", "scope": "closed"})
     assert r.status_code == 400 and r.json()["detail"] == "farm was embedded elsewhere"
 

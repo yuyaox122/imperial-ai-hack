@@ -96,10 +96,10 @@ def test_upload_is_reported_under_its_own_name(client):
 def test_files_that_cannot_reach_the_model_are_reported(client):
     samples = client.get("/api/samples", params={"dataset": "gtzan"}).json()
     r = client.post("/api/chat", data={"model": "fake", "message": "Hello", "sample_ids": [samples[0]["id"]]},
-                    files=[("files", ("notes.txt", b"not audio", "text/plain"))])
+                    files=[("files", ("table.bin", bytes(range(256)), "application/octet-stream"))])
     assert r.status_code == 200, r.text
     upload, sample = r.json()["used"]  # uploads are listed before samples
-    assert upload["kind"] == "none" and "only audio files" in upload["detail"]
+    assert upload["kind"] == "none" and "audio files in these formats" in upload["detail"]
     assert sample["kind"] == "none" and "has no installed audio sense" in sample["detail"]
     assert "No audio reached me" in r.json()["reply"]
 
