@@ -38,6 +38,7 @@ async function setup(page, options = {}) {
       cancelled = false;
       return json({ job_id: "job-1" });
     }
+    if (path === "/api/jobs/latest") return json({ job_id: options.latest ? options.latest(count(path)) : null });
     if (path === "/api/jobs/job-1/approval") {
       if (options.approval) return options.approval(route, req);
       return json({ detail: "Not Found" }, 404);
@@ -647,7 +648,14 @@ function adapterJob({ unseen = true, card = adapterCard } = {}) {
         preview: "The mesh has 412 vertices.", output_kind: "text", notes: [], seconds: 0.42 }),
       ...probes("probes", "shapes/chairs", ["armchair", "stool"], "cc-by-4.0"),
       event("data", "ok", "Using 40 dataset probe files in 2 labels (armchair, stool); all are held out.", summary),
-      ...(unseen
+      ...(unseen === "rejected"
+        ? [ // the second search tries a candidate and rejects it: the data step's own outcome stands
+          event("data", "start", "Searching for labelled files of other categories.", { purpose: "unseen", provenance: "dataset", action: "search" }),
+          event("data", "ok", "Found 1 candidate dataset.", { purpose: "unseen", provenance: "dataset", action: "search", found: 1 }),
+          event("data", "start", "Trying shapes/captions.", { purpose: "unseen", provenance: "dataset", action: "candidate", hub_id: "shapes/captions", source: "shapes/captions" }),
+          event("data", "fail", "shapes/captions cannot be used: it has no mesh column.", { purpose: "unseen", provenance: "dataset", action: "candidate", hub_id: "shapes/captions", source: "shapes/captions", reason: "no mesh column" }),
+          event("data", "info", note, { purpose: "unseen", reason: "no candidate dataset gave usable probes" })]
+        : unseen
         ? [...probes("unseen", "other/benches", ["bench", "sofa", "table"], "mit"),
           event("data", "info", "Also scoring 15 files of 3 other categories (bench, sofa, table), which the adapter was not built around.", {
             unseen: { name: "3d-unseen-1", source: "https://huggingface.co/datasets/other/benches", labels: ["bench", "sofa", "table"], per_label: { bench: 5, sofa: 5, table: 5 }, n: 15 } })]
@@ -746,6 +754,8 @@ test("an install request shows the checks apart from the LLM's opinion; Approve 
   await expect(card.locator(".approval-review")).toContainText("release history is short");
   await expect(card).toContainText("No answer within 10 minutes counts as declined.");
   await expect(page.locator(".step").filter({ hasText: "Your approval" }).locator(".step-state")).toHaveText("Waiting");
+  // No event comes while the run waits, but its clock goes on (every event of this fixture is at 1 s).
+  await expect.poll(() => page.locator("#trace-elapsed").textContent(), { timeout: 5000 }).toMatch(/^(1\.[5-9]|[2-9]\.\d|\d{2,}\.\d) s$/);
   await expect(page.locator(".step-title")).toHaveText([
     "Detect the input", "Design an adapter", "Check requested packages", "Your approval", "Write and run the adapter",
     "Find labelled probe files", "Verify on probe files", "Install or refuse", "Install",
@@ -768,8 +778,10 @@ test("an install request shows the checks apart from the LLM's opinion; Approve 
   await expect(card.locator(".approval-outcome")).toHaveText(/^Approved\./);
   await expect(card.locator(".approval-outcome")).toBeFocused();
   await expect(note).toContainText("You approved installing pygltflib.");
-  // Once the run has moved on to the build step, the card goes; the steps keep the outcome.
+  // Once the run has moved on to the build step, the card goes; the steps keep the outcome, and the keyboard
+  // stays in the run (at its heading) rather than falling back to the start of the page.
   await expect(page.locator("#approval .approval")).toHaveCount(0);
+  await expect(page.locator("#trace-heading")).toBeFocused();
   await expect(page.locator(".step").filter({ hasText: "Your approval" })).toHaveClass(/step--done/);
   await expect(page.locator(".step").filter({ hasText: "Check requested packages" })).toContainText("pygltflib 1.16.2");
   expect(calls.filter((c) => c.path === "/api/jobs/job-1/approval")).toHaveLength(1);
@@ -798,6 +810,30 @@ test("Decline answers the request; the step shows it was declined, not failed", 
   await expect(approval.locator(".step-state")).toHaveText("Declined");
   await expect(page.locator(".step").filter({ hasText: "Check requested packages" })).toHaveClass(/step--declined/);
   await expect(page.locator(".msg--agent").filter({ hasText: "You declined installing pygltflib" })).toBeVisible();
+  expect(errors).toEqual([]);
+});
+
+test("a tab that did not start the run finds it waiting for approval and can answer it", async ({ page }) => {
+  let answer = null;
+  const { calls, errors } = await setup(page, {
+    senses: [],
+    latest: () => "job-1", // GET /api/jobs/latest: the run another tab started
+    job: () => waitingJob(answer),
+    approval: (route, req) => {
+      answer = JSON.parse(req.postData()).approve;
+      return route.fulfill({ json: { answered: true, approve: answer } });
+    },
+    runs: [{ id: "early", request: autoRequest, status: "done", installed: null, seconds: 1 }],
+  });
+  expect(calls.filter((c) => c.path === "/api/auto")).toHaveLength(0); // nothing was started from this tab
+  const card = page.getByRole("region", { name: "Install pygltflib?" });
+  await expect(card).toBeVisible();
+  await expect(page.locator("#trace-status")).toHaveText("Running");
+  await card.getByRole("button", { name: "Decline" }).click();
+  await expect.poll(() => answer).toBe(false);
+  // A recorded run that ended before its data step says so, rather than naming no modality.
+  await page.locator("#runs-button").click();
+  await expect(page.locator(".run-item-title").filter({ hasText: "ended before" })).toHaveText("Agent run · ended before it chose labelled files");
   expect(errors).toEqual([]);
 });
 
@@ -883,6 +919,20 @@ test("an adapter run shows its design, attempts and code, where the probe files 
   await page.getByRole("tab", { name: "Report", exact: true }).click();
   await expect(page.locator(".metric").filter({ hasText: "Unseen categories" })).toHaveCount(0);
   await expect(page.locator("#report .metric-chance")).toHaveCount(0);
+
+  // A candidate the unseen-categories search rejects is not a failure of the data step, which found its probe files.
+  scenario = adapterJob({ unseen: "rejected", card: { ...adapterCard, controls: { swapped: 0.45, no_input: 0.5, native: 0.5 }, control_chance: {} } });
+  await runOnMesh(page, "chair.obj");
+  await expect(page.locator("#trace-status")).toHaveText("Sense installed");
+  await page.getByRole("tab", { name: "Run", exact: true }).click();
+  const probeStep = page.locator(".step").filter({ hasText: "Find labelled probe files" });
+  await expect(probeStep).toHaveClass(/step--done/);
+  await expect(probeStep.locator(".step-state")).toHaveText("Done");
+  await expect(probeStep.locator(".fact-warn")).toContainText("Unseen categories not measured");
+  await expect(page.locator(".step--refused")).toHaveCount(0);
+  // The Senses list names where an adapter's probe files came from, never the hashed name of its probe set.
+  await expect(page.locator("#senses-list")).toContainText("Agent-written adapter (text) · probe files from a public dataset");
+  await expect(page.locator("#senses-list")).not.toContainText("3d-dataset-");
   expect(errors).toEqual([]);
 });
 
@@ -910,5 +960,8 @@ test("chat takes any file: a .glb goes through its adapter sense, and a file the
   await expect(page.locator(".msg--model .name-line-tags .tag")).toHaveText(["Read via adapter", "File not received"]);
   await expect(page.locator(".msg--model")).not.toContainText("Heard via text bridge");
   await expect(page.locator(".msg--user .attachment-meta")).toHaveText(["3D model · upload", "3D model · upload"]);
+  // Its report card, opened from the Senses list with no run at hand, names where the probe files came from.
+  await page.locator("#senses-list .sense-text").filter({ hasText: "3D model" }).click();
+  await expect(page.locator("#report .report-sub")).toHaveText("3D model → Fake model · agent-written adapter (text) · probe files from a public dataset");
   expect(errors).toEqual([]);
 });

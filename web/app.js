@@ -92,9 +92,11 @@ const STEP_INDEX = Object.fromEntries([...ADAPTER_STEPS, ...STEPS].map((s) => [s
 const STEP_WORDS = { done: "Done", running: "Running", pending: "Pending", refused: "Refused", failed: "Failed", stopped: "Stopped", declined: "Declined" };
 /* An info event that ends these steps' open start: install_request ends with info when you decline. */
 const INFO_CLOSES = new Set(["install_request"]);
-/* Readable names for modalities agent.detect names, and the aliases designers use; others are capitalised. */
+/* Readable names for modalities agent.detect names, and for names designers give; others are capitalised. A
+   designer's name for a file agent.detect calls "other" ("3d-model" for an unknown binary) keeps its own name, so
+   that its sense is never shown as the same "3D model" as agent.detect's 3d sense. */
 const MODALITY_NAMES = {
-  "3d": "3D model", "3d-model": "3D model", mesh: "3D model", "point-cloud": "Point cloud", molecule: "Molecule",
+  "3d": "3D model", "point-cloud": "Point cloud", molecule: "Molecule",
   geo: "Coordinates", video: "Video", audio: "Audio", text: "Text", image: "Image", table: "Table",
   timeseries: "Time series", "time-series": "Time series", "medical-image": "Medical image", other: "Other file",
 };
@@ -326,6 +328,13 @@ function modalityName(modality) {
 }
 /** An adapter run's probe set: agent.synth names it <modality>-dataset-<hash>, <modality>-examples-<hash> or generated-<modality>-<hash>. */
 const isProbeSet = (name) => typeof name === "string" && /^generated-.+-[0-9a-f]{6,}$|-(dataset|examples)-[0-9a-f]{6,}$/.test(name);
+/** A labelled set's title for subtitles; an adapter's probe set, named by a hash, by where its files came from
+    (the name says that much; the run's data step, when it is at hand, says more: probeSourceText). */
+function setTitle(name) {
+  if (!isProbeSet(name)) return datasetTitle(name);
+  if (name.startsWith("generated-")) return "generated probe files";
+  return /-examples-[0-9a-f]+$/.test(name) ? "probe files from your examples" : "probe files from a public dataset";
+}
 /** An agent-written adapter's bridge is named "adapter:<slug>" (sense.adapters.AdapterBridge). */
 const isAdapter = (bridge) => typeof bridge === "string" && bridge.startsWith("adapter:");
 /** What a card's bridge is, for subtitles: "Agent-written adapter (text)" or "Vector bridge". */
@@ -690,7 +699,7 @@ function renderBrain() {
     add(sense.modality, { level: "installed", title: modalityName(sense.modality), sub: [bridgeLabel(card), acc !== null ? pct(acc) : ""].filter(Boolean).join(" · "), bridge: sense.bridge });
   }
   const refused = refusedRun();
-  if (refused) add(refused.modality, { level: "refused", title: modalityName(refused.modality), sub: `Refused for ${datasetTitle(refused.dataset)}` });
+  if (refused) add(refused.modality, { level: "refused", title: modalityName(refused.modality), sub: `Refused for ${setTitle(refused.dataset)}` });
   const job = modelJob();
   const target = jobModality(job);
   if (job && job.status === "running" && target && !(model ? model.native || [] : []).includes(target)) {
@@ -878,7 +887,7 @@ function renderSenses(senses) {
         modalityMark(refused.modality),
         h("button", { type: "button", class: "sense-text", "data-bridge": refused.best ? refused.best.bridge : "", onclick: () => selectReport(refused.best && refused.best.bridge) },
           h("span", { class: "sense-title", text: modalityName(refused.modality) }),
-          h("span", { class: "sense-sub", text: `Nothing installed for ${datasetTitle(refused.dataset)}` })),
+          h("span", { class: "sense-sub", text: `Nothing installed for ${setTitle(refused.dataset)}` })),
         acc !== null ? h("span", { class: "sense-value", text: pct(acc) }) : h("span"),
         tag("Refused", "danger")),
     );
@@ -904,7 +913,7 @@ function senseItem(sense) {
     "aria-label": `Remove the ${sense.modality || ""} sense ${sense.bridge || ""}`.replace(/\s+/g, " "),
   });
   remove.addEventListener("click", () => removeSense(sense, remove, errorEl));
-  const sub = [bridgeLabel(card), datasetTitle(card.dataset)].filter(Boolean).join(" · ");
+  const sub = [bridgeLabel(card), setTitle(card.dataset)].filter(Boolean).join(" · ");
   return h(
     "li",
     { class: "sense-row sense-row--on" },
@@ -1021,7 +1030,7 @@ function renderReport() {
     `${modalityName(card.modality)} → ${modelLabel(card.model || state.model)}`,
     adapter ? bridgeLabel(card).toLowerCase() : `${kindLabel(card.kind).toLowerCase()} bridge`,
     toNumber(layer) !== null ? `block ${layer}` : null,
-    probes ? `probe files: ${probeSourceText(probes)}` : datasetTitle(card.dataset),
+    probes ? `probe files: ${probeSourceText(probes)}` : setTitle(card.dataset),
   ].filter(Boolean);
   const interval = Array.isArray(card.interval) && card.interval.length === 2 ? card.interval.map(toNumber) : null;
   const headlineNote = [
@@ -2010,7 +2019,7 @@ function postAgentResult(job, data) {
   } else if (data.installed) {
     const c = installedCard;
     const facts = c
-      ? [bridgeLabel(c), isAdapter(c.bridge) && probeFacts(job) ? `probe files: ${probeSourceText(probeFacts(job))}` : datasetTitle(c.dataset), toNumber(c.n) !== null ? `${c.n} held-out ${isAdapter(c.bridge) ? "probe files" : "questions"}` : null, toNumber(c.chance) !== null ? `chance ${pct(c.chance)}` : null]
+      ? [bridgeLabel(c), isAdapter(c.bridge) && probeFacts(job) ? `probe files: ${probeSourceText(probeFacts(job))}` : setTitle(c.dataset), toNumber(c.n) !== null ? `${c.n} held-out ${isAdapter(c.bridge) ? "probe files" : "questions"}` : null, toNumber(c.chance) !== null ? `chance ${pct(c.chance)}` : null]
       : [data.installed];
     result = resultCard(job, "installed", `${modality} installed`, c && toNumber(c.accuracy) !== null ? pct(c.accuracy) : "", facts.filter(Boolean).join(" · "), data.installed, null);
   } else {
@@ -2147,6 +2156,7 @@ async function runAgent(event) {
       err = new Error("Automatic discovery is not available on this server yet. Choose a labelled set, or update the server.");
     }
     showError(errorEl, err);
+    if (err.status === 409 && !state.job) followRunElsewhere(); // a run from another tab holds the slot: show it
   } finally {
     state.starting = false;
     syncControls();
@@ -2162,6 +2172,8 @@ function startJob(id, request, resumed) {
     status: "running",
     seen: 0,
     elapsed: null,
+    lastT: null, // the newest event's t, and when this page first saw it (Date.now()), for the clock while waiting
+    lastAt: 0,
     failures: 0,
     timer: null,
     steps: new Map(), // step -> {events, open}: what each Agent step card shows
@@ -2257,7 +2269,15 @@ function applyJob(job, data) {
     if (card) cardsChanged = upsertCard(job, card) || cardsChanged;
   }
   job.seen = events.length;
-  if (events.length) job.elapsed = toNumber(events[events.length - 1].t);
+  const lastT = events.length ? toNumber(events[events.length - 1].t) : null;
+  if (lastT !== job.lastT) {
+    job.lastT = lastT;
+    job.lastAt = Date.now();
+  }
+  // No event comes while the run waits for your approval (up to 10 minutes), so its clock goes on from the last
+  // event by this page's clock rather than standing still.
+  const waiting = job.status === "running" && !job.replay && Boolean(data.pending_approval) && lastT !== null;
+  if (events.length) job.elapsed = waiting ? lastT + (Date.now() - job.lastAt) / 1000 : lastT;
   // agent.jobs and server.replay end a stopped run "failed" with error "Cancelled."; a replay's last event says so too.
   const last = events[events.length - 1];
   job.cancelled = job.status === "failed"
@@ -2365,7 +2385,13 @@ function finishJob(job, data) {
   renderReport();
   renderGraph();
   postAgentResult(job, data);
-  if (state.tab === "run") setTab("report");
+  if (state.tab === "run") {
+    // The Run tab is hidden for the report: a reader whose focus was in it (the approval card's outcome, a step,
+    // Stop) goes on at the report's heading, not at the start of the page.
+    const hadFocus = $("run-view").contains(document.activeElement);
+    setTab("report");
+    if (hadFocus) $("report-heading").focus({ preventScroll: true });
+  }
   syncControls();
   loadSenses();
   renderRuns();
@@ -2375,10 +2401,13 @@ function finishJob(job, data) {
 /** A step's state from its own events. Only the step's last outcome counts: a sub-step it recovered from (a
     dataset search that was unavailable, a candidate set that could not be used, then the prewired set) leaves
     the step done. A step left unfinished, or whose last outcome is a failure, is where the run stopped, failed
-    or needed the user. */
+    or needed the user. An adapter run's search for unseen categories (data sub-steps with purpose "unseen") comes
+    after the data step's own outcome and never decides it: a candidate it rejects is not a failure of the step,
+    and a search that found nothing is said by its "not measured" line and the card. */
 function stepStatus(key, s, job) {
   if (!s || !s.events.length) return "pending";
-  const outcome = s.events.findLast((e) => e.status === "ok" || e.status === "fail");
+  const counts = (e) => !(key === "data" && e.data && e.data.purpose === "unseen");
+  const outcome = s.events.findLast((e) => (e.status === "ok" || e.status === "fail") && counts(e));
   const failedLast = Boolean(outcome && outcome.status === "fail");
   if (declined(key, s) && !job.cancelled) return "declined"; // your choice, not a failure: the run goes on
   if (job.status === "running") {
@@ -2791,8 +2820,12 @@ function renderApproval(job) {
   const slot = $("approval");
   const a = job && state.job === job ? job.approval : null;
   if (!a || a.closed) {
+    // The card goes with the focus in it (its outcome line, after Approve or Decline): the keyboard stays in the
+    // run, at its heading, rather than falling back to the start of the page.
+    const hadFocus = slot.contains(document.activeElement);
     if (slot.firstChild) slot.replaceChildren();
     delete slot.dataset.sig;
+    if (hadFocus) $("trace-heading").focus({ preventScroll: true });
     return;
   }
   const sig = `${a.id}|${a.answer}`;
@@ -3017,7 +3050,7 @@ function renderRuns() {
     rows.push(h("li", { class: "run-item run-item--live" },
       h("span", { class: "run-item-main" },
         h("span", { class: "run-item-title" }, h("span", { class: "led led--run" }), " Live run"),
-        h("span", { class: "run-item-meta", text: job.request ? [modelLabel(job.request.model), job.goal, datasetTitle(job.request.dataset)].filter(Boolean).join(" · ") : "" }))));
+        h("span", { class: "run-item-meta", text: job.request ? [modelLabel(job.request.model), job.goal, setTitle(job.request.dataset)].filter(Boolean).join(" · ") : "" }))));
   }
   for (const run of state.runs) {
     const r = run.request || {};
@@ -3028,7 +3061,9 @@ function renderRuns() {
       .filter(Boolean).join(" · ");
     rows.push(h("li", { class: `run-item${active ? " is-active" : ""}` },
       h("span", { class: "run-item-main" },
-        h("span", { class: "run-item-title", text: `${modalityName(r.modality || "sense")} · ${isProbeSet(r.dataset) ? "agent-written adapter" : r.dataset ? datasetTitle(r.dataset) : "no labelled set chosen"}` }),
+        h("span", { class: "run-item-title", text: r.modality || r.dataset
+          ? `${modalityName(r.modality || "sense")} · ${isProbeSet(r.dataset) ? "agent-written adapter" : r.dataset ? datasetTitle(r.dataset) : "no labelled set chosen"}`
+          : "Agent run · ended before it chose labelled files" }),
         h("span", { class: "run-item-meta", text: meta }),
         h("span", { class: `run-item-outcome run-item-outcome--${run.installed ? "ok" : run.status === "failed" ? "fail" : "none"}`, text: outcome })),
       h("button", {
@@ -3538,6 +3573,20 @@ function init() {
   if (store.get("localStorage", "sense.mode") === "term") setMode(true);
   const savedJob = store.get("sessionStorage", "sense.job");
   if (savedJob) startJob(savedJob, null, true);
+  else followRunElsewhere();
+}
+
+/** Follow an agent run started in another tab or window (GET /api/jobs/latest): its trace, its approval card,
+    which only one run at a time may hold open for up to 10 minutes, and Stop. */
+async function followRunElsewhere() {
+  try {
+    const latest = await api("/api/jobs/latest");
+    if (latest && typeof latest.job_id === "string" && latest.job_id && !state.job && !state.starting) {
+      startJob(latest.job_id, null, true);
+    }
+  } catch {
+    // An older server without the route, or none yet: nothing to follow.
+  }
 }
 
 init();

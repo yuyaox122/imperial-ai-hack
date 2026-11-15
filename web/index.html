@@ -88,7 +88,7 @@
           <p id="fit-file-name" class="hint">The agent works out what the file is, then finds labelled examples and verifies a sense for your goal. For a file the model cannot take, it writes an adapter.</p>
           <label class="label" for="fit-examples">Labelled examples folder on the server (optional)</label>
           <input id="fit-examples" class="text-input" type="text" autocomplete="off" spellcheck="false" placeholder="For example: ~/data/bird-calls" aria-describedby="fit-examples-hint">
-          <p id="fit-examples-hint" class="hint">One sub-folder of files per label, with at least 10 files in each. Leave it empty and the agent looks for labelled examples itself.</p>
+          <p id="fit-examples-hint" class="hint">One sub-folder of files per label: at least 10 files in each for audio, at least 5 for any other file. Leave it empty and the agent looks for labelled examples itself.</p>
         </div>
         <div id="manual-fields" class="field" hidden>
           <div class="field">
@@ -228,7 +228,7 @@
       <div id="run-view" class="insp-view panel-scroll" role="tabpanel" aria-labelledby="run-tab" hidden>
       <section id="trace-panel" class="run" aria-labelledby="trace-heading">
         <div class="run-head">
-          <h2 id="trace-heading" class="pane-title"><span class="idx" aria-hidden="true">03</span>Agent run</h2>
+          <h2 id="trace-heading" class="pane-title" tabindex="-1"><span class="idx" aria-hidden="true">03</span>Agent run</h2>
           <span id="trace-status" class="tag" hidden></span>
           <span id="trace-request" class="run-meta">Not run yet.</span>
           <span id="trace-elapsed" class="run-elapsed num"></span>
