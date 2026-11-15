@@ -13,8 +13,11 @@ Public surface (do not rename):
                                                  label, save it under config.sets_dir() and return it
   caption_bank() -> tuple[np.ndarray, list[str]] specialist text embeddings and the caption texts, for the text bridge
   sample_files(name, per_label=1) -> list[dict]  [{"path", "label"}] from the held-out split, when raw files are on disk
-  fit_problem(ds, scope="closed") -> str | None  why an agent run on this set and scope would stop before verifying
-                                                 anything, or None; the server and scripts/demo_cli.py check it first
+  fit_problem(ds, scope="closed", *, open_weights=True) -> str | None
+                                                 why an agent run on this set and scope would stop before verifying
+                                                 anything, or None; the server and scripts/demo_cli.py check it first.
+                                                 open_weights=False (ModelInfo.open_weights of an API model, which
+                                                 gets no vector bridge) skips the vector bridge's fit checks
 
 Built-in sets. Embeddings come from config.data_dir(): esc50_clap.npz, gtzan_clap.npz, audiocaps_text_clap.npz,
 written by the scripts in socket_pilot/ (keys documented in socket_pilot/clap_embed.py, clap_embed_gtzan.py,
@@ -53,15 +56,19 @@ config.sets_dir() is refused, and so is a name whose directory there holds anyth
 The fingerprint covers the folder, the names, sizes and modification times of the audio files in its label
 folders, max_per_label, min_per_label, seed, question, modality and the specialist ("fake" in fake mode, else
 config.model_source("clap")). Calling from_folder again with the same fingerprint loads the saved set without
-embedding again; a different fingerprint rebuilds and replaces it. Either way a title, source or licence left
-out of the call keeps the saved one (source and licence only from a set built from the same folder), so a later
-call from the interface does not erase what the agent recorded. Folder sets load in fake and real mode alike;
+embedding again, and a title, source or licence left out of the call keeps the saved one, so a later call from
+the interface does not erase what the agent recorded. A different fingerprint rebuilds and replaces the set: a
+source or licence left out still keeps the saved one when the saved set was built from the same folder, but a
+title left out becomes the default "<folder> (folder, N labels)" again, since the label folders may have changed;
+pass the title again to keep it. Folder sets load in fake and real mode alike;
 meta["specialist"] says which specialist embedded them, and fit_problem refuses a run on a set embedded in the
 other mode.
 
-Scope "open" needs a set with at least 3 labels: its unseen-classes control (sense.verify) refits the bridge
-with a fifth of the labels, at least one, left out, and a bridge needs at least 2 labels and 5 examples to fit
-on. fit_problem checks both, assuming the labels with the most fit examples are the ones left out.
+Scope "open" needs a set with at least 3 labels when the run builds a vector bridge (an open-weight model): its
+unseen-classes control (sense.verify) refits the vector bridge with a fifth of the labels, at least one, left out,
+and a bridge needs at least 2 labels and 5 examples to fit on. fit_problem checks both, assuming the labels with
+the most fit examples are the ones left out. A model that is not open-weight gets only text and tool bridges,
+which have no unseen-classes control, so fit_problem(..., open_weights=False) skips these checks.
 """
 
 from __future__ import annotations
@@ -155,14 +162,16 @@ def sample_files(name: str, per_label: int = 1) -> list[dict]:
     return []
 
 
-def fit_problem(ds: LabelledSet, scope: str = "closed") -> str | None:
+def fit_problem(ds: LabelledSet, scope: str = "closed", *, open_weights: bool = True) -> str | None:
     """Why an agent run on this set and scope would stop before it can verify anything, or None.
 
-    It checks that a folder set was embedded by the specialist of this mode (fake or real), and that the set has
-    the 5 fit examples a vector bridge needs (sense.bridges.fit_vector_bridge). For scope "open" it also checks
-    the unseen-classes control (sense.verify), which refits the bridge with a fifth of the labels, at least one,
-    left out: that needs 3 labels or more, and 5 fit examples even when the labels left out are the ones with the
-    most fit examples."""
+    It checks that a folder set was embedded by the specialist of this mode (fake or real). When the run builds a
+    vector bridge, that is for an open-weight model (`open_weights`, ModelInfo.open_weights; the default), it also
+    checks that the set has the 5 fit examples a vector bridge needs (sense.bridges.fit_vector_bridge), and for
+    scope "open" the unseen-classes control (sense.verify), which refits the vector bridge with a fifth of the
+    labels, at least one, left out: that needs 3 labels or more, and 5 fit examples even when the labels left out
+    are the ones with the most fit examples. A model that is not open-weight gets only text and tool bridges,
+    which fit on nothing and have no unseen-classes control, so neither check applies to it."""
     specialist = ds.meta.get("specialist")
     if specialist and (specialist == "fake") != config.fake():
         return (
@@ -170,6 +179,8 @@ def fit_problem(ds: LabelledSet, scope: str = "closed") -> str | None:
             f"{'fake' if config.fake() else 'real'} mode, so its embeddings do not match the specialist in use. "
             "Build it again in this mode (POST /api/datasets, or scripts/demo_cli.py --folder)."
         )
+    if not open_weights:
+        return None
     n_fit = np.bincount(np.asarray(ds.y)[ds.fit_idx], minlength=len(ds.labels))
     if n_fit.sum() < _MIN_FIT:
         return (
@@ -403,9 +414,10 @@ def from_folder(
     """Build a labelled set from a folder with one sub-folder of audio files per label, save it under
     config.sets_dir()/<name> and return it. If a set of that name was saved from the same files with the same
     settings, it is loaded instead of embedded again; a title, source or licence given here replaces the saved
-    one, and one left out keeps it. Raises ValueError, saying what to change, when the folder cannot make a
-    usable set. The rules are in the module docstring; `source` and `licence` are recorded in meta for whoever
-    reads the set later."""
+    one, and one left out keeps it. A rebuild (other files or settings) keeps a saved source and licence from the
+    same folder but not the title, which is the default unless given. Raises ValueError, saying what to change,
+    when the folder cannot make a usable set. The rules are in the module docstring; `source` and `licence` are
+    recorded in meta for whoever reads the set later."""
     if not str(path).strip():
         raise ValueError(
             "No folder was given. Pass the path of a folder that holds one sub-folder of audio files per label."

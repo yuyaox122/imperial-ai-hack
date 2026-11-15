@@ -5,6 +5,10 @@ Run: SENSE_FAKE=1 .venv/bin/python -m pytest -q tests/test_core.py
 
 from __future__ import annotations
 
+import os
+import shutil
+import threading
+import time
 from pathlib import Path
 
 import numpy as np
@@ -175,6 +179,78 @@ def test_registry_install_replace_uninstall(model, gtzan, vector_bridge, fake_ho
     assert registry.installed("fake") == []
 
 
+def _read_while(action, model_name: str = "fake") -> list:
+    """Run action() while another thread keeps calling registry.get_bridges, as chats would, with every directory
+    deletion slowed down; return what each read found: bridge names, or the error text."""
+    real_rmtree = shutil.rmtree
+    deleting = threading.Event()
+
+    def slow_rmtree(path, *args, **kwargs):
+        deleting.set()
+        time.sleep(0.2)
+        return real_rmtree(path, *args, **kwargs)
+
+    seen, stop = [], threading.Event()
+
+    def chat():
+        while not stop.is_set():
+            try:
+                seen.append([b.name for b in registry.get_bridges(model_name)])
+            except RuntimeError as err:
+                seen.append(str(err))
+
+    reader = threading.Thread(target=chat)
+    reader.start()
+    try:
+        shutil.rmtree = slow_rmtree
+        action()
+    finally:
+        shutil.rmtree = real_rmtree
+        stop.set()
+        reader.join()
+    assert deleting.is_set() and seen
+    return seen
+
+
+def test_registry_replace_and_uninstall_never_show_a_missing_or_half_deleted_sense(model, gtzan, fake_home):
+    text = bridges.make_text_bridge(model, gtzan)
+    card = verify(model, text, gtzan, FitRequest(model="fake", dataset="gtzan"), max_items=20)
+    registry.install(text, card)
+    seen = _read_while(lambda: registry.install(text, card))  # a second run installs the same sense again
+    assert all(found == ["text:gtzan"] for found in seen), {str(found) for found in seen}
+    seen = _read_while(lambda: registry.uninstall("fake", "audio"))
+    assert all(found in (["text:gtzan"], []) for found in seen), {str(found) for found in seen}
+    assert registry.installed("fake") == [] and list((fake_home / "fake").iterdir()) == []
+
+
+def test_registry_install_keeps_the_old_sense_when_the_new_one_cannot_be_moved_in(
+    model, gtzan, vector_bridge, fake_home, monkeypatch
+):
+    registry.install(vector_bridge, verify(model, vector_bridge, gtzan, FitRequest(model="fake", dataset="gtzan")))
+    text = bridges.make_text_bridge(model, gtzan)
+    card = verify(model, text, gtzan, FitRequest(model="fake", dataset="gtzan"), max_items=20)
+    real_rename = Path.rename
+    failing = [".installing-"]
+
+    def failing_rename(self, target):
+        if any(part in self.name for part in failing):
+            raise OSError("disk full")
+        return real_rename(self, target)
+
+    monkeypatch.setattr(Path, "rename", failing_rename)
+    with pytest.raises(OSError, match="disk full"):
+        registry.install(text, card)
+    assert [b.name for b in registry.get_bridges("fake")] == ["vector:gtzan"]
+    assert [p.name for p in (fake_home / "fake").iterdir()] == ["audio"]  # no staging or removed copy left behind
+
+    failing.append(".removing-")  # the old sense cannot be put back either: it is kept aside, never deleted
+    with pytest.raises(OSError, match="disk full"):
+        registry.install(text, card)
+    monkeypatch.setattr(Path, "rename", real_rename)
+    [kept] = (fake_home / "fake").iterdir()
+    assert kept.name.startswith(".audio.removing-") and bridges.load_bridge(kept).name == "vector:gtzan"
+
+
 def test_install_rejects_a_card_for_another_bridge(model, gtzan, vector_bridge):
     text = bridges.make_text_bridge(model, gtzan)
     card = verify(model, text, gtzan, FitRequest(model="fake", dataset="gtzan"))
@@ -206,3 +282,36 @@ def test_vector_bridge_needs_an_open_weight_model(gtzan):
 
     with pytest.raises(ValueError, match="not an open-weight model"):
         bridges.fit_vector_bridge(ApiModel(), gtzan, gtzan.fit_idx)
+
+
+# ----------------------------------------------------------------------------- settings
+@pytest.mark.parametrize("value, on", [
+    ("1", True), ("true", True), ("yes", True), ("on", True),
+    ("", False), ("0", False), ("false", False), ("False", False), ("FALSE", False), ("no", False), ("No", False),
+    ("off", False), ("OFF", False), (" 0 ", False),
+])
+def test_sense_fake_is_off_for_every_spelling_of_off(monkeypatch, value, on):
+    monkeypatch.setenv("SENSE_FAKE", value)
+    assert config.fake() is on
+
+
+def test_env_local_wins_over_env_and_the_environment_wins_over_both(tmp_path, monkeypatch):
+    keys = ["SENSE_TEST_DATA", "SENSE_TEST_ONLY_ENV", "SENSE_TEST_NEAR", "SENSE_TEST_SHELL"]
+    for key in keys:  # set, then delete: the test leaves the environment as it found it
+        monkeypatch.setenv(key, "x")
+        monkeypatch.delenv(key)
+    (tmp_path / ".env").write_text(
+        "SENSE_TEST_DATA=/old/teammate/path\nSENSE_TEST_ONLY_ENV=from-env\nSENSE_TEST_SHELL=from-file\n"
+    )
+    (tmp_path / ".env.local").write_text("SENSE_TEST_DATA=/Users/me/corrected/path\nSENSE_TEST_NEAR=far\n")
+    near = tmp_path / "sub"
+    near.mkdir()
+    (near / ".env").write_text("SENSE_TEST_NEAR=near\n")
+    monkeypatch.setenv("SENSE_TEST_SHELL", "from-shell")
+    monkeypatch.chdir(near)
+    monkeypatch.setattr(config, "REPO", tmp_path)
+    config._load_env_files()
+    assert os.environ["SENSE_TEST_DATA"] == "/Users/me/corrected/path"  # .env.local beats .env in one directory
+    assert os.environ["SENSE_TEST_ONLY_ENV"] == "from-env"
+    assert os.environ["SENSE_TEST_NEAR"] == "near"  # a nearer directory beats its parents
+    assert os.environ["SENSE_TEST_SHELL"] == "from-shell"  # the environment beats every file

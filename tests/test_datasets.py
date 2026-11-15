@@ -351,6 +351,31 @@ def test_fit_problem_says_when_a_run_cannot_get_going(tmp_path):
         assert datasets.fit_problem(datasets.load_labelled_set(name), "open") is None
 
 
+def test_fit_problem_skips_the_vector_checks_for_a_model_that_is_not_open_weight(tmp_path):
+    """An API model gets only text and tool bridges: nothing is fitted and there is no unseen-classes control,
+    so an open run on two labels gets as far as verifying, and installs."""
+    from dataclasses import replace
+
+    from agent import loop
+    from sense.contracts import FitRequest
+
+    two = datasets.from_folder(make_folder(tmp_path / "pair", {"dog": 6, "rooster": 6}))
+    assert "at least 3 labels" in datasets.fit_problem(two, "open", open_weights=True)
+    assert datasets.fit_problem(two, "open", open_weights=False) is None
+    assert datasets.fit_problem(two, "closed", open_weights=False) is None
+    three = datasets.from_folder(make_folder(tmp_path / "three", {"dog": 4, "rooster": 4, "sea_waves": 4}),
+                                 min_per_label=4)
+    assert datasets.fit_problem(three, "open", open_weights=False) is None
+    cards, installed = loop.run_fit(FitRequest(model="fake-api", dataset=two.name, scope="open"), lambda event: None)
+    assert {card.kind for card in cards} == {"text", "tool"}
+    assert all("unseen_classes" not in card.controls for card in cards)
+    assert installed
+    elsewhere = two.meta | {"specialist": "laion/clap-htsat-unfused"}  # the mode check still applies
+    assert "was embedded by the laion/clap-htsat-unfused specialist" in datasets.fit_problem(
+        replace(two, meta=elsewhere), "open", open_weights=False
+    )
+
+
 def test_non_audio_and_unreadable_files_are_skipped_and_counted(folder):
     (folder / "dog" / "notes.txt").write_text("recorded at the farm")
     (folder / "dog" / "broken.wav").write_bytes(b"not audio at all")

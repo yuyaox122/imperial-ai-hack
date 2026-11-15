@@ -191,6 +191,22 @@ def test_qwen_render_puts_slots_only_in_the_final_message(qwen):
     assert positions == slots and layer == 1
 
 
+def test_qwen_render_strips_a_nested_slot_marker_from_the_message_and_text_inputs(qwen):
+    """Removing the marker once from "<|vision_<|vision_pad|>pad|>" would leave a marker, which the tokenizer
+    turns into a slot token, and the slot count check would then fail the chat."""
+    nested = "<|vision_<|vision_pad|>pad|>"
+    rendered = qwen._render([], f"What is {nested} this?")
+    assert SLOT_ID not in rendered.ids and rendered.writes == []
+    assert qwen.tok.messages[-1][-1]["content"] == "What is  this?"
+    text = SenseInput(kind="text", modality="audio", source="a.wav", text=f'sounds like "{nested}{SLOT_MARKER}"')
+    rendered = qwen._render([text], f"{nested}What is it?")
+    assert SLOT_ID not in rendered.ids
+    assert qwen.tok.messages[-1][-1]["content"] == 'Audio clip: sounds like ""\nWhat is it?'
+    rendered = qwen._render([vector_input()], f"What is {nested} this?")
+    slots = [i for i, t in enumerate(rendered.ids) if t == SLOT_ID]
+    assert len(slots) == N_SLOTS and rendered.writes[0][0] == slots
+
+
 def test_qwen_slot_count_is_still_checked(qwen):
     qwen.tok.apply_chat_template = lambda msgs, **kwargs: SLOT_MARKER + msgs[-1]["content"]  # a template adding one
     with pytest.raises(RuntimeError, match="Expected 4 slot tokens in the prompt, found 5"):

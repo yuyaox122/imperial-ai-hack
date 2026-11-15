@@ -29,6 +29,7 @@ Chat history and streaming (contracts.BaseModel). chat() takes `history`, the ea
 only. Every model here also has chat_stream(), which yields the reply in pieces that join to chat()'s reply.
   QwenModel   the history goes into the chat template before the final user message, with the slot marker
               removed from it, so slot tokens only ever sit in the final message (the slot count is still checked).
+              The marker is also removed from the message and from text inputs, so only vector inputs add slots.
               chat_stream runs model.generate in a worker thread with transformers' TextIteratorStreamer, holding
               the model's lock for the whole generation, with the same greedy decoding and slot writes as chat().
               Closing the stream early stops generation at the next token; the worker is always joined, and an
@@ -299,7 +300,7 @@ class QwenModel:
                 lines.append(f"{label}: {SLOT_MARKER * N_SLOTS}")
                 vectors.append((vec, inp.layer))
             elif inp.kind == "text":
-                lines.append(f"{label}: {(inp.text or '').replace(SLOT_MARKER, '')}")
+                lines.append(f"{label}: {_strip_slots(inp.text or '')}")
             elif inp.kind == "tool":
                 raise ValueError(
                     f"{self.info.label} cannot call tools: tool calling is wired for API models only, not for local "
@@ -307,7 +308,7 @@ class QwenModel:
                 )
             else:
                 raise ValueError(f"{self.info.label} takes text and vector inputs here; {inp.kind} inputs are not wired up.")
-        user = "\n".join(lines + [body.replace(SLOT_MARKER, "")])
+        user = "\n".join(lines + [_strip_slots(body)])
         ids = self.tok.encode(self._chat_template(user, history), add_special_tokens=False)
         slots = [i for i, t in enumerate(ids) if t == self.slot_id]
         if len(slots) != N_SLOTS * len(vectors):

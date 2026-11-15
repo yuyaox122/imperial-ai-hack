@@ -1,6 +1,11 @@
 """Settings, read from the environment and from .env files found by walking up from the working directory.
 
-  SENSE_FAKE=1          use fake models, specialist and data: no weights, no downloads (tests, interface work)
+A variable already set in the environment wins over the files. In each directory .env.local is read before .env,
+so a value in .env.local (this machine's corrections, as scripts/setup_machine.py writes) wins over .env; a nearer
+directory wins over its parents, and the working directory's chain over the repository's.
+
+  SENSE_FAKE=1          use fake models, specialist and data: no weights, no downloads (tests, interface work);
+                        "", "0", "false", "no" and "off", in any case, leave it off
   SENSE_HOME            where installed senses are stored (default: <repo>/.sense)
   SENSE_DATA_DIR        cached specialist embeddings as .npz (default: <repo>/socket_pilot/artifacts)
   SENSE_SETS_DIR        labelled sets built from folders by sense.datasets.from_folder (default: <SENSE_HOME>/datasets)
@@ -28,11 +33,13 @@ REPO = Path(__file__).resolve().parent.parent
 
 
 def _load_env_files() -> None:
-    """Minimal .env loader: KEY=VALUE lines, no export, no interpolation. Existing variables win."""
+    """Minimal .env loader: KEY=VALUE lines, no export, no interpolation. The first value found wins: variables
+    already in the environment, then .env.local before .env in each directory, from the working directory up,
+    then from the repository up."""
     seen: set[Path] = set()
     for start in (Path.cwd(), REPO):
         for directory in (start, *start.parents):
-            for name in (".env", ".env.local"):
+            for name in (".env.local", ".env"):  # .env.local holds this machine's corrections, so it wins
                 path = directory / name
                 if path in seen or not path.is_file():
                     continue
@@ -48,8 +55,12 @@ def _load_env_files() -> None:
 _load_env_files()
 
 
+_OFF = ("", "0", "false", "no", "off")  # in any case and with spaces around, for SENSE_FAKE
+
+
 def fake() -> bool:
-    return os.environ.get("SENSE_FAKE", "") not in ("", "0", "false")
+    """SENSE_FAKE: on for any value but "", "0", "false", "no" and "off" (in any case)."""
+    return os.environ.get("SENSE_FAKE", "").strip().lower() not in _OFF
 
 
 def home() -> Path:
