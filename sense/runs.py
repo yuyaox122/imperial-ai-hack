@@ -19,8 +19,9 @@ Public surface (do not rename):
   restore_sense(run_id) -> bool               reinstalls the recorded sense with registry.install; False when
                                               the record holds no sense
   parse_record(record) -> tuple[FitRequest, list[TraceEvent], list[ReportCard]]
-      The contract objects of a record (keys the contracts do not know are ignored); ValueError when the record
-      cannot be replayed.
+      The contract objects of a record (keys the contracts do not know are ignored, and a card recorded before
+      ReportCard.control_chance existed, or with a value that is not an object there, gets {}); ValueError when
+      the record cannot be replayed.
 
 Layout: <runs_dir>/<id>/run.json, plus <runs_dir>/<id>/sense/ (card.json and the saved bridge, as in the
 registry) when a sense was recorded. run.json holds id, origin ("server" or "cli"), recorded (ISO 8601 UTC),
@@ -140,7 +141,7 @@ def restore_sense(run_id: str) -> bool:
     if not _has_sense(directory.parent):
         return False
     bridge = load_bridge(directory)
-    card = ReportCard(**_known(ReportCard, json.loads((directory / "card.json").read_text())))
+    card = _card(json.loads((directory / "card.json").read_text()))
     registry.install(bridge, card)
     return True
 
@@ -161,7 +162,7 @@ def parse_record(record: dict) -> tuple[FitRequest, list[TraceEvent], list[Repor
     try:
         request = FitRequest(**_known(FitRequest, record["request"]))
         events = [TraceEvent(**_known(TraceEvent, e)) for e in record["events"]]
-        cards = [ReportCard(**_known(ReportCard, c)) for c in record["cards"]]
+        cards = [_card(c) for c in record["cards"]]
         for event in events:
             event.t = float(event.t)
     except (TypeError, ValueError, AttributeError) as exc:
@@ -182,6 +183,15 @@ def _known(cls: type, data: Any) -> dict:
         raise TypeError(f"expected an object for {cls.__name__}, got {type(data).__name__}")
     names = {f.name for f in fields(cls)}
     return {k: v for k, v in data.items() if k in names}
+
+
+def _card(data: Any) -> ReportCard:
+    """A ReportCard from a recorded card dict. A card recorded before control_chance existed (or holding null
+    there) gets {}, so every reader can call card.control_chance.get(...)."""
+    known = _known(ReportCard, data)
+    if not isinstance(known.get("control_chance"), dict):
+        known["control_chance"] = {}
+    return ReportCard(**known)
 
 
 def _plain(value: Any) -> Any:

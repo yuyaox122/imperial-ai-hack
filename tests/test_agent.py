@@ -222,6 +222,52 @@ def test_tool_card_uses_the_text_bars():
     assert RulePlanner().assess(request, make_card("tool:toy", "tool", 0.60, swapped=0.50))[0]
 
 
+def test_image_card_uses_the_text_bars():
+    request = FitRequest("fake", "toy")
+    ok, why = RulePlanner().assess(request, make_card("adapter:mesh", "image", 0.35, swapped=0.2))
+    assert ok and why == ("adapter:mesh passed: it scored 35.0% against 20.0% chance, meets the 35.0% bar for an "
+                          "image bridge.")
+    assert not RulePlanner().assess(request, make_card("adapter:mesh", "image", 0.34, swapped=0.2))[0]
+    ok, why = RulePlanner().assess(request, make_card("adapter:mesh", "image", 0.60, swapped=0.55))
+    assert not ok and "swapped input" in why
+    decision = RulePlanner().decide(request, [make_card("adapter:mesh", "image", 0.9, swapped=0.2)])
+    assert decision.install == "adapter:mesh"
+
+
+@pytest.mark.parametrize("kind", ["text", "image"])
+def test_adapter_card_must_beat_the_model_reading_the_raw_file(kind):
+    request = FitRequest("fake", "toy")
+    ok, why = RulePlanner().assess(request, make_card("adapter:x", kind, 0.80, swapped=0.2, native=0.75))
+    assert not ok and "the model already reads this file as it is: native 75.0%, adapter 80.0%" in why
+    ok, why = RulePlanner().assess(request, make_card("adapter:x", kind, 0.85, swapped=0.2, native=0.75))
+    assert ok and "10.0 points above the 75.0% the model scored on the raw file" in why
+    assert RulePlanner().decide(request, [make_card("adapter:x", kind, 0.80, swapped=0.2, native=0.75)]).install is None
+
+
+@pytest.mark.parametrize("kind", ["text", "image"])
+def test_adapter_card_must_work_on_categories_it_was_not_built_around(kind):
+    request = FitRequest("fake", "toy")
+    card = make_card("adapter:x", kind, 0.95, swapped=0.2, unseen_categories=0.45)
+    card.control_chance = {"unseen_categories": 0.3333}  # three unseen labels: its own chance, not the card's 20%
+    ok, why = RulePlanner().assess(request, card)
+    assert not ok and "45.0%" in why and "48.3%" in why and "33.3% chance" in why
+    assert "works for the tested categories but not for new ones" in why
+    card.controls["unseen_categories"] = 0.49
+    ok, why = RulePlanner().assess(request, card)
+    assert ok and "and 49.0% on categories it was not built around (33.3% chance there)" in why
+
+    no_own_chance = make_card("adapter:x", kind, 0.95, swapped=0.2, unseen_categories=0.36)
+    assert RulePlanner().assess(request, no_own_chance)[0]  # judged against the card's chance, 20% + 15
+    no_own_chance.controls["unseen_categories"] = 0.34
+    assert not RulePlanner().assess(request, no_own_chance)[0]
+
+
+def test_tool_and_vector_cards_ignore_adapter_controls():
+    request = FitRequest("fake", "toy")
+    assert RulePlanner().assess(request, make_card("tool:toy", "tool", 0.6, swapped=0.2, native=0.9))[0]
+    assert RulePlanner().assess(request, make_card("vector:toy", "vector", 0.8, swapped=0.2, native=0.9))[0]
+
+
 def test_planner_registry(monkeypatch):
     monkeypatch.setattr(planner_mod, "_factories", dict(planner_mod._factories))
     monkeypatch.setattr(planner_mod, "_preferred", None)

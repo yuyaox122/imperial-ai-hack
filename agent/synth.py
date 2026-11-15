@@ -10,7 +10,8 @@ Public surface (do not rename):
   Design
       modality, format, route ("text" | "images"), description, libraries (toolbox names), question, label_hint,
       labels (candidate answers; at least 2 when probe_plan is "generate"), probe_plan ("user" | "dataset" |
-      "generate"), probe_reason; .kind is the bridge kind ("text" or "image"); to_dict()
+      "generate"), probe_reason, install ([{name, why}], at most MAX_INSTALL (3) PyPI packages not in the toolbox
+      that would make the adapter much better; usually []); .kind is the bridge kind ("text" or "image"); to_dict()
   file_head(path, limit=2048) -> str
       the first bytes of a file for a prompt: text when they decode as text, else a hex dump of the first 768
   design(detection, goal, head, toolbox, models, *, name="", size=None) -> Design | None
@@ -23,18 +24,26 @@ Public surface (do not rename):
       libraries matched to the toolbox (case-insensitive, "pillow" reads "PIL", "opencv" reads "cv2", ...), with
       standard-library names dropped and network modules refused; non-empty modality, format, description,
       question and label_hint; probe_plan one of the three; labels cleaned so that they round-trip as folder names
-      (no "_", "-" or "/"), distinct, at most 8, and at least 2 for "generate"
-  write_adapter(design, sample, *, attempts=3, timeout=60, on_attempt=None) -> (code, output, attempts_used)
-      asks the LLM for {"code"} defining adapt(path) (the prompt holds the design without its candidate labels and
-      probe plan, the toolbox, the output contract of sense.adapters.run_adapter, the rules: describe the content
-      as measurements rather than a verdict, never guess a label from the file name, no network; and the sample's
-      head), checks it before running (it parses, defines adapt, imports only the standard library and the
+      (no "_", "-" or "/"), distinct, at most 8, and at least 2 for "generate"; install a list of {name, why}
+      (missing or null means []), without names the toolbox or the standard library already has, network modules
+      refused, distinct, at most MAX_INSTALL
+  write_adapter(design, sample, *, attempts=3, timeout=60, on_attempt=None, hide=()) -> (code, output, attempts_used)
+      asks the LLM for {"code"} defining adapt(path) (the prompt holds writer_design(design, hide): the design
+      without its candidate labels, probe plan and install requests, and with every label of design.labels and
+      `hide` masked in its question, label_hint and description; the toolbox, the output contract of
+      sense.adapters.run_adapter, the rules: describe the content as measurements rather than a verdict, never
+      guess a label from the file name, no network; and the sample's head), checks it before running (it parses, defines adapt, imports only the standard library and the
       toolbox, no network modules, no ctypes or cffi), runs it with sense.adapters.run_adapter on the sample and
       checks the output (the design's route; text not empty). Every failure goes back to the LLM for a repair, up
       to `attempts` in all (the reason cut to 1000 characters, the traceback to 1500). on_attempt(k,
       error_or_None) is called after each attempt. Raises sense.adapters.AdapterError naming every attempt's error
       (and with .attempts, one dict per attempt) when none works, at once when the sandbox cannot be applied.
       Causes beyond sense.adapters': "llm" (no code came back) and "code" (the code failed a check before it ran)
+  writer_design(design, hide=()) -> dict
+      what the adapter's author sees of a design: the fields in _ADAPTER_DESIGN_FIELDS, with each label of
+      design.labels and `hide` (whole words, any case, separators ignored, a plural "s" or "es" included; a label of
+      one or two characters in its own case only) replaced by "[answer]" in question, label_hint and description
+      (a list of them reads "[answers]")
   write_generator(design, labels, n_per_label, *, earlier_attempts=None, extension="") -> code
       asks the LLM for {"code"} defining generate(out_dir, labels, n): for each label, n files with `extension`
       written into os.path.join(out_dir, label), each built to have its label, which is never written into a
@@ -61,17 +70,36 @@ Public surface (do not rename):
       clearly less often in the other labels' files); [] when no label leaks. A heuristic: it matches the label's
       words in any case and inside longer words, also inside gzip streams and zip archives, and nothing else
   assess(request, card) -> (acceptable, sentence)
-      agent.planner.RulePlanner().assess, with an "image" card judged by the text bars (accuracy >= chance + 0.15
-      and >= swapped + 0.10); then at least MIN_VERIFY_ITEMS (10) scored probe files and the low end of the 95%
-      Wilson interval above chance, so that a lucky adapter on a handful of files is not installed
+      agent.planner.RulePlanner().assess, which judges a text or image card by the text bars (accuracy >= chance +
+      0.15 and >= swapped + 0.10), plus accuracy >= native + 0.10 when the card has a native control and
+      unseen_categories >= its control_chance + 0.15 when it has that one; then at least MIN_VERIFY_ITEMS (10)
+      scored probe files and the low end of the 95% Wilson interval above chance, so that a lucky adapter on a
+      handful of files is not installed
   registry_loads(bridge) -> str | None
-      None when sense.registry can load the adapter bridge back once installed (its load_bridge must know adapter
-      bridges); else why not
-  run_synth(model_name, file, goal, emit, *, examples=None, detection=None) -> (cards, installed)
+      None when sense.registry can load the adapter bridge back once installed (sense.bridges.load_bridge loads
+      adapter bridges; this still catches one it cannot load), else why not
+  run_synth(model_name, file, goal, emit, *, examples=None, detection=None, native=None, unseen=None)
+            -> (cards, installed)
       the whole run, as a trace of contracts.TraceEvent (the say() pattern of agent.auto; every event's data is
-      JSON-serialisable; times count from the run's start):
+      JSON-serialisable; times count from the run's start). `native` asks verify_files for the native control
+      (None: when the user's file, or at least half of the probe files, reads as text the way verify_files gives
+      a file as it is); `unseen` is a second labelled folder (one sub-folder per label, files of the user's file's
+      extension, MIN_UNSEEN_PER_LABEL (3) per label) or ProbeSet, for the unseen-categories control.
         [design]  start; ok with the design's fields, detection, toolbox and head_preview (fail, then done, when
-                  the LLM gives no usable design)
+                  the LLM gives no usable design). When agent.detect named the file's modality video, 3d, molecule
+                  or geo, the design takes that modality (designed_modality keeps the LLM's own name), so the sense
+                  is installed under the name chat looks it up by
+        [install_request]  only when the design asks to install packages (and code may run here): start with
+                  requested; agent.installer.plan checks them; a plan refused by the checks (always in fake mode,
+                  where the installer reaches nothing) is not put to the user: fail with the verdict. Otherwise
+                  agent.jobs.request_approval("install", {"plan": plan.to_dict(), "summary": plan.summary(),
+                  "review": agent.installer.ask_llm_review(plan)}) asks the user; inside a job, agent.jobs adds its
+                  own "approval" start and ok/fail events here, which carry the id the interface answers. Approved:
+                  agent.installer.install(plan, approved=True), then ok with installed (the toolbox, and so the
+                  adapter's path and toolbox(), now has them, and their top-level modules join design.libraries,
+                  which the adapter's author is told to use); declined or unanswered: info; a failed install (any
+                  error): fail. The run goes on in every case, with the toolbox as it then is. Each event's data holds
+                  requested, verdict, summary, approved (None when not asked), installed and note
         [build]   start (sandboxed); fail, then done, when sense.adapters.sandbox_problem() refuses to run code;
                   info with warning "unsandboxed" when there is no sandbox to apply; info per failed attempt
                   (attempt, error); ok with attempts, libraries, code_sha256, code, preview (the first 300
@@ -85,26 +113,33 @@ Public surface (do not rename):
                   generator: fail, then the same needs_user done. ok with name, provenance, source, licence,
                   labels, counts, n, split, meta, label_leaks (warnings: labels written in their own files'
                   content, extensions that differ between labels), and for generated files generator_sha256,
-                  generator_code and caveat
+                  generator_code and caveat. With `unseen`: info with unseen (name, source, labels, per_label, n),
+                  or info with the reason when the folder cannot be used (the card then says so)
         [verify]  sense.adapters.verify_files on every probe file (the adapter was written before any existed, so
-                  all are held out; an API model scores at most config.api_verify_items() of them): ok with the
-                  card dict ("card") and seconds (fail, then done, when the adapter fails on more than half)
+                  all are held out; an API model scores at most config.api_verify_items() of them), with native and
+                  the unseen set: start with native and unseen; ok with the card dict ("card"), its controls and
+                  control_chance, and seconds (fail, then done, when the adapter fails on more than half)
         [decide]  assess() on the card (FitRequest: dataset = the probe set's name, modality = design.modality,
                   scope "closed"); the card's verdict becomes "installed" or "rejected", its reason the sentence
                   followed by the adapter's failures, the label-leak warnings and, for generated probes, the caveat
         [install] when assess passes and registry_loads(bridge) is None: ok after sense.registry.install(bridge,
                   card) (the generator's code is saved beside the bridge as generator.py); when assess passes but
-                  the registry cannot load adapter bridges: info (blocked), nothing installed, verdict "candidate"
+                  the registry cannot load it back: info (blocked), nothing installed, verdict "candidate"
                   (installing would break the model's chat); info "Installed nothing" otherwise
         [done]    ok: installed (Bridge.name or None) and needs_user
         [error]   fail: step, error, after a fail event at the step that raised; the exception is re-raised
       The bridge is a sense.adapters.AdapterBridge; its code (adapter.py) and manifest (bridge.json: modality,
       format, route, description, libraries, written_by, attempts, question, goal, code_sha256, design, probes
-      with label_leaks and, for generated probes, caveat) are saved with it. Returns ([card], installed name or
-      None); ([], None) when the run stopped before a card.
+      with label_leaks and, for generated probes, caveat; install, the install_request record, when the design
+      asked for packages; unseen (name, source, labels, per_label) when that control ran) are saved with it.
+      Returns ([card], installed name or None); ([], None) when the run stopped before a card.
 
 Labels never reach an adapter through a file name or a folder: the adapter is written from the user's file alone,
-before any probe exists, and never sees the candidate labels; every probe file is copied to <sha256[:16]><extension>
+before any probe exists, and never sees the candidate labels, the probe plan, the install requests or anything of
+the probe or unseen sets (its request holds only writer_design: the design's modality, format, route,
+description, libraries, question and label_hint, with the design's labels and the sub-folder names of the
+examples and unseen folders masked, plus the toolbox, the contract, the rules and the sample's head); every probe
+file is copied to <sha256[:16]><extension>
 by sense.adapters.probe_folder, and sense.adapters.run_adapter hands the adapter a private copy named input<ext> in
 a folder of its own, under a macOS sandbox that cannot read the probe store, the examples folder or anything else
 in the user's folders (without that sandbox, only the copy and the anonymous names stand).
@@ -114,7 +149,6 @@ from __future__ import annotations
 
 import ast
 import codecs
-import dataclasses
 import hashlib
 import io
 import json
@@ -150,6 +184,9 @@ ADAPTER_TIMEOUT = adapters.DEFAULT_TIMEOUT
 MIN_PER_LABEL = 5  # user examples per label: with 2 labels, MIN_VERIFY_ITEMS files to score
 MIN_VERIFY_ITEMS = 10  # an adapter card scored on fewer probe files is not installed
 MAX_LABELS = 8
+MAX_INSTALL = 3  # packages a design may ask to install into the toolbox
+MIN_UNSEEN_PER_LABEL = 3  # files per label in an unseen-categories folder (verify_files wants 4 files in all)
+INSTALL_APPROVAL_TIMEOUT = 600.0  # seconds the user has to answer an install request
 PREVIEW_CHARS = 300
 DESIGN_TOKENS = 1500
 CODE_TOKENS = 5000
@@ -167,6 +204,11 @@ _FORBIDDEN_MODULES = {"ctypes", "_ctypes", "cffi"}  # an adapter needs no foreig
 # What the adapter's author sees of the design: not the candidate labels or where the probes come from, so the
 # adapter reports what is in the file and the base model, not the adapter, makes the call.
 _ADAPTER_DESIGN_FIELDS = ("modality", "format", "route", "description", "libraries", "question", "label_hint")
+_MASKED_FIELDS = ("question", "label_hint", "description")  # free text where a design may name its labels
+_MASK = "[answer]"
+# agent.detect's names for the modalities adapters are written for: an adapter for such a file is installed under
+# that name, which is the one chat looks a sense up by.
+_DETECTED_MODALITIES = ("video", "3d", "molecule", "geo")
 _STDLIB = set(sys.stdlib_module_names)
 _ALIASES = {
     "pillow": "PIL", "pil": "PIL", "opencv": "cv2", "opencv-python": "cv2", "opencv_python": "cv2",
@@ -185,7 +227,7 @@ DESIGN_SCHEMA: dict = {
     "additionalProperties": False,
     "required": [
         "modality", "format", "route", "description", "libraries", "question", "label_hint", "labels",
-        "probe_plan", "probe_reason",
+        "probe_plan", "probe_reason", "install",
     ],
     "properties": {
         "modality": {"type": "string", "description": "short lowercase name of the kind of content, e.g. 3d-model"},
@@ -198,6 +240,17 @@ DESIGN_SCHEMA: dict = {
         "labels": _strings("2 to 8 short candidate answers to the question"),
         "probe_plan": {"type": "string", "enum": ["user", "dataset", "generate"]},
         "probe_reason": {"type": "string", "description": "why that source of labelled probe files, in one sentence"},
+        "install": {
+            "type": "array",
+            "description": f"at most {MAX_INSTALL} PyPI packages not in the toolbox that would make the adapter much "
+                           "better; [] when the toolbox is enough",
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["name", "why"],
+                "properties": {"name": {"type": "string"}, "why": {"type": "string"}},
+            },
+        },
     },
 }
 
@@ -234,23 +287,29 @@ DESIGN_INSTRUCTION = (
     "the toolbox that the adapter needs; [] for the standard library alone); question (the multiple-choice "
     "question verification will ask about each file, matching the goal); label_hint (what kind of answer options "
     "the question has); labels (2 to 8 short, distinct candidate answers to the question; required when "
-    "probe_plan is generate); probe_plan and probe_reason. probe_plan says where labelled probe files come from; "
-    "their labels must not come from the adapter: \"generate\" only when a short script using the toolbox can "
-    "build the labelled property into each file's content, so that the label is a fact of construction that the "
+    "probe_plan is generate). The adapter's author sees description, question and label_hint but must not see "
+    "the candidate answers, so never name them there. Then probe_plan and probe_reason. probe_plan says where "
+    "labelled probe files come from; their labels must not come from the adapter: \"generate\" only when a short "
+    "script using the toolbox can build the labelled property into each file's content, so that the label is a "
+    "fact of construction that the "
     "script itself computes (meshes built as known shapes, videos made with a known motion or colour, numbers in "
     "known ranges, points inside boxes the script defines); never when the label is knowledge about the content "
     "that the script would have to recall (a molecule's taste or smell, the country or city a coordinate lies "
     "in, a species, a style): such labels need \"dataset\" (a public labelled dataset fits the goal) or \"user\" "
     "(only the user can supply labelled examples). Prefer generate when such a script is possible. probe_reason "
-    "says why, in one sentence. When problems_with_last_answer is present, your last answer had those problems: "
-    "fix them."
+    "says why, in one sentence. install lists at most 3 PyPI packages that are not in the toolbox and would make "
+    "the adapter much better than the toolbox allows (name and why); [] when the toolbox is enough, which is the "
+    "usual case. They are checked and the user is asked to approve them; the adapter is written with them only "
+    "when approved, so never name them in libraries. When problems_with_last_answer is present, your last answer "
+    "had those problems: fix them."
 )
 
 ADAPTER_INSTRUCTION = (
     "You write the adapter of a design: Python code that defines adapt(path). It runs in a sandbox with no "
     "network, once per file, and what it returns is all the base model will know about the file. Follow "
     "contract and rules. Use only the Python standard library and the design's libraries, which come from "
-    "toolbox (a name ending in \"(via subprocess)\" is a program to run with subprocess). sample shows the file "
+    "toolbox (a name ending in \"(via subprocess)\" is a program to run with subprocess); adapter_kit, the "
+    "harness's tested helpers listed there, may always be imported and is often the shortest way. sample shows the file "
     "it will first run on. When earlier_attempts is not empty, those attempts failed with the errors shown "
     "(last_code is the code of the last one): fix the causes. Answer with the complete code in code, without "
     "Markdown fences."
@@ -341,6 +400,7 @@ class Design:
     labels: list[str] = field(default_factory=list)
     probe_plan: str = "user"  # "user" | "dataset" | "generate"
     probe_reason: str = ""
+    install: list[dict] = field(default_factory=list)  # [{"name", "why"}]: packages to ask the user to approve
 
     @property
     def kind(self) -> str:
@@ -497,12 +557,41 @@ def validate_design(
     if plan == "generate" and len(labels) < 2:
         problems.append(f"probe_plan is generate, but labels has {len(labels)} usable label(s); give 2 to {MAX_LABELS}")
 
+    install, install_problems = _clean_install(answer.get("install"), toolbox)
+    problems += install_problems
+
     if problems:
         return None, problems
     return Design(
         modality=modality, format=fmt, route=str(route), description=description, libraries=libraries,
         question=question, label_hint=label_hint, labels=labels, probe_plan=str(plan), probe_reason=reason,
+        install=install,
     ), []
+
+
+def _clean_install(raw: Any, toolbox: list[str]) -> tuple[list[dict], list[str]]:
+    """A design's install requests: [{name, why}], at most MAX_INSTALL, without what the toolbox or the standard
+    library already has; and the problems found. A missing field means none (an older answer)."""
+    if raw is None:
+        return [], []
+    if not isinstance(raw, list):
+        return [], ["install must be a list of {name, why} (or [])"]
+    out: list[dict] = []
+    problems: list[str] = []
+    for item in raw:
+        name = " ".join(item.get("name").split()) if isinstance(item, dict) and isinstance(item.get("name"), str) else ""
+        if not name:
+            problems.append("each install entry needs a package name and why it helps")
+            continue
+        top = name.split("[")[0].split(".")[0].replace("-", "_").lower()
+        if _match_library(name, toolbox) is not None or top in {m.lower() for m in _STDLIB}:
+            continue  # already there: nothing to install
+        if top in _NETWORK_MODULES:
+            problems.append(f"install {name!r} is for the network, which the sandbox blocks")
+            continue
+        if name.casefold() not in {r["name"].casefold() for r in out}:
+            out.append({"name": name, "why": _clean_text(item.get("why"), 300)})
+    return out[:MAX_INSTALL], problems
 
 
 def design(
@@ -663,6 +752,32 @@ def _long_llm_calls():
 
 
 # ----------------------------------------------------------------------------- the adapter
+def _label_words(label: str) -> re.Pattern | None:
+    """A label as a whole word or phrase in free text: any case, any separators between its words, a plural "s" or
+    "es"; a label of one or two characters ("A", "pH") in its own case only, so that it does not take every "a"."""
+    words = re.findall(r"[^\W_]+", str(label))
+    if not words:
+        return None
+    body = r"[\W_]*".join(re.escape(w) for w in words)
+    short = len("".join(words)) <= 2
+    return re.compile(rf"(?<![^\W_]){body}(?:e?s)?(?![^\W_])", 0 if short else re.IGNORECASE)
+
+
+def writer_design(design: Design, hide: list[str] | tuple[str, ...] = ()) -> dict[str, Any]:
+    """What the adapter's author sees of `design` (module docstring): no candidate labels, probe plan or install
+    requests, and the labels of design.labels and `hide` masked in the free text that might name them."""
+    shown = {key: value for key, value in design.to_dict().items() if key in _ADAPTER_DESIGN_FIELDS}
+    labels = sorted({str(x) for x in [*design.labels, *hide] if str(x).strip()}, key=len, reverse=True)
+    patterns = [p for p in map(_label_words, labels) if p is not None]
+    for key in _MASKED_FIELDS:
+        text = str(shown.get(key, ""))
+        for pattern in patterns:
+            text = pattern.sub(_MASK, text)
+        # "[answer], [answer] or [answer]" reads better as one plural
+        shown[key] = re.sub(r"\[answer\](?:\s*[,;/]?\s*(?:(?:or|and)\s+)?\[answer\])+", "[answers]", text)
+    return shown
+
+
 def write_adapter(
     design: Design,
     sample: Path,
@@ -670,8 +785,10 @@ def write_adapter(
     attempts: int = ADAPTER_ATTEMPTS,
     timeout: float = ADAPTER_TIMEOUT,
     on_attempt: Callable[[int, AdapterError | None], None] | None = None,
+    hide: list[str] | tuple[str, ...] = (),
 ) -> tuple[str, dict, int]:
-    """Ask for adapt(path), run it on `sample`, repair on errors; (code, run_adapter output, attempts used)."""
+    """Ask for adapt(path), run it on `sample`, repair on errors; (code, run_adapter output, attempts used).
+    `hide` lists more labels to mask in what the author sees of the design (writer_design)."""
     sample = Path(sample)
     if attempts < 1:
         raise ValueError(f"attempts is {attempts}; give at least 1.")
@@ -682,7 +799,7 @@ def write_adapter(
     if problem is not None:
         raise AdapterError(problem, cause="sandbox")
     base = {
-        "design": {key: value for key, value in design.to_dict().items() if key in _ADAPTER_DESIGN_FIELDS},
+        "design": writer_design(design, hide),
         "toolbox": box,
         "contract": ADAPTER_CONTRACT + f" Each file has {timeout:g} s.",
         "rules": ADAPTER_RULES,
@@ -960,17 +1077,13 @@ GENERATED_CAVEAT = (
 
 # ----------------------------------------------------------------------------- deciding
 def assess(request: FitRequest, card: ReportCard) -> tuple[bool, str]:
-    """RulePlanner().assess, with an image card held to the text bars; then, for a card that passes them, two
-    checks of its evidence: at least MIN_VERIFY_ITEMS probe files were scored, and the low end of the 95% Wilson
-    interval of its accuracy lies above chance (on a handful of files, a lucky adapter clears the point bars)."""
+    """RulePlanner().assess, which holds a text or image card to the text bars and to its native and
+    unseen-categories controls when it has them; then, for a card that passes, two checks of its evidence: at
+    least MIN_VERIFY_ITEMS probe files were scored, and the low end of the 95% Wilson interval of its accuracy
+    lies above chance (on a handful of files, a lucky adapter clears the point bars)."""
     from sense.verify import _wilson
 
-    planner = RulePlanner()
-    if card.kind == "image":
-        ok, sentence = planner.assess(request, dataclasses.replace(card, kind="text"))
-        ok, sentence = ok, sentence.replace("for a text bridge", "for an image bridge")
-    else:
-        ok, sentence = planner.assess(request, card)
+    ok, sentence = RulePlanner().assess(request, card)
     if not ok:
         return ok, sentence
     if card.n < MIN_VERIFY_ITEMS:
@@ -1069,7 +1182,7 @@ def registry_loads(bridge: AdapterBridge) -> str | None:
             return f"the registry loads it back as {shown}, not as this adapter"
         return None
     except Exception as exc:
-        return f"the registry cannot load an adapter bridge yet ({type(exc).__name__}: {_one_line(str(exc), 200)})"
+        return f"the registry cannot load the adapter bridge back ({type(exc).__name__}: {_one_line(str(exc), 200)})"
     finally:
         shutil.rmtree(folder, ignore_errors=True)
 
@@ -1081,9 +1194,126 @@ def _earlier(model_name: str, modality: str) -> str | None:
         return None
 
 
+def _request_install(requested: list[dict], say: Callable[..., None]) -> dict[str, Any]:
+    """Check the packages a design asks for, ask the user (agent.jobs.request_approval) unless the checks refuse
+    them, and install them when approved. Every outcome is said at the install_request step; the record returned
+    goes into the manifest: requested, verdict, summary, approved (None when not asked), installed, note."""
+    from agent import installer, jobs
+
+    names = ", ".join(r["name"] for r in requested)
+    them = "it" if len(requested) == 1 else "them"
+    record: dict[str, Any] = {
+        "requested": requested, "verdict": None, "summary": None, "approved": None, "installed": [], "note": "",
+    }
+    say("start", f"The design asks for {names}, which the toolbox lacks: checking {them} before asking you.",
+        requested=requested)
+    try:
+        plan = installer.plan([{"name": r["name"], "why": r["why"]} for r in requested])
+    except Exception as exc:
+        record["note"] = f"the checks could not run ({type(exc).__name__}: {_one_line(str(exc), 300)})"
+        say("fail", f"Could not check {names}: {record['note']}. Writing the adapter without {them}.", **record)
+        return record
+    record.update(verdict=plan.verdict, summary=plan.summary())
+    if plan.verdict == "refuse":
+        record["note"] = "refused by the checks, so you were not asked"
+        say("fail", f"{plan.summary()} Writing the adapter without {them}.", plan=plan.to_dict(), **record)
+        return record
+    review = installer.ask_llm_review(plan)
+    approved = jobs.request_approval(
+        "install", {"plan": plan.to_dict(), "summary": plan.summary(), "review": review},
+        timeout=INSTALL_APPROVAL_TIMEOUT,
+    )
+    record["approved"] = approved
+    if not approved:
+        record["note"] = "declined or not answered"
+        say("info", f"Not installing {names}: the request was declined or not answered. Writing the adapter with "
+            "the toolbox as it is.", **record)
+        return record
+    try:
+        result = installer.install(plan, approved=True)
+    except Exception as exc:  # refused, failed, or anything else (a folder that cannot be made): the run goes on
+        shown = _one_line(str(exc), 300) or type(exc).__name__
+        if not isinstance(exc, (installer.InstallRefused, installer.InstallFailed)):
+            shown = f"{type(exc).__name__}: {shown}"
+        record["note"] = f"approved, but the install failed: {shown}"
+        say("fail", f"{names} could not be installed ({shown}). Writing the adapter without {them}.",
+            log_tail=getattr(exc, "log_tail", ""), **record)
+        return record
+    record["installed"] = list(result.get("installed") or [])
+    shown = ", ".join(f"{p.get('name')} {p.get('version')}" for p in record["installed"]) or "nothing new"
+    say("ok", f"Installed {shown} into the toolbox; the adapter may import {them}.", seconds=result.get("seconds"),
+        **record)
+    return record
+
+
+def _reads_as_text(path: Path) -> bool:
+    """Whether verify_files' native control could give the model this file as it is (sense.adapters._native_text:
+    UTF-8 text, a few bytes that do not decode tolerated)."""
+    try:
+        return adapters._native_text(Path(path)) is not None
+    except OSError:
+        return False
+
+
+def _mostly_text(paths: list[Path]) -> bool:
+    """Whether at least half of the files read as text (_reads_as_text), as verify_files needs to measure native."""
+    paths = list(paths)
+    return bool(paths) and 2 * sum(_reads_as_text(p) for p in paths) >= len(paths)
+
+
+def _folder_labels(folder: Path | ProbeSet | None) -> list[str]:
+    """The labels a labelled folder (its sub-folder names, read as sense.adapters.probe_folder reads them) or a
+    ProbeSet holds, to mask in what the adapter's author sees; [] when there are none or it cannot be read."""
+    if folder is None:
+        return []
+    if isinstance(folder, ProbeSet):
+        return list(folder.labels)
+    try:
+        return [
+            " ".join(d.name.replace("_", " ").replace("-", " ").split())
+            for d in sorted(Path(folder).expanduser().iterdir())
+            if d.is_dir() and not d.name.startswith((".", "_"))
+        ]
+    except OSError:
+        return []
+
+
+def _unseen_probes(
+    unseen: Path | ProbeSet | None, design_: Design, suffix: str, say: Callable[..., None]
+) -> tuple[ProbeSet | None, str]:
+    """The unseen-categories probe set (a ProbeSet as given, or one read from a folder with one sub-folder per
+    label, files of the user's file's extension), said at the data step; and a note for the card when a folder
+    cannot be used."""
+    if unseen is None:
+        return None, ""
+    if isinstance(unseen, ProbeSet):
+        found = unseen
+    else:
+        folder = Path(unseen)
+        hashed = hashlib.sha256(str(folder.expanduser().resolve()).encode("utf-8")).hexdigest()[:10]
+        try:
+            found = adapters.probe_folder(
+                folder, name=f"{design_.modality}-unseen-{hashed}", question=design_.question,
+                modality=design_.modality, provenance="user", source=str(folder), licence="user supplied",
+                min_per_label=MIN_UNSEEN_PER_LABEL, suffixes=[suffix] if suffix else None,
+            )
+        except ValueError as exc:
+            say("info", f"The folder of unseen categories cannot be used: {exc}", unseen=str(folder), reason=str(exc))
+            return None, f"Unseen categories not measured: {exc}"
+    shown = found.to_dict()
+    say("info", f"Also scoring {shown['n']} files of {len(found.labels)} other categories ({', '.join(found.labels)}), "
+        "which the adapter was not built around.", unseen={k: shown[k] for k in ("name", "source", "labels",
+                                                                                    "per_label", "n")})
+    return found, ""
+
+
 def _card_summary(card: ReportCard) -> str:
-    names = {"swapped": "swapped input", "no_input": "no input"}
-    controls = ", ".join(f"{names.get(k, k)} {pct(v)}" for k, v in card.controls.items())
+    names = {"swapped": "swapped input", "no_input": "no input", "native": "the raw file",
+             "unseen_categories": "unseen categories"}
+    own = getattr(card, "control_chance", None) or {}
+    controls = ", ".join(
+        f"{names.get(k, k)} {pct(v)}" + (f" (chance {pct(own[k])})" if k in own else "") for k, v in card.controls.items()
+    )
     return (
         f"{card.bridge} scored {pct(card.accuracy)} on {card.n} held-out probe files (chance {pct(card.chance)})"
         + (f"; controls: {controls}." if controls else ".")
@@ -1098,6 +1328,8 @@ def run_synth(
     *,
     examples: Path | None = None,
     detection: dict | None = None,
+    native: bool | None = None,
+    unseen: Path | ProbeSet | None = None,
 ) -> tuple[list[ReportCard], str | None]:
     """Design, write, verify and install (or refuse) an agent-written adapter for `file` (module docstring)."""
     t0 = time.monotonic()
@@ -1131,8 +1363,22 @@ def run_synth(
             finish(f"No sense was installed for {file.name}: no usable adapter design came back from the LLM.")
             return [], None
         d = found
+        renamed: dict[str, str] = {}
+        detected = detection.get("modality") if isinstance(detection, dict) else None
+        if detected in _DETECTED_MODALITIES and d.modality != detected:
+            # chat finds an installed sense by agent.detect's modality name, not by the designer's ("3d-model")
+            renamed["designed_modality"] = d.modality
+            d.modality = detected
         say("ok", f"A {d.route} adapter for {d.modality} ({d.format}) files: {d.description}", **d.to_dict(),
-            detection=detection, toolbox=box, head_preview=_one_line(head, PREVIEW_CHARS))
+            **renamed, detection=detection, toolbox=box, head_preview=_one_line(head, PREVIEW_CHARS))
+
+        install_record: dict[str, Any] | None = None
+        if d.install and adapters.sandbox_problem() is None:  # where no code may run, installing helps nothing
+            step = "install_request"
+            install_record = _request_install(d.install, say)
+            before, box = box, adapters.toolbox()  # an approved install adds its modules
+            if install_record.get("installed"):  # the author is told to use the design's libraries: these too
+                d.libraries = d.libraries + [e for e in box if e not in before and e not in d.libraries]
 
         step = "build"
         libs = ", ".join(d.libraries) or "the standard library"
@@ -1155,7 +1401,8 @@ def run_synth(
                 say("info", f"Attempt {k} failed: {_one_line(err.reason, 300)}{more}", attempt=k, error=err.to_dict())
 
         try:
-            code, output, used = write_adapter(d, file, attempts=ADAPTER_ATTEMPTS, on_attempt=adapter_attempt)
+            code, output, used = write_adapter(d, file, attempts=ADAPTER_ATTEMPTS, on_attempt=adapter_attempt,
+                                               hide=_folder_labels(examples) + _folder_labels(unseen))
         except AdapterError as err:
             say("fail", err.reason, attempts=ADAPTER_ATTEMPTS, error=err.to_dict())
             finish(f"No {d.modality} sense was installed: no adapter the agent wrote ran on {file.name}.")
@@ -1236,11 +1483,14 @@ def run_synth(
         say("ok", f"Using {summary['n']} {probes.provenance} probe files in {len(probes.labels)} labels "
             f"({', '.join(probes.labels)}); all are held out, since the adapter was written before they existed."
             f"{warning}", **facts)
+        unseen_set, unseen_note = _unseen_probes(unseen, d, suffix, say)
 
         step = "verify"
         notes = []
         if leaks:
             notes.append(f"Warning about the probe files: {'; '.join(leaks)}.")
+        if unseen_note:
+            notes.append(unseen_note)
         if generator_code is not None:
             notes.append(f"The probe files were generated: {GENERATED_CAVEAT}.")
         probe_facts = {k: summary[k] for k in ("name", "provenance", "source", "licence", "labels", "per_label")}
@@ -1255,26 +1505,41 @@ def run_synth(
         }
         if generator_code is not None:
             manifest["generator_sha256"] = facts["generator_sha256"]
+        if install_record is not None:
+            manifest["install"] = install_record
+        if unseen_set is not None:
+            manifest["unseen"] = {k: unseen_set.to_dict()[k] for k in ("name", "source", "labels", "per_label")}
         bridge = AdapterBridge(kind=d.kind, modality=d.modality, model_name=model_name, code=code,
                                manifest=_jsonable(manifest), timeout=ADAPTER_TIMEOUT)
         request = FitRequest(model=model_name, dataset=probes.name, modality=d.modality, scope="closed")
         model = models.load_model(model_name)
+        if native is None:  # the native control needs files the model can be given as they are
+            native = _reads_as_text(file) or _mostly_text(probes.files)
+        extra = (", the model reading each file as it is" if native else "") + (
+            f", and {len(unseen_set.items)} files of categories it was not built around" if unseen_set else "")
         say("start", f"Scoring {bridge.name} on {probes.provenance} probe files against swapped-input and "
-            "no-input controls.", bridge=bridge.name, n_test=len(scored))
+            f"no-input controls{extra}.", bridge=bridge.name, n_test=len(scored), native=native,
+            unseen=unseen_set.name if unseen_set else None)
         started = time.monotonic()
         try:
-            card = adapters.verify_files(model, bridge, probes, request, idx=scored)
+            card = adapters.verify_files(model, bridge, probes, request, idx=scored, native=native, unseen=unseen_set)
         except AdapterError as err:
             say("fail", err.reason, bridge=bridge.name, error=err.to_dict())
             finish(f"No {d.modality} sense was installed: {err.reason}")
             return [], None
         seconds = round(time.monotonic() - started, 2)
-        say("ok", _card_summary(card), card=card.to_dict(), seconds=seconds)
+        say("ok", _card_summary(card), card=card.to_dict(), controls=card.controls,
+            control_chance=card.control_chance, seconds=seconds)
 
         step = "decide"
-        say("start", f"Checking {bridge.name} against the bars for a {d.kind} bridge: chance plus 15 points, "
-            f"10 points above swapped input, at least {MIN_VERIFY_ITEMS} probe files, and a 95% interval clear of "
-            "chance.", bridge=bridge.name)
+        bars = ""
+        if "native" in card.controls:
+            bars += ", 10 points above the model reading the raw file"
+        if "unseen_categories" in card.controls:
+            bars += ", 15 points above chance on the unseen categories"
+        say("start", f"Checking {bridge.name} against the bars for {'an' if d.kind == 'image' else 'a'} {d.kind} "
+            f"bridge: chance plus 15 points, 10 points above swapped input{bars}, at least {MIN_VERIFY_ITEMS} probe "
+            "files, and a 95% interval clear of chance.", bridge=bridge.name)
         ok, sentence = assess(request, card)
         card.verdict = "installed" if ok else "rejected"
         card.reason = " ".join(part for part in (sentence, card.reason, *notes) if part)

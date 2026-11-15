@@ -5,7 +5,10 @@ Tables, in <catalog>.<schema> (see conn.py):
                 installed, seconds, n_events, error
   report_cards  one row per verified bridge: run_id, recorded, model, dataset, scope, bridge, kind, n, chance,
                 accuracy, interval_low, interval_high, the six controls as columns, controls_json, verdict,
-                reason, installed (this card's bridge was the one installed)
+                reason, installed (this card's bridge was the one installed). controls_json holds every control,
+                also those without a column (an adapter card's "native" and "unseen_categories"); a card's
+                control_chance has no column (the run.json uploaded to the Volume keeps it), so tables made
+                before it existed take the rows unchanged
   trace_events  one row per trace event: run_id, i, t, step, status, message, data_json
   triage_batches  one row per method of a triage batch (eval.triage): the installed sense, its no-input control,
                 and the specialist lookup; flagged, caught, recall, precision, false alarms

@@ -82,7 +82,8 @@ All JSON. Errors: {"detail": "<what went wrong and what to do>"} with a 4xx or 5
        -> {"reply": str, "used": [{"bridge", "kind", "source", "detail"}]}
           `used` lists how each file reached the model, uploads first, then samples. A file's modality is decided
           from its bytes, as POST /api/auto decides it (agent.detect: magic bytes, then text), and a listed audio
-          extension (sense.specialists.AUDIO_EXTENSIONS) also means audio. Kind "native" (bridge ""): the model
+          extension (sense.specialists.AUDIO_EXTENSIONS) also means audio; a text file agent.detect reads as a
+          molecule, places or a mesh (SMILES, coordinates, OBJ...) is given as text. Kind "native" (bridge ""): the model
           takes the file as it is: a text file's text, at most TEXT_FILE_CHARS (8000) characters, is sent after the
           message; an image (PNG or JPEG, at most 20 MB) is shown to a model that takes images (an API model whose
           ModelInfo.native lists "image"; the local models take no images yet). Otherwise the installed sense for
@@ -143,7 +144,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel as RequestBody
 
 from agent import jobs
-from agent.detect import detect
+from agent.detect import detect, is_text
 from sense import datasets, models, registry
 from sense.config import REPO
 from sense.contracts import FitRequest, ModelInfo, SenseInput
@@ -235,9 +236,11 @@ def _sample_id(path: str) -> str:
 def _modality_of(name: str, path: Path) -> str | None:
     """The modality of an attached file, decided from its bytes as POST /api/auto decides it (agent.detect), so
     that chat gives the model every file the agent taught it to read, whatever the file is called. Magic bytes
-    (WAV, FLAC, Ogg, MP3, PNG, JPEG) decide first; then a listed audio extension means audio, since soundfile also
-    reads AIFF and AU, which agent.detect does not know, and the bridge reports a file it cannot read; then text.
-    None for anything else, such as CSV, FASTA or an unknown binary format."""
+    (WAV, FLAC, Ogg, MP3, PNG, JPEG, GIF, MP4 and other video, GLB) decide first; then a listed audio extension
+    means audio, since soundfile also reads AIFF and AU, and the bridge reports a file it cannot read; then text.
+    A text file that agent.detect reads as a molecule, places or a mesh (SMILES, coordinates, OBJ...) is still
+    given as text, as it was before agent.detect knew those modalities. None for anything else, such as CSV,
+    FASTA or an unknown binary format."""
     try:
         found = detect(path)
     except ValueError:  # an empty file
@@ -246,6 +249,8 @@ def _modality_of(name: str, path: Path) -> str | None:
         return found.modality
     if Path(name).suffix.lower() in AUDIO_EXTENSIONS:
         return "audio"
+    if found is not None and found.modality not in ("text", "other") and is_text(path):
+        return "text"
     return "text" if found is not None and found.modality == "text" else None
 
 

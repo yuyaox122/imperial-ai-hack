@@ -61,6 +61,18 @@ def test_card_rows_flatten_controls_and_mark_the_installed_bridge():
     assert set(rows[0]) == {c.split()[0] for c in " ".join(sink.DDL["report_cards"].split()).split(", ")}
 
 
+def test_card_rows_take_adapter_cards_with_and_without_control_chance():
+    adapter = dict(RECORD["cards"][1], bridge="adapter:mesh", kind="image",
+                   controls={"swapped": 0.2, "no_input": 0.25, "native": 0.3, "unseen_categories": 0.6},
+                   control_chance={"unseen_categories": 0.3333})
+    record = dict(RECORD, cards=[RECORD["cards"][0], adapter])  # the first card has no control_chance key
+    rows = sink.card_rows(record)
+    columns = {c.split()[0] for c in " ".join(sink.DDL["report_cards"].split()).split(", ")}
+    assert all(set(row) == columns for row in rows)  # an existing table takes them as they are
+    assert json.loads(rows[1]["controls_json"]) == adapter["controls"]  # the new controls travel in controls_json
+    assert "control_chance" not in columns  # kept in run.json in the Volume, not in a column
+
+
 def test_run_and_event_rows_match_their_tables():
     for name, rows in (("runs", [sink.run_row(RECORD)]), ("trace_events", sink.event_rows(RECORD))):
         cols = {c.split()[0] for c in " ".join(sink.DDL[name].split()).split(", ")}

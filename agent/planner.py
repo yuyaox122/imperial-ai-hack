@@ -9,7 +9,11 @@ RulePlanner.plan: ["vector", "text"] for an open-weight model, ["text"] otherwis
 RulePlanner.decide, over the verified candidate cards:
   - a vector card is acceptable when accuracy >= swapped + 0.25 and accuracy >= chance + 0.25, and, for
     scope "open", when controls["unseen_classes"] >= chance + 0.25 and is within 0.20 of the accuracy
-  - a text or tool card is acceptable when accuracy >= chance + 0.15 and accuracy >= swapped + 0.10
+  - a text, tool or image card is acceptable when accuracy >= chance + 0.15 and accuracy >= swapped + 0.10
+  - a text or image card (an agent-written adapter's, from sense.adapters.verify_files) also needs, when its
+    controls have them: accuracy >= controls["native"] + 0.10 (the adapter must add something to the model reading
+    the raw file), and controls["unseen_categories"] >= control_chance.get("unseen_categories", chance) + 0.15
+    (it must work on categories it was not built around, not only on the tested ones)
   - install the acceptable card with the highest accuracy, preferring vector when within 0.03 of the best;
     if none is acceptable install nothing
   - the reason names the numbers that decided it, in one or two plain sentences
@@ -29,6 +33,8 @@ VECTOR_MARGIN = 0.25  # a vector bridge must beat chance and swapped input by th
 TEXT_MARGIN = 0.15  # a text bridge must beat chance by this much
 TEXT_SWAPPED_MARGIN = 0.10  # and swapped input by this much, or it is not using the input
 OPEN_DROP = 0.20  # for open scope, accuracy on unseen classes may trail fitted classes by at most this much
+NATIVE_MARGIN = 0.10  # an adapter must beat the model reading the raw file by this much
+UNSEEN_MARGIN = 0.15  # and score this far above chance on categories it was not built around
 PREFER_VECTOR_WITHIN = 0.03  # install the vector bridge when it is this close to the best acceptable card
 _EPS = 1e-9  # accuracies sitting exactly on a bar pass it
 
@@ -55,23 +61,48 @@ class RulePlanner:
         """Acceptability and a clause (no subject, no full stop) with the deciding numbers."""
         if card.kind == "vector":
             return self._check_vector(request, card)
-        if card.kind in ("text", "tool"):
+        if card.kind in ("text", "tool", "image"):
             bar = card.chance + TEXT_MARGIN
+            a_kind = f"{'an' if card.kind == 'image' else 'a'} {card.kind}"
             swapped = card.controls.get("swapped")
             if swapped is not None and card.accuracy + _EPS < swapped + TEXT_SWAPPED_MARGIN:
                 return False, (
                     f"its {pct(card.accuracy)} is not 10 points above the {pct(swapped)} it scored with swapped input"
                 )
-            if card.accuracy + _EPS >= bar:
-                return True, (
-                    f"it scored {pct(card.accuracy)} against {pct(card.chance)} chance, "
-                    f"meets the {pct(bar)} bar for a {card.kind} bridge"
+            if card.accuracy + _EPS < bar:
+                return False, (
+                    f"it scored {pct(card.accuracy)}, below the {pct(bar)} bar for {a_kind} bridge "
+                    f"({pct(card.chance)} chance plus 15 points)"
                 )
-            return False, (
-                f"it scored {pct(card.accuracy)}, below the {pct(bar)} bar for a {card.kind} bridge "
-                f"({pct(card.chance)} chance plus 15 points)"
-            )
-        return False, f"the rule planner only judges vector, text and tool bridges, not {card.kind} bridges"
+            detail = f"it scored {pct(card.accuracy)} against {pct(card.chance)} chance, meets the {pct(bar)} bar for {a_kind} bridge"
+            if card.kind == "tool":
+                return True, detail
+            return self._check_adapter_controls(card, detail)
+        return False, f"the rule planner only judges vector, text, tool and image bridges, not {card.kind} bridges"
+
+    def _check_adapter_controls(self, card: ReportCard, detail: str) -> tuple[bool, str]:
+        """The native and unseen-categories controls of a text or image card, when it has them."""
+        native = card.controls.get("native")
+        if native is not None:
+            if card.accuracy + _EPS < native + NATIVE_MARGIN:
+                return False, (
+                    f"the model already reads this file as it is: native {pct(native)}, adapter {pct(card.accuracy)} "
+                    "(the adapter must add 10 points)"
+                )
+            gain = (card.accuracy - native) * 100
+            detail += f", {gain:.1f} points above the {pct(native)} the model scored on the raw file"
+        unseen = card.controls.get("unseen_categories")
+        if unseen is not None:
+            chance = (getattr(card, "control_chance", None) or {}).get("unseen_categories", card.chance)
+            bar = chance + UNSEEN_MARGIN
+            if unseen + _EPS < bar:
+                return False, (
+                    f"it scored {pct(unseen)} on categories it was not built around, below the {pct(bar)} bar there "
+                    f"({pct(chance)} chance plus 15 points), so the adapter works for the tested categories but not "
+                    "for new ones"
+                )
+            detail += f", and {pct(unseen)} on categories it was not built around ({pct(chance)} chance there)"
+        return True, detail
 
     def _check_vector(self, request: FitRequest, card: ReportCard) -> tuple[bool, str]:
         bar = card.chance + VECTOR_MARGIN

@@ -18,7 +18,9 @@ Public surface (do not rename):
       model.info.open_weights is False); "text" and "tool" use the dataset's labels for scope "closed" and the
       caption bank for scope "open". Other kinds: ValueError.
   load_bridge(directory) -> Bridge
-      Reload a bridge saved with Bridge.save.
+      Reload a bridge saved with Bridge.save. A bridge.json with "adapter": true is an agent-written adapter and
+      loads through sense.adapters.load_adapter_bridge (whatever its kind), so sense.registry.get_bridges returns
+      an AdapterBridge for an adapter sense.
   describe(bridge) -> dict
       Facts for the agent's trace, as plain JSON values: {"name", "kind", "modality", "model", "specialist",
       "fit_seconds", "fit_seconds_by_layer", "layer", "dev_accuracy", "n_fit", "source", "n_phrases"}, with None
@@ -659,6 +661,10 @@ def load_bridge(directory: Path) -> Bridge:
     if not meta_path.is_file():
         raise FileNotFoundError(f"{meta_path} is missing: {directory} does not hold a saved bridge.")
     meta = json.loads(meta_path.read_text())
+    if meta.get("adapter"):  # an agent-written adapter (kind "text" or "image"); imported here, not at the top
+        from sense.adapters import load_adapter_bridge
+
+        return load_adapter_bridge(directory)
     if meta.get("kind") == "vector":
         return VectorBridge.load(directory, meta)
     if meta.get("kind") == "text":

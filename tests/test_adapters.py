@@ -9,6 +9,7 @@ import io
 import json
 import os
 import shutil
+import subprocess
 import sys
 import time
 import uuid
@@ -104,6 +105,130 @@ def test_code_imports_names_top_level_modules_and_commands():
            "def adapt(p):\n    subprocess.run(['ffprobe', p])\n"
     assert code_imports(code) == ["PIL", "ffprobe", "numpy", "subprocess", "xml"]
     assert code_imports("def broken(:") == []
+
+
+# ----------------------------------------------------------------------------- the kit and the toolbox on the path
+def _fake_font_cache() -> Path:
+    """A stand-in for matplotlib's font cache in the harness's cache folder, so no test pays the 12 s scan."""
+    from sense import config
+
+    folder = config.home() / "cache" / "matplotlib"
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / "fontlist-v0.0.0.json").write_text('{"_version": "fake"}')
+    return folder
+
+
+def _toolbox_package(name: str = "meshkit", *, top_level: bool = True, recorded: bool = True) -> Path:
+    """A package installed into the toolbox the way agent.installer leaves it: files, dist-info, installed.json."""
+    from agent import installer
+
+    site_dir = installer.toolbox_dir()
+    (site_dir / name).mkdir(parents=True)
+    (site_dir / name / "__init__.py").write_text("VALUE = 42\n")
+    info = site_dir / f"{name}-1.0.dist-info"
+    info.mkdir()
+    (info / "METADATA").write_text(f"Metadata-Version: 2.1\nName: {name}\nVersion: 1.0\n\n")
+    if top_level:
+        (info / "top_level.txt").write_text(f"{name}\n")
+    (info / "RECORD").write_text(f"{name}/__init__.py,,\n{info.name}/METADATA,,\n")
+    (site_dir / "evil.pth").write_text("import builtins; builtins.PTH_RAN = True\n")  # must never run
+    ledger = site_dir.parent / "installed.json"
+    rows = json.loads(ledger.read_text()) if ledger.is_file() else []
+    if recorded:
+        rows.append({"name": name, "version": "1.0", "sha256": "0" * 64})
+    ledger.write_text(json.dumps(rows))
+    return site_dir
+
+
+def test_toolbox_lists_the_kit_and_the_approved_packages():
+    tools = toolbox()
+    kit = [t for t in tools if t.startswith("adapter_kit (")]
+    assert len(kit) == 1 and "mesh_views" in kit[0] and "video_frames" in kit[0] and "\n" not in kit[0]
+    assert kit[0] == f"adapter_kit ({adapters.KIT_SUMMARY})"
+    assert "meshkit" not in tools  # no toolbox yet
+
+    _toolbox_package("meshkit")
+    _toolbox_package("pointkit", top_level=False)  # no top_level.txt: the RECORD names its modules
+    _toolbox_package("stray", recorded=False)  # files in the toolbox that installed.json does not record
+    tools = toolbox()
+    assert tools[-2:] == ["meshkit", "pointkit"] and "stray" not in tools
+
+
+def test_adapters_import_the_kit_and_the_toolbox_without_running_pth_files(a_file):
+    _fake_font_cache()
+    site_dir = _toolbox_package("meshkit")
+    code = f'''
+import builtins, json, os, sys
+import adapter_kit
+import meshkit
+
+def adapt(path):
+    try:
+        open({str(site_dir.parent / "installed.json")!r}).read()
+        ledger = "read"
+    except PermissionError:
+        ledger = "denied"
+    return {{"text": json.dumps({{
+        "kit": os.path.basename(adapter_kit.__file__), "has_views": hasattr(adapter_kit, "mesh_views"),
+        "lib_first": sys.path[0] == os.path.dirname(adapter_kit.__file__), "toolbox_last": sys.path[-1],
+        "value": meshkit.VALUE, "pth": hasattr(builtins, "PTH_RAN"), "ledger": ledger,
+        "statistics": statistics.__file__, "stdlib_mean": hasattr(statistics, "mean"),
+    }})}}
+'''
+    # A wheel in the toolbox with a module of a standard-library name must not replace that module for adapters.
+    (site_dir / "statistics.py").write_text("SHADOWED = True\n")
+    code = code.replace("import meshkit", "import meshkit\nimport statistics")
+    seen = json.loads(run_adapter(code, a_file)["text"])
+    assert seen["kit"] == "adapter_kit.py" and seen["has_views"] and seen["lib_first"]
+    assert seen["toolbox_last"] == str(site_dir.resolve()) and seen["value"] == 42
+    assert seen["stdlib_mean"] and not seen["statistics"].startswith(str(site_dir.resolve()))
+    assert seen["pth"] is False  # sys.path.insert, never site.addsitedir
+    if SANDBOXED:  # exactly the toolbox folder is readable, not the rest of config.home()
+        assert seen["ledger"] == "denied"
+
+
+def test_matplotlib_cache_is_built_once_and_copied_into_each_run(a_file, monkeypatch):
+    pytest.importorskip("matplotlib")
+    from sense import config
+
+    monkeypatch.setenv("SOME_API_KEY", "sk-secret-value-123456789")
+    monkeypatch.setattr(adapters, "_mpl_failed", set())
+    builds = []
+    real_run = subprocess.run
+
+    def fake_scan(cmd, **kwargs):  # what `import matplotlib.font_manager` leaves in MPLCONFIGDIR, without 12 s
+        if cmd[-1] != "import matplotlib.font_manager":
+            return real_run(cmd, **kwargs)
+        builds.append(kwargs["env"])
+        Path(kwargs["env"]["MPLCONFIGDIR"], "fontlist-v9.9.9.json").write_text('{"_version": "9.9.9"}')
+        return subprocess.CompletedProcess(cmd, 0)
+
+    monkeypatch.setattr(adapters.subprocess, "run", fake_scan)
+    folder = adapters.matplotlib_cache()
+    assert folder == config.home() / "cache" / "matplotlib" and (folder / "fontlist-v9.9.9.json").is_file()
+    assert len(builds) == 1 and "SOME_API_KEY" not in builds[0] and builds[0]["MPLBACKEND"] == "Agg"
+    assert adapters.matplotlib_cache() == folder and len(builds) == 1  # built once
+    assert [p.name for p in folder.parent.iterdir()] == ["matplotlib"]  # no staging folder left behind
+
+    code = '''
+import os
+import matplotlib
+
+def adapt(path):
+    here = os.environ["MPLCONFIGDIR"]
+    inside = os.path.dirname(os.getcwd()) == os.path.dirname(here)
+    return {"text": f"{inside} {sorted(os.listdir(here))}"}
+'''
+    assert run_adapter(code, a_file)["text"] == "True ['fontlist-v9.9.9.json']"
+    assert len(builds) == 1
+
+    # a build that fails is remembered, and the adapter still runs (matplotlib then scans on its own)
+    monkeypatch.setenv("SENSE_HOME", str(Path(config.home()).parent / "other-home"))
+    monkeypatch.setattr(adapters.subprocess, "run",
+                        lambda cmd, **kw: builds.append(kw["env"]) or subprocess.CompletedProcess(cmd, 1))
+    assert adapters.matplotlib_cache() is None and adapters.matplotlib_cache() is None and len(builds) == 2
+    monkeypatch.setattr(adapters.subprocess, "run", real_run)
+    assert run_adapter(code, a_file)["text"] == "True []"
 
 
 # ----------------------------------------------------------------------------- run_adapter
@@ -646,6 +771,22 @@ def test_adapter_bridge_is_a_file_bridge_that_saves_and_loads(tmp_path, a_file):
     assert loaded.prepare(a_file).text == "hello world"
 
 
+@pytest.mark.parametrize("kind", ["text", "image"])
+def test_the_registry_loads_an_installed_adapter_sense(a_file, kind):
+    from sense import registry
+    from sense.bridges import load_bridge
+    from sense.contracts import ReportCard
+
+    code = FIRST_LINE if kind == "text" else 'from PIL import Image\ndef adapt(p):\n    return {"images": [Image.new("RGB", (8, 8))]}\n'
+    bridge = AdapterBridge(kind=kind, modality="mystery", model_name="fake", code=code)
+    card = ReportCard("fake", "mystery", "p", "closed", bridge.name, kind, 20, 0.2, 0.9, {"swapped": 0.2})
+    registry.install(bridge, card)
+    (loaded,) = registry.get_bridges("fake")  # what chat calls for every attached file
+    assert isinstance(loaded, AdapterBridge) and (loaded.name, loaded.kind, loaded.code) == (bridge.name, kind, code)
+    assert isinstance(load_bridge(registry.sense_dir("fake", "mystery")), AdapterBridge)
+    assert loaded.prepare(a_file).kind == kind
+
+
 def test_adapter_bridge_caches_per_file_content(a_file, tmp_path, monkeypatch):
     calls = []
     real = adapters.run_adapter
@@ -855,3 +996,127 @@ def test_verify_files_respects_max_items_and_the_model(tmp_path):
     assert card.n == 7
     with pytest.raises(ValueError, match="built for fake"):
         verify_files(_fake_model("fake-api"), bridge, probes, FitRequest(model="fake-api", dataset=probes.name))
+
+
+# ----------------------------------------------------------------------------- native and unseen categories
+KNOWS_FOUR = '''
+KNOWN = ["red", "green", "blue", "yellow"]
+
+def adapt(path):
+    line = open(path, encoding="utf-8").readline()
+    for colour in KNOWN:  # an adapter built around the tested colours only
+        if colour in line:
+            return {"text": f"The file is about the colour {colour}."}
+    return {"text": "The file is about some colour."}
+'''
+
+
+def _four_and_unseen(tmp_path, unseen_labels=("Red", "purple", "orange", "pink"), per_label=5):
+    main = probe_folder(_probe_tree(tmp_path / "main", ["red", "green", "blue", "yellow"], 6),
+                        question="Which colour?", modality="colour file")
+    unseen = probe_folder(_probe_tree(tmp_path / "later", list(unseen_labels), per_label), name="later-colours",
+                          question="Which colour is it?", modality="colour file", source="a second folder of examples")
+    return main, unseen
+
+
+def test_verify_files_native_control_is_the_model_reading_the_file_as_it_is(tmp_path):
+    probes = _colour_probes(tmp_path)
+    bridge = AdapterBridge(kind="text", modality="colour file", model_name="fake", code=FIRST_LINE)
+    request = FitRequest(model="fake", dataset=probes.name)
+    card = verify_files(_fake_model(), bridge, probes, request, native=True)
+    assert list(card.controls) == ["swapped", "no_input", "native"]
+    assert card.controls["native"] >= 0.9  # the raw file names its colour: the model reads it without the adapter
+    assert card.control_chance == {} and card.reason == ""
+    plain = verify_files(_fake_model(), bridge, probes, request)
+    assert plain.accuracy == card.accuracy and plain.controls == {k: card.controls[k] for k in ("swapped", "no_input")}
+
+    long_file = tmp_path / "long.txt"
+    long_file.write_text("colour: red\n" + "x" * 9000)
+    text = adapters._native_text(long_file)
+    assert len(text) <= adapters.MAX_TEXT_CHARS and text.startswith("colour: red") and text.endswith("goes on]")
+
+
+def test_verify_files_skips_native_for_files_that_are_not_text(tmp_path):
+    root = tmp_path / "binary"
+    for label in ["red", "blue"]:
+        (root / label).mkdir(parents=True)
+        for k in range(6):
+            (root / label / f"{k}.bin").write_bytes(f"colour: {label}\n".encode() + bytes([0, 255, k]) * 20)
+    probes = probe_folder(root, question="Which colour?", modality="colour file")
+    bridge = AdapterBridge(kind="text", modality="colour file", model_name="fake", code=FIRST_LINE)
+    card = verify_files(_fake_model(), bridge, probes, FitRequest(model="fake", dataset=probes.name), native=True)
+    assert "native" not in card.controls
+    assert f"Native not measured: {card.n} of the {card.n} scored files are not text" in card.reason
+
+
+ECHO = '''
+def adapt(path):
+    with open(path, "rb") as f:
+        return {"text": f.read().decode("utf-8", "replace")}
+'''
+
+
+def test_one_odd_file_does_not_switch_the_native_control_off(tmp_path):
+    # An adapter that only echoes the file adds nothing to the model reading it as it is. One Latin-1 byte, or one
+    # binary file, among many text notes must not drop the native control and let the echo pass the text bars.
+    from agent.planner import RulePlanner
+
+    root = _probe_tree(tmp_path / "notes", ["red", "green", "blue", "yellow"], 8)
+    latin1 = root / "red" / "red_00.thing"
+    latin1.write_bytes(latin1.read_bytes() + b" caf\xe9\n")
+    binary = root / "green" / "green_00.thing"
+    binary.write_bytes(b"colour: green\n" + bytes([0, 255, 7]) * 40)
+    probes = probe_folder(root, question="Which colour?", modality="colour file")
+    bridge = AdapterBridge(kind="text", modality="colour file", model_name="fake", code=ECHO)
+    request = FitRequest(model="fake", dataset=probes.name)
+    every = np.arange(len(probes.items))
+    card = verify_files(_fake_model(), bridge, probes, request, idx=every, native=True)
+
+    assert adapters._native_text(latin1).endswith("caf\ufffd\n")  # a few bad bytes still read as text
+    assert adapters._native_text(binary) is None
+    assert card.controls["native"] >= 0.9  # measured: the binary file alone was asked with no input
+    assert "Native: 1 of the 32 scored files are not text" in card.reason and "with no input" in card.reason
+    ok, sentence = RulePlanner().assess(request, card)
+    assert not ok and "the model already reads this file as it is" in sentence
+
+
+def test_verify_files_unseen_categories_control(tmp_path):
+    main, unseen = _four_and_unseen(tmp_path)
+    request = FitRequest(model="fake", dataset=main.name)
+    every = np.arange(len(main.items))
+
+    reads = AdapterBridge(kind="text", modality="colour file", model_name="fake", code=FIRST_LINE)
+    card = verify_files(_fake_model(), reads, main, request, idx=every, unseen=unseen)
+    assert card.controls["unseen_categories"] >= 0.9 and card.control_chance == {"unseen_categories": 0.3333}
+    assert card.chance == 0.25  # the card's own chance is the main set's
+    assert ("Unseen categories: 100.0% on 15 files of 3 categories the adapter was not built around (orange, "
+            "pink, purple; source: a second folder of examples) (dropped as already probed: Red), against 33.3% "
+            "chance.") in card.reason
+
+    narrow = AdapterBridge(kind="text", modality="colour file", model_name="fake", code=KNOWS_FOUR)
+    card = verify_files(_fake_model(), narrow, main, request, idx=every, unseen=unseen, unseen_max_items=9)
+    assert card.accuracy >= 0.9 and card.controls["unseen_categories"] <= 0.67
+    assert "on 9 files of 3 categories" in card.reason
+
+    fails = AdapterBridge(kind="text", modality="colour file", model_name="fake", code=_fails_on(["purple"]))
+    card = verify_files(_fake_model(), fails, main, request, idx=every, unseen=unseen)
+    assert card.controls["unseen_categories"] <= 0.67  # the purple files count as wrong
+    assert "the adapter failed on 5 of them, counted as wrong" in card.reason
+
+
+def test_verify_files_says_why_unseen_categories_were_not_measured(tmp_path):
+    main, overlapping = _four_and_unseen(tmp_path, unseen_labels=("RED", "Green", "purple"))
+    bridge = AdapterBridge(kind="text", modality="colour file", model_name="fake", code=FIRST_LINE)
+    request = FitRequest(model="fake", dataset=main.name)
+    card = verify_files(_fake_model(), bridge, main, request, unseen=overlapping)
+    assert "unseen_categories" not in card.controls and card.control_chance == {}
+    assert ("Unseen categories not measured: later-colours has 1 label the probe set does not already have "
+            "(dropped as already probed: Green, RED); at least 2 are needed.") in card.reason
+
+    tiny = ProbeSet(name="tiny", title="t", modality="colour file", question="Which colour?",
+                    labels=["purple", "pink"], items=[(overlapping.files[0], 0),
+                    (overlapping.files[1], 1), (overlapping.files[2], 1)],
+                    fit_idx=np.array([], dtype=np.int64), dev_idx=np.array([], dtype=np.int64),
+                    test_idx=np.arange(3))
+    card = verify_files(_fake_model(), bridge, main, request, unseen=tiny)
+    assert "unseen_categories" not in card.controls and "has 3 files" in card.reason and "at least 4" in card.reason

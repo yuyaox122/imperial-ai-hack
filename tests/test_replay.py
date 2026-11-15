@@ -411,3 +411,30 @@ def test_a_sense_installed_by_another_run_is_not_recorded_as_this_runs(client, t
     card_path.write_text(json.dumps(card | {"created": "2000-01-01T00:00:00+00:00"}))  # as if a later run installed it
     runs.save_run(state)  # the JobState dict served over HTTP
     assert [r["has_sense"] for r in runs.list_runs()] == [False]
+
+
+# ----------------------------------------------------------------------------- ReportCard.control_chance
+OLD_CARD = {  # a card as recorded before ReportCard.control_chance existed
+    "model": "fake", "modality": "audio", "dataset": "gtzan", "scope": "closed", "bridge": "text:gtzan",
+    "kind": "text", "n": 20, "chance": 0.2, "accuracy": 0.6, "controls": {"swapped": 0.2, "no_input": 0.2},
+    "verdict": "rejected", "reason": "r", "created": "2026-11-14T10:00:00+00:00", "interval": [0.39, 0.78],
+}
+
+
+def test_cards_recorded_without_control_chance_load_and_replay(client):
+    raw = synthetic("old-cards").to_dict()
+    raw["cards"] = [
+        OLD_CARD,
+        dict(OLD_CARD, bridge="adapter:a", control_chance=None),
+        dict(OLD_CARD, bridge="adapter:b", controls={"swapped": 0.2, "unseen_categories": 0.5},
+             control_chance={"unseen_categories": 0.3333}),
+    ]
+    runs.save_run(raw)
+    _, _, cards = runs.parse_record(runs.load_run("old-cards"))
+    assert [c.control_chance for c in cards] == [{}, {}, {"unseen_categories": 0.3333}]
+    assert cards[1].control_chance.get("unseen_categories") is None  # every reader may call .get on it
+
+    r = client.post("/api/replay", json={"run": "old-cards", "speed": 1000})
+    replayed = finished(client, r.json()["job_id"])
+    assert replayed["status"] == "done"
+    assert [c["control_chance"] for c in replayed["cards"]] == [{}, {}, {"unseen_categories": 0.3333}]

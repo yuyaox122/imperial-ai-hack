@@ -76,19 +76,6 @@ def _fake_home(tmp_path, monkeypatch):
         monkeypatch.setenv(adapters.UNSANDBOXED_ENV, "1")
 
 
-@pytest.fixture
-def registry_reads_adapters(monkeypatch):
-    """What integration will do: sense.bridges.load_bridge (as the registry calls it) loads adapter bridges."""
-    real = registry.load_bridge
-
-    def load(directory):
-        if json.loads((Path(directory) / "bridge.json").read_text()).get("adapter"):
-            return load_adapter_bridge(directory)
-        return real(directory)
-
-    monkeypatch.setattr(registry, "load_bridge", load)
-
-
 class FakeLLM:
     """Canned answers for agent.llm.ask_json, chosen by schema; records every call."""
 
@@ -126,6 +113,7 @@ def colour_design(**changes) -> dict:
         "labels": COLOURS,
         "probe_plan": "user",
         "probe_reason": "Only the user knows which notes they mean.",
+        "install": [],
     }
     answer.update(changes)
     return answer
@@ -219,6 +207,25 @@ def test_validate_design_accepts_and_cleans_a_good_answer():
 
     ffmpeg, _ = synth.validate_design(colour_design(libraries=["ffmpeg"]), ["ffmpeg (via subprocess)"], [])
     assert ffmpeg.libraries == ["ffmpeg (via subprocess)"]
+
+
+def test_validate_design_cleans_the_install_requests():
+    box, models_ = ["numpy", "PIL", "trimesh"], [{"name": "m", "native": ["text"]}]
+    wants = [{"name": "open3d", "why": "  point   clouds "}, {"name": "pillow", "why": "in the toolbox"},
+             {"name": "json", "why": "standard library"}, {"name": "OPEN3D", "why": "twice"},
+             {"name": "pyvista", "why": "b"}, {"name": "meshio", "why": "c"}, {"name": "pymeshlab", "why": "d"}]
+    found, problems = synth.validate_design(colour_design(install=wants), box, models_)
+    assert problems == [] and found.install == [
+        {"name": "open3d", "why": "point clouds"}, {"name": "pyvista", "why": "b"}, {"name": "meshio", "why": "c"}]
+    assert synth.validate_design(colour_design(install=None), box, models_)[0].install == []  # an older answer
+    old = colour_design()
+    del old["install"]
+    assert synth.validate_design(old, box, models_)[0].install == []
+    for bad, problem in [("open3d", "must be a list"), ([{"why": "x"}], "needs a package name"),
+                         ([{"name": "requests", "why": "x"}], "network")]:
+        found, problems = synth.validate_design(colour_design(install=bad), box, models_)
+        assert found is None and any(problem in p for p in problems), problems
+    assert "install" in synth.DESIGN_SCHEMA["required"] and "never name them in libraries" in synth.DESIGN_INSTRUCTION
 
 
 @pytest.mark.parametrize(
@@ -489,6 +496,21 @@ def test_assess_holds_an_image_card_to_the_text_bars():
     assert card.kind == "image"  # the caller's card is untouched
 
 
+@pytest.mark.parametrize("kind", ["text", "image"])
+def test_assess_applies_the_native_and_unseen_categories_rules(kind):
+    request = FitRequest(model="openai-chat", dataset="p", modality="molecule")
+    card = ReportCard("openai-chat", "molecule", "p", "closed", "adapter:m", kind, 40, 0.25, 0.9,
+                      {"swapped": 0.2, "no_input": 0.25, "native": 0.85})
+    ok, sentence = synth.assess(request, card)  # it must not bypass the planner's native rule
+    assert not ok and "the model already reads this file as it is: native 85.0%, adapter 90.0%" in sentence
+    card.controls.update(native=0.5, unseen_categories=0.3)
+    card.control_chance = {"unseen_categories": 0.5}
+    ok, sentence = synth.assess(request, card)
+    assert not ok and "works for the tested categories but not for new ones" in sentence
+    card.controls["unseen_categories"] = 0.8
+    assert synth.assess(request, card)[0]
+
+
 def test_assess_wants_enough_files_and_an_interval_clear_of_chance():
     from sense.verify import _wilson
 
@@ -512,12 +534,15 @@ def test_assess_wants_enough_files_and_an_interval_clear_of_chance():
 
 
 # ----------------------------------------------------------------------------- run_synth
-def test_run_synth_installs_a_working_adapter_from_user_examples(monkeypatch, tmp_path, note, registry_reads_adapters):
+def test_run_synth_installs_a_working_adapter_from_user_examples(monkeypatch, tmp_path, note):
     examples = colour_tree(tmp_path / "notes")
     for colour in COLOURS:  # a sidecar file of another type beside the examples is not an example
         (examples / colour / "README.md").write_text(f"notes about {colour}\n")
     monkeypatch.setattr(llm, "ask_json", FakeLLM(design=colour_design(), codes=[READS_CONTENT]))
-    cards, installed, events = run("fake", note, "know which colour a note is about", examples=examples)
+    # These notes name their colour in plain words, so the model reads them as they are and the native control
+    # would refuse the adapter (test_run_synth_refuses_an_adapter_the_model_does_not_need); this test is about
+    # the rest of the run, so it leaves that control out.
+    cards, installed, events = run("fake", note, "know which colour a note is about", examples=examples, native=False)
 
     assert installed == "adapter:colour-note-txt"
     assert steps(events) == ["design", "build", "data", "verify", "decide", "install", "done"]
@@ -568,18 +593,289 @@ def test_run_synth_installs_a_working_adapter_from_user_examples(monkeypatch, tm
 
 
 def test_run_synth_installs_nothing_the_registry_cannot_load(monkeypatch, tmp_path, note):
-    # Until sense.bridges.load_bridge knows adapter bridges, installing one would make registry.get_bridges fail
-    # for the whole model, and with it every chat with an attached file.
+    # Installing a sense the registry cannot load back would make registry.get_bridges fail for the whole model,
+    # and with it every chat with an attached file; so a loader that breaks blocks the install.
+    def broken(directory):
+        raise ValueError("unknown bridge kind")
+
+    monkeypatch.setattr(registry, "load_bridge", broken)
     examples = colour_tree(tmp_path / "notes")
     monkeypatch.setattr(llm, "ask_json", FakeLLM(design=colour_design(), codes=[READS_CONTENT]))
-    cards, installed, events = run("fake", note, "know which colour a note is about", examples=examples)
+    cards, installed, events = run("fake", note, "know which colour a note is about", examples=examples, native=False)
     assert installed is None and cards[0].verdict == "candidate" and "Not installed" in cards[0].reason
     assert last(events, "decide").data["accepted"] is True
     blocked = last(events, "install")
-    assert blocked.status == "info" and "cannot load an adapter bridge" in blocked.data["blocked"]
+    assert blocked.status == "info" and "cannot load the adapter bridge back" in blocked.data["blocked"]
     assert registry.installed("fake") == [] and registry.get_bridges("fake") == []
     assert last(events, "done").data["installed"] is None
     json.dumps([e.to_dict() for e in events], allow_nan=False)
+
+
+def test_run_synth_refuses_an_adapter_the_model_does_not_need(monkeypatch, tmp_path, note):
+    # The notes say their colour in words: the model given a note as it is answers as well as with the adapter.
+    examples = colour_tree(tmp_path / "notes")
+    monkeypatch.setattr(llm, "ask_json", FakeLLM(design=colour_design(), codes=[READS_CONTENT]))
+    cards, installed, events = run("fake", note, "know which colour a note is about", examples=examples)
+    (card,) = cards
+    assert installed is None and card.verdict == "rejected"
+    assert "the model already reads this file as it is: native 100.0%, adapter 100.0%" in card.reason
+    verify = last(events, "verify", "ok").data
+    assert verify["controls"]["native"] == 1.0 and verify["control_chance"] == {} and "the raw file 100.0%" in \
+        last(events, "verify", "ok").message
+    assert last(events, "verify", "start").data["native"] is True
+    assert "10 points above the model reading the raw file" in last(events, "decide", "start").message
+
+
+ECHO = '''
+def adapt(path):
+    with open(path, "rb") as f:
+        return {"text": f.read().decode("utf-8", "replace")}
+'''
+
+
+def test_one_odd_probe_file_does_not_let_an_echo_adapter_through(monkeypatch, tmp_path):
+    # One Latin-1 byte in one note of forty, and a user's file that is not text itself: the native control is still
+    # measured by default, from the probe files, and refuses an adapter that only echoes the file.
+    examples = colour_tree(tmp_path / "notes")
+    odd = examples / "red" / "note_00.txt"
+    odd.write_bytes(odd.read_bytes() + b" caf\xe9\n")
+    mystery = tmp_path / "mystery.txt"
+    mystery.write_bytes(b"This note is about the colour blue.\x00\x00\x00\n")
+    monkeypatch.setattr(llm, "ask_json", FakeLLM(design=colour_design(), codes=[ECHO]))
+    cards, installed, events = run("fake", mystery, "know which colour a note is about", examples=examples)
+    (card,) = cards
+    assert last(events, "verify", "start").data["native"] is True
+    assert card.controls["native"] >= 0.9 and "Native not measured" not in card.reason
+    assert installed is None and card.verdict == "rejected"
+    assert "the model already reads this file as it is" in card.reason
+
+
+KNOWS_FOUR = '''
+KNOWN = ["red", "green", "blue", "yellow"]
+
+def adapt(path):
+    text = open(path, encoding="utf-8").read()
+    for colour in KNOWN:  # built around the tested colours only
+        if colour in text:
+            return {"text": f"The note is about the colour {colour}."}
+    return {"text": "The note is about some colour."}
+'''
+
+
+def test_run_synth_scores_categories_the_adapter_was_not_built_around(monkeypatch, tmp_path, note):
+    examples = colour_tree(tmp_path / "notes")
+    later = tmp_path / "later"
+    for colour in ["purple", "orange", "pink", "Red"]:  # Red is already probed: dropped
+        (later / colour).mkdir(parents=True)
+        for k in range(4):
+            (later / colour / f"n{k}.txt").write_text(f"This note is about the colour {colour.lower()}. {k}\n")
+
+    monkeypatch.setattr(llm, "ask_json", FakeLLM(design=colour_design(), codes=[KNOWS_FOUR]))
+    cards, installed, events = run("fake", note, "colour", examples=examples, native=False, unseen=later)
+    (card,) = cards
+    assert installed is None and card.verdict == "rejected"
+    assert card.accuracy >= 0.9 and card.control_chance == {"unseen_categories": 0.3333}
+    assert "works for the tested categories but not for new ones" in card.reason
+    assert "Unseen categories:" in card.reason and f"source: {later}" in card.reason
+    told = [e for e in events if e.step == "data" and e.status == "info"]
+    assert len(told) == 1 and told[0].data["unseen"]["labels"] == ["Red", "orange", "pink", "purple"]
+    verify = last(events, "verify", "ok").data
+    assert verify["controls"]["unseen_categories"] == card.controls["unseen_categories"]
+    assert verify["control_chance"] == {"unseen_categories": 0.3333}
+
+    monkeypatch.setattr(llm, "ask_json", FakeLLM(design=colour_design(), codes=[READS_CONTENT]))
+    cards, installed, events = run("fake", note, "colour", examples=examples, native=False, unseen=later)
+    assert installed == "adapter:colour-note-txt" and cards[0].controls["unseen_categories"] >= 0.9
+    manifest = load_adapter_bridge(registry.sense_dir("fake", "colour-note")).manifest
+    assert manifest["unseen"]["labels"] == ["Red", "orange", "pink", "purple"]
+
+    lonely = tmp_path / "lonely"
+    (lonely / "purple").mkdir(parents=True)
+    (lonely / "purple" / "a.txt").write_text("purple\n")
+    monkeypatch.setattr(llm, "ask_json", FakeLLM(design=colour_design(), codes=[READS_CONTENT]))
+    cards, _, events = run("fake", note, "colour", examples=examples, native=False, unseen=lonely)
+    assert "unseen_categories" not in cards[0].controls and "Unseen categories not measured:" in cards[0].reason
+
+
+def test_the_adapter_writer_never_sees_labels_probe_plans_or_probe_data(monkeypatch, tmp_path):
+    examples = colour_tree(tmp_path / "notes")
+    later = tmp_path / "later"
+    for colour in ["purple", "orange"]:
+        (later / colour).mkdir(parents=True)
+        for k in range(4):
+            (later / colour / f"{colour}_{k}.txt").write_text(f"This note is about the colour {colour}. {k}\n")
+    plain = tmp_path / "plain.txt"
+    plain.write_text("A note with serial number 7, in plain words.\n")  # it names no colour
+    fake = FakeLLM(design=colour_design(install=[]), codes=[READS_CONTENT])
+    monkeypatch.setattr(llm, "ask_json", fake)
+    run("fake", plain, "know which colour a note is about", examples=examples, unseen=later)
+    (request,) = fake.of(synth.CODE_SCHEMA)
+    sent = json.dumps(request)
+    assert set(request["design"]) == set(synth._ADAPTER_DESIGN_FIELDS)
+    for word in [*COLOURS, "purple", "orange", "probe_plan", "probe_reason", "labels", "install", "probes",
+                 str(examples), str(later), str(config.home())]:
+        assert not re.search(rf"\b{re.escape(word)}\b", sent), word
+    copies = sorted((config.home() / "probes").rglob("*.txt"))
+    assert copies and not any(p.stem in sent for p in copies)  # no probe file's name either
+
+
+def test_the_adapter_writer_never_sees_labels_the_design_names_in_its_own_words(monkeypatch, tmp_path):
+    # A design may name its candidate answers in the question, the label hint or the description; the examples and
+    # unseen folders' sub-folder names are labels too. None of them reaches the adapter's author.
+    examples = colour_tree(tmp_path / "notes")
+    later = tmp_path / "later"
+    for colour in ["purple", "dark-orange"]:
+        (later / colour).mkdir(parents=True)
+        for k in range(4):
+            (later / colour / f"n{k}.txt").write_text(f"This note is about the colour {colour}. {k}\n")
+    plain = tmp_path / "plain.txt"
+    plain.write_text("A note with serial number 7, in plain words.\n")
+    leaky = colour_design(
+        labels=["red", "green", "blue"],  # yellow is only in the examples folder
+        label_hint="a colour: red, green, blue or yellow",
+        question="Is the note about Red, GREEN, blue or yellow?",
+        description="Reads the note; notes about reds and greens name them, as do purple or dark orange ones.",
+    )
+    fake = FakeLLM(design=leaky, codes=[READS_CONTENT])
+    monkeypatch.setattr(llm, "ask_json", fake)
+    run("fake", plain, "know which colour a note is about", examples=examples, unseen=later, native=False)
+    (request,) = fake.of(synth.CODE_SCHEMA)
+    sent = json.dumps(request)
+    for word in [*COLOURS, "reds", "greens", "purple", "orange"]:
+        assert not re.search(rf"\b{re.escape(word)}\b", sent, re.I), word
+    assert request["design"]["label_hint"] == "a colour: [answers]"
+    assert request["design"]["question"] == "Is the note about [answers]?"
+
+    # a label of one or two characters is masked in its own case only, so the article "a" survives
+    shown = synth.writer_design(design_of(colour_design(labels=["A", "B"], question="Grade A or B?",
+                                                         description="Reads a note and its grade.")))
+    assert shown["question"] == "Grade [answers]?" and shown["description"] == "Reads a note and its grade."
+
+
+def _plan(verdict="ok"):
+    from agent import installer
+
+    return installer.InstallPlan(requested=[{"name": "meshkit", "version": None, "why": "reads meshes"}], packages=[],
+                                 verdict=verdict, requirements="", created="2026-11-15T00:00:00+00:00",
+                                 problems=["no wheel for this platform"] if verdict == "refuse" else [], target={})
+
+
+USES_MESHKIT = '''
+import meshkit
+
+def adapt(path):
+    with open(path, encoding="utf-8") as f:
+        return {"text": f"meshkit {meshkit.VALUE} says: " + f.read().strip()}
+'''
+
+
+@pytest.mark.parametrize("answer", [True, False])
+def test_run_synth_asks_to_install_what_the_design_requests(monkeypatch, tmp_path, note, answer):
+    from agent import installer, jobs
+
+    asked, installs = [], []
+    monkeypatch.setattr(installer, "plan", lambda requests: _plan())
+    monkeypatch.setattr(installer, "ask_llm_review", lambda plan: "A small, well-known mesh library.")
+    monkeypatch.setattr(jobs, "request_approval", lambda kind, payload, timeout=600: asked.append((kind, payload)) or answer)
+
+    def install(plan, *, approved):
+        assert approved is True
+        site_dir = installer.toolbox_dir()
+        (site_dir / "meshkit").mkdir(parents=True)
+        (site_dir / "meshkit" / "__init__.py").write_text("VALUE = 42\n")
+        info = site_dir / "meshkit-1.0.dist-info"
+        info.mkdir()
+        (info / "METADATA").write_text("Name: meshkit\nVersion: 1.0\n\n")
+        (info / "top_level.txt").write_text("meshkit\n")
+        (site_dir.parent / "installed.json").write_text(json.dumps([{"name": "meshkit", "version": "1.0"}]))
+        installs.append(plan)
+        return {"installed": [{"name": "meshkit", "version": "1.0", "sha256": "0" * 64}], "target": str(site_dir),
+                "seconds": 0.1, "log_tail": ""}
+
+    monkeypatch.setattr(installer, "install", install)
+    wants = [{"name": "meshkit", "why": "reads meshes"}, {"name": "numpy", "why": "already there"}]
+    codes = [USES_MESHKIT] if answer else [READS_CONTENT]
+    fake = FakeLLM(design=colour_design(install=wants), codes=codes)
+    monkeypatch.setattr(llm, "ask_json", fake)
+    examples = colour_tree(tmp_path / "notes")
+    cards, installed, events = run("fake", note, "colour", examples=examples, native=False)
+
+    assert steps(events)[:3] == ["design", "install_request", "build"]
+    assert last(events, "design", "ok").data["install"] == [{"name": "meshkit", "why": "reads meshes"}]
+    ((kind, payload),) = asked
+    assert kind == "install" and payload["summary"].startswith("OK to install meshkit")
+    assert payload["review"] == "A small, well-known mesh library." and payload["plan"]["verdict"] == "ok"
+    outcome = last(events, "install_request")
+    request = fake.of(synth.CODE_SCHEMA)[0]
+    if answer:
+        assert outcome.status == "ok" and len(installs) == 1 and "Installed meshkit 1.0" in outcome.message
+        assert "meshkit" in request["toolbox"]  # the adapter may import it, and it runs on the adapter's path
+        assert "meshkit" in request["design"]["libraries"]  # and the author is told to use it
+        assert "with meshkit" in last(events, "build", "start").message
+        assert last(events, "build", "ok").data["preview"].startswith("meshkit 42 says:")
+    else:
+        assert outcome.status == "info" and installs == [] and "declined" in outcome.message
+        assert "meshkit" not in request["toolbox"] and "meshkit" not in request["design"]["libraries"]
+    assert installed == "adapter:colour-note-txt"
+    record = load_adapter_bridge(registry.sense_dir("fake", "colour-note")).manifest["install"]
+    assert record["requested"] == [{"name": "meshkit", "why": "reads meshes"}] and record["verdict"] == "ok"
+    assert record["approved"] is answer and [p["name"] for p in record["installed"]] == (["meshkit"] if answer else [])
+    json.dumps([e.to_dict() for e in events], allow_nan=False)
+
+
+def test_run_synth_goes_on_when_an_approved_install_breaks(monkeypatch, note, tmp_path):
+    from agent import installer, jobs
+
+    monkeypatch.setattr(installer, "plan", lambda requests: _plan())
+    monkeypatch.setattr(installer, "ask_llm_review", lambda plan: None)
+    monkeypatch.setattr(jobs, "request_approval", lambda kind, payload, timeout=600: True)
+
+    def install(plan, *, approved):
+        raise PermissionError("cannot create the toolbox folder")
+
+    monkeypatch.setattr(installer, "install", install)
+    fake = FakeLLM(design=colour_design(install=[{"name": "meshkit", "why": "reads meshes"}]), codes=[READS_CONTENT])
+    monkeypatch.setattr(llm, "ask_json", fake)
+    cards, installed, events = run("fake", note, "colour", examples=colour_tree(tmp_path / "notes"), native=False)
+    broken = last(events, "install_request")
+    assert broken.status == "fail" and "PermissionError: cannot create the toolbox folder" in broken.message
+    assert broken.data["approved"] is True and broken.data["installed"] == []
+    assert "error" not in steps(events) and last(events, "build", "ok") and installed == "adapter:colour-note-txt"
+    record = load_adapter_bridge(registry.sense_dir("fake", "colour-note")).manifest["install"]
+    assert record["note"].startswith("approved, but the install failed: PermissionError")
+
+
+def test_run_synth_installs_under_the_modality_detect_names(monkeypatch, tmp_path, note):
+    # Chat looks an installed sense up by agent.detect's modality ("3d" for a GLB), not the designer's "3d-model".
+    monkeypatch.setattr(llm, "ask_json", FakeLLM(design=colour_design(modality="3d-model"), codes=[READS_CONTENT]))
+    detection = {"modality": "3d", "format": "glb", "how": "magic bytes", "detail": "a binary glTF (GLB)"}
+    cards, installed, events = run("fake", note, "colour", examples=colour_tree(tmp_path / "notes"), native=False,
+                                   detection=detection)
+    design_ok = last(events, "design", "ok").data
+    assert design_ok["modality"] == "3d" and design_ok["designed_modality"] == "3d-model"
+    assert installed == "adapter:3d-txt" and [row["modality"] for row in registry.installed("fake")] == ["3d"]
+    assert {b.modality for b in registry.get_bridges("fake")} == {"3d"}
+
+    monkeypatch.setattr(llm, "ask_json", FakeLLM(design=colour_design(modality="colour note"), codes=[READS_CONTENT]))
+    _, _, events = run("fake", note, "colour", examples=colour_tree(tmp_path / "more"), native=False)
+    assert last(events, "design", "ok").data["modality"] == "colour-note"  # text: the designer's name stands
+    assert "designed_modality" not in last(events, "design", "ok").data
+
+
+def test_run_synth_does_not_ask_about_a_refused_install(monkeypatch, note, tmp_path):
+    from agent import jobs
+
+    asked = []
+    monkeypatch.setattr(jobs, "request_approval", lambda *a, **k: asked.append(a) or True)
+    # fake mode: agent.installer reaches neither PyPI nor uv, so its plan is refused
+    fake = FakeLLM(design=colour_design(install=[{"name": "meshkit", "why": "reads meshes"}]), codes=[READS_CONTENT])
+    monkeypatch.setattr(llm, "ask_json", fake)
+    cards, _, events = run("fake", note, "colour", examples=colour_tree(tmp_path / "notes"), native=False)
+    assert asked == []
+    refused = last(events, "install_request")
+    assert refused.status == "fail" and refused.data["verdict"] == "refuse" and refused.data["approved"] is None
+    assert "Writing the adapter without it" in refused.message
+    assert steps(events)[:3] == ["design", "install_request", "build"] and cards
 
 
 def test_run_synth_refuses_an_adapter_that_ignores_the_file(monkeypatch, tmp_path, note):
@@ -598,7 +894,7 @@ def test_run_synth_refuses_an_adapter_that_ignores_the_file(monkeypatch, tmp_pat
     json.dumps([e.to_dict() for e in events], allow_nan=False)
 
 
-def test_run_synth_refuses_a_constant_label_on_a_skewed_folder(monkeypatch, tmp_path, note, registry_reads_adapters):
+def test_run_synth_refuses_a_constant_label_on_a_skewed_folder(monkeypatch, tmp_path, note):
     # Saying "red" for every file scores 40 of 52 on a folder that is mostly red, well over the chance bar; only
     # the swapped-input control, which scores the same, shows that the file made no difference.
     examples = tmp_path / "skewed"
@@ -627,7 +923,7 @@ def test_labels_never_leak_through_file_names(monkeypatch, tmp_path, note):
     assert not any(colour in str(p.relative_to(config.home())) for p in copies for colour in COLOURS)
 
 
-def test_run_synth_verifies_on_generated_probe_files(monkeypatch, tmp_path, registry_reads_adapters):
+def test_run_synth_verifies_on_generated_probe_files(monkeypatch, tmp_path):
     monkeypatch.setattr(synth, "GENERATED_PER_LABEL", 10)
     number = tmp_path / "reading.txt"
     number.write_text("512.25\n")
