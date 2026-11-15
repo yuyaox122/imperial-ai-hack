@@ -18,7 +18,7 @@ You give Sensorium a model and a file that model cannot read: a 3D mesh, a video
 
 1. **Detect.** The agent reads the file's bytes, never its name: audio, image, video, 3D, molecule, coordinates, text, or unknown. If the model already reads the file, the run ends there.
 2. **Build a bridge.** For audio, it fits a map from a frozen audio encoder (CLAP) into an open-weight model's early layers, or gives the model the encoder's output as text or as a tool it can call. For anything else it writes an **adapter**: Python code that turns the file into text or images the model can read. The code runs in a sandbox with no network. A package outside the approved toolbox (`mido`, in the blind test below) is installed only after the installer has vetted it and you have approved it.
-3. **Find probe data.** It searches the Hugging Face Hub and the web (Linkup) for labelled examples, plus a second set whose categories the adapter was not built around. If nothing usable turns up, it asks you for a folder of examples.
+3. **Find probe data.** It searches the Hugging Face Hub and the web (Linkup) for labelled examples and, for an adapter, a second set whose categories the adapter was not built around. If nothing usable turns up, it asks you for a folder of examples.
 4. **Verify.** The frozen model answers held-out multiple-choice questions through the bridge, and its score is compared with controls: the same questions asked with another file's input (swapped input), with no file at all, the model reading the raw file, and unseen categories.
 5. **Install or refuse.** Fixed rules in `agent/planner.py` decide, never a language model. After an install, chat sends matching files through the new sense, and each reply names the sense that carried the file.
 
