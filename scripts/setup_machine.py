@@ -64,8 +64,9 @@ repository root.
 
 7. Confirm with a real agent run:
        .venv/bin/python scripts/demo_cli.py --model qwen3.5-0.8b --dataset gtzan --scope closed
-   Compare the accuracy on the vector:gtzan card with the 81.0% measured on Michael's laptop (README.md,
-   "What works today"). With copied embeddings, expect a number close to it. On a machine without Apple's
+   Compare the accuracy on the vector:gtzan card with the 79.5% [73.4, 84.5] measured on Michael's laptop
+   (socket_pilot/artifacts/run_qwen3.5-0.8b_gtzan_closed.json; README.md, "What works today"). With copied
+   embeddings, expect a number close to it. On a machine without Apple's
    MPS the model runs on the CPU in float32, which is slower and may move the number a little. If the gap is
    large, something differs between the machines: post both cards on the board.
 
