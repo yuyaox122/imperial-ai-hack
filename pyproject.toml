@@ -16,6 +16,9 @@ dependencies = [
     "python-multipart>=0.0.9",
     "openai>=1.50",
     "anthropic>=2.8.0",
+    "trimesh>=5.2.1",
+    "rdkit>=2026.9.2",
+    "matplotlib>=3.11.2",
 ]
 
 [dependency-groups]
