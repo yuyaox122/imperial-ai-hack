@@ -30,7 +30,14 @@ Two controls answer the same clips:
 Public surface:
   run(model_name=None, folder=None, limit=None, seed=0, question=DEFAULT_QUESTION, fold="test") -> dict
   table(record) -> str            a plain-text summary for the terminal
-  compare(records) -> str         one line per record, for --question all
+  compare(records) -> str         one line per record, for --question all (or saved records of several
+                                  models and folds: then each line names its model and batch)
+  check_record(record) -> None    ValueError unless record has the shape run() returns
+  argument_problem(args) -> str | None   what is wrong with the add_arguments flags together
+                                  (--save with --question all, --limit below 1)
+
+Exit status: 0 when the batch was triaged and saved; 2 for flags that do not go together; 1, with a message,
+when no audio sense is installed for the model or --folder holds no audio.
 """
 
 from __future__ import annotations
@@ -248,15 +255,29 @@ def table(record: dict) -> str:
 
 
 def compare(records: list[dict]) -> str:
-    """One line per record: how each way of asking did, through the sense and with no input."""
+    """One line per record: how each way of asking did, through the sense and with no input. When the records
+    are not all one model on one batch (say, saved records of two models and two folds), each line also names
+    its model, source, clip count and the lookup control's flags."""
     has_truth = all(r["batch"]["has_truth"] for r in records)
-    head = f"{'question':<9} {'sense flags':>11} {'no-input flags':>14}"
+    mixed = len({(r["model"], r["batch"]["source"], r["batch"]["n"]) for r in records}) > 1
+    wm = max(len("model"), *(len(str(r["model"])) for r in records))
+    ws = max(len("source"), *(len(str(r["batch"]["source"])) for r in records))
+
+    def lead(model, source, clips, lookup) -> str:
+        return f"{model:<{wm}} {source:<{ws}} {clips:>5} {lookup:>12} " if mixed else ""
+
+    head = lead("model", "source", "clips", "lookup flags") + f"{'question':<9} {'sense flags':>11} {'no-input flags':>14}"
     head += f" {'caught':>7} {'recall':>7} {'precision':>9} {'false alarm':>11}" if has_truth else ""
-    lines = [f"{records[0]['batch']['n']} clips from {records[0]['batch']['source']}; lookup control flags "
-             f"{records[0]['summary']['lookup']['flagged']}.", head]
+    if mixed:
+        first = f"{len(records)} records from more than one model or batch; each line names its own."
+    else:
+        first = (f"{records[0]['model']}: {records[0]['batch']['n']} clips from {records[0]['batch']['source']}; "
+                 f"lookup control flags {records[0]['summary']['lookup']['flagged']}.")
+    lines = [first, head]
     for r in records:
         s, b = r["summary"]["sense"], r["summary"]["no_input"]
-        row = f"{_question_name(r):<9} {s['flagged']:>11} {b['flagged']:>14}"
+        row = lead(r["model"], r["batch"]["source"], r["batch"]["n"], r["summary"]["lookup"]["flagged"])
+        row += f"{_question_name(r):<9} {s['flagged']:>11} {b['flagged']:>14}"
         if has_truth:
             row += f" {str(s['caught']) + '/' + str(s['threats']):>7} {_pct(s['recall']):>7} {_pct(s['precision']):>9} {_pct(s['false_alarm_rate']):>11}"
         lines.append(row)
@@ -362,17 +383,50 @@ def add_arguments(ap: argparse.ArgumentParser) -> None:
     ap.add_argument("--save", help="write the record here (default <SENSE_HOME>/triage/<id>.json)")
 
 
+def argument_problem(args: argparse.Namespace) -> str | None:
+    """What is wrong with the add_arguments flags taken together, or None."""
+    if args.limit is not None and args.limit < 1:
+        return "--limit must be at least 1."
+    if args.save and args.question == "all":
+        return ("--save writes one record, but --question all makes one per question. Leave out --save: each "
+                "record is saved as <SENSE_HOME>/triage/<id>.json.")
+    return None
+
+
 def run_all(args: argparse.Namespace) -> list[dict]:
     """The records asked for on the command line: one, or one per question for --question all."""
     questions = QUESTIONS if args.question == "all" else (args.question,)
     return [run(args.model, args.folder, args.limit, args.seed, q, args.fold) for q in questions]
 
 
+RECORD_KEYS = ("id", "recorded", "task", "user", "model", "note", "sense", "batch", "summary", "clips", "seconds")
+
+
+def check_record(record) -> None:
+    """Raises ValueError, saying what is missing, unless `record` has the shape run() returns."""
+    if not isinstance(record, dict):
+        raise ValueError("not a JSON object")
+    missing = [k for k in RECORD_KEYS if k not in record]
+    missing += [f"batch.{k}" for k in ("source", "n", "has_truth") if not isinstance(record.get("batch"), dict) or k not in record["batch"]]
+    missing += [f"summary.{m}" for m in METHODS if not isinstance(record.get("summary"), dict) or m not in record["summary"]]
+    if missing:
+        raise ValueError(f"lacks {', '.join(missing)}")
+    if not isinstance(record["sense"], dict) or not isinstance(record["clips"], list):
+        raise ValueError("its sense is not an object or its clips are not a list")
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="python -m eval.triage", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     add_arguments(ap)
     args = ap.parse_args(argv)
-    records = run_all(args)
+    problem = argument_problem(args)
+    if problem:
+        ap.error(problem)
+    try:
+        records = run_all(args)
+    except (RuntimeError, ValueError, OSError) as exc:  # no sense installed, no such folder, no audio in it
+        print(f"Triage failed: {exc}", file=sys.stderr)
+        return 1
     for record in records:
         print(table(record), "\n")
         print(f"Saved {save(record, args.save if len(records) == 1 else None)}\n")

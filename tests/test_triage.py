@@ -5,6 +5,8 @@ Run: SENSE_FAKE=1 .venv/bin/python -m pytest -q tests/test_triage.py
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from agent import loop
@@ -129,6 +131,80 @@ def test_compare_lists_each_question(installed):
     records = [triage.run(question=q, fold="dev", limit=20) for q in ("neutral", "yesno")]
     out = triage.compare(records)
     assert "neutral" in out and "yesno" in out and "precision" in out
+
+
+def test_compare_names_model_and_batch_when_records_differ(installed):
+    dev = triage.run(question="neutral", fold="dev", limit=20)
+    test = triage.run(question="neutral", fold="test", limit=30)
+    other = dict(dev, model="other-model")
+    out = triage.compare([dev, test, other]).splitlines()
+    assert "more than one model or batch" in out[0]
+    assert out[1].split()[:4] == ["model", "source", "clips", "lookup"]
+    assert "fake" in out[2] and "esc50 fold 4 (dev)" in out[2] and " 20 " in out[2]
+    assert "esc50 fold 5" in out[3] and " 30 " in out[3]
+    assert out[4].startswith("other-model")
+    same = triage.compare([dev, triage.run(question="yesno", fold="dev", limit=20)])
+    assert same.startswith("fake: 20 clips from esc50 fold 4 (dev)") and "model" not in same.splitlines()[1]
+
+
+def test_check_record_takes_a_saved_record_and_refuses_others(installed):
+    triage.check_record(triage.run(limit=10))
+    with pytest.raises(ValueError, match="lacks .*sense.*batch.source"):
+        triage.check_record({"id": "x", "recorded": "", "task": "", "user": "", "model": "", "note": "", "batch": {},
+                             "summary": {}, "clips": [], "seconds": 0})
+    with pytest.raises(ValueError, match="not a JSON object"):
+        triage.check_record([])
+
+
+def test_main_refuses_save_with_every_question(installed, tmp_path, capsys):
+    with pytest.raises(SystemExit) as stop:
+        triage.main(["--question", "all", "--fold", "dev", "--limit", "20", "--save", str(tmp_path / "x.json")])
+    assert stop.value.code == 2 and "--save writes one record" in capsys.readouterr().err
+    assert not (tmp_path / "home" / "triage").exists()  # nothing ran
+
+
+def test_main_without_a_sense_says_so_without_a_traceback(monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("SENSE_FAKE", "1")
+    monkeypatch.setenv("SENSE_HOME", str(tmp_path / "empty"))
+    assert triage.main(["--limit", "10"]) == 1
+    assert "Triage failed: fake has no audio sense installed" in capsys.readouterr().err
+    assert triage.main(["--folder", str(tmp_path / "nowhere")]) == 1
+
+
+def test_main_saves_the_record_where_asked(installed, tmp_path, capsys):
+    path = tmp_path / "out" / "one.json"
+    assert triage.main(["--fold", "dev", "--limit", "20", "--save", str(path)]) == 0
+    triage.check_record(json.loads(path.read_text()))
+
+
+def test_databricks_triage_runs_saves_and_writes_a_new_batch(installed, monkeypatch, capsys):
+    from integrations.databricks import __main__ as cli
+    from integrations.databricks import conn
+
+    sql = FakeSQL()
+    monkeypatch.setattr(conn, "warehouse", lambda: sql)
+    assert cli.main(["triage", "--no-mlflow", "--fold", "dev", "--limit", "20"]) == 0
+    out = capsys.readouterr().out
+    saved = out.split("Saved ")[1].splitlines()[0]
+    record = json.loads(open(saved).read())
+    assert f"Wrote triage {record['id']}" in out
+    assert any(p.get("batch_id_0") == record["id"] for s, p in sql.calls if s.startswith("INSERT INTO"))
+
+
+def test_databricks_triage_says_how_to_retry_when_the_write_fails(installed, monkeypatch, capsys):
+    from integrations.databricks import __main__ as cli
+    from integrations.databricks import conn
+
+    class Down(FakeSQL):
+        def run(self, statement, params=None):
+            if statement.startswith("INSERT"):
+                raise RuntimeError("Databricks SQL failed (warehouse stopped)")
+            return super().run(statement, params)
+
+    monkeypatch.setattr(conn, "warehouse", Down)
+    assert cli.main(["triage", "--no-mlflow", "--fold", "dev", "--limit", "20"]) == 1
+    err = capsys.readouterr().err
+    assert "Could not write triage" in err and "warehouse stopped" in err and "--from " in err
 
 
 def test_a_record_from_before_the_variants_reads_as_ranger(installed):

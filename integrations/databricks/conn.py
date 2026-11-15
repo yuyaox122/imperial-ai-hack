@@ -1,8 +1,13 @@
 """Connection to a Databricks workspace: auth, the SQL warehouse, the Unity Catalog names.
 
 Auth is whatever the Databricks SDK finds: DATABRICKS_HOST and DATABRICKS_TOKEN, or a profile in
-~/.databrickscfg (DATABRICKS_CONFIG_PROFILE picks one, DEFAULT otherwise). Install the client with
+~/.databrickscfg (DATABRICKS_CONFIG_PROFILE picks one, DEFAULT otherwise). Importing this module imports
+sense.config, which loads the repository's .env and .env.local (as the harness does), so DATABRICKS_HOST and
+DATABRICKS_TOKEN written there reach the SDK from the CLI and from library use alike. Install the client with
 `uv sync --group databricks`.
+
+A statement still running after the Statement Execution API's wait (50 s) is polled with a growing pause (0.5 s,
+doubling to 5 s); after Warehouse.deadline seconds in all (600 by default) it is cancelled and run() raises.
 
 Names (environment overrides):
   SENSE_DBX_CATALOG     catalog, default "workspace" (the one Free Edition gives every user)
@@ -15,9 +20,12 @@ from __future__ import annotations
 
 import os
 import re
+import time
 from dataclasses import dataclass, field
 from functools import lru_cache
 from typing import Any, Protocol
+
+from sense import config as _config  # noqa: F401  (loads .env and .env.local into the environment)
 
 _IDENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,127}")
 
@@ -58,15 +66,30 @@ class Warehouse:
     warehouse_id: str
     timeout: str = "50s"
     log: list[str] = field(default_factory=list)
+    deadline: float = 600.0  # seconds one statement may take in all before it is cancelled
 
     def run(self, statement: str, params: dict[str, Any] | None = None) -> list[list[Any]]:
         from databricks.sdk.service.sql import StatementParameterListItem, StatementState
 
         items = [_param(StatementParameterListItem, k, v) for k, v in (params or {}).items()]
+        started = _clock()
         resp = self.client.statement_execution.execute_statement(
             statement=statement, warehouse_id=self.warehouse_id, parameters=items or None, wait_timeout=self.timeout
         )
+        pause = POLL_FIRST
         while resp.status and resp.status.state in (StatementState.PENDING, StatementState.RUNNING):
+            if _clock() - started > self.deadline:
+                try:
+                    self.client.statement_execution.cancel_execution(resp.statement_id)
+                except Exception:  # the statement may have just ended; the timeout is what to report
+                    pass
+                raise RuntimeError(
+                    f"Databricks SQL on warehouse {self.warehouse_id} was still {resp.status.state.value} after "
+                    f"{self.deadline:.0f} s, so it was cancelled. Check that the warehouse is running: "
+                    f"{statement.splitlines()[0][:120]}"
+                )
+            _sleep(pause)
+            pause = min(pause * 2, POLL_MAX)
             resp = self.client.statement_execution.get_statement(resp.statement_id)
         state = resp.status.state if resp.status else None
         if state != StatementState.SUCCEEDED:
@@ -74,6 +97,10 @@ class Warehouse:
             raise RuntimeError(f"Databricks SQL failed ({err}): {statement.splitlines()[0][:120]}")
         self.log.append(statement.split("(")[0].strip()[:80])
         return (resp.result.data_array if resp.result else None) or []
+
+
+POLL_FIRST, POLL_MAX = 0.5, 5.0  # seconds between polls of a running statement: 0.5, 1, 2, 4, 5, 5, ...
+_clock, _sleep = time.monotonic, time.sleep  # tests replace these
 
 
 def _param(cls: Any, name: str, value: Any) -> Any:
