@@ -3407,10 +3407,41 @@ def _probe_set_problem(report: FetchReport, goal: str, modality: str, min_per_la
     return None
 
 
-def find_probes(goal: str, modality: str, dest_root: Path, *, wanted_labels: list[str] | None = None,
-                emit: Callable[[dict], None] | None = None, max_candidates: int = 3, max_inspect: int = 12,
-                total_budget_s: float | None = None, exclude_sources: list[str] | tuple = (),
-                disjoint_from: list[str] | tuple = (), **fetch_kwargs) -> tuple[Path, dict]:
+def find_probes(goal: str, modality: str, dest_root: Path, *, format_words: list[str] | tuple = (),
+                suffixes: list[str] | tuple = (), **kwargs) -> tuple[Path, dict]:
+    """As _find_probes. For a modality with no profile (a format agent.detect does not know), format_words (the
+    design's name for the format, such as "midi") join the search words and suffixes (the user's file extension)
+    are the files a folder-labelled repository may hold: a real run's MIDI goal otherwise searched with the goal's
+    words alone and found only audio. The profile exists only while this call runs (runs go one at a time)."""
+    words = tuple(w.lower() for w in format_words if isinstance(w, str) and re.fullmatch(r"[A-Za-z0-9]{2,20}", w))
+    exts = tuple(s.lower() for s in suffixes if isinstance(s, str) and re.fullmatch(r"\.[A-Za-z0-9]{1,10}", s))
+    name = re.sub(r"\s+", " ", str(modality).strip().lower())
+    adhoc = bool(words or exts)  # the caller passes them for a format agent.detect does not know
+    key = f"adhoc:{name}"
+    saved_alias, saved_profile = _ALIASES.get(name), _PROFILES.get(name)
+    if adhoc:
+        # Override any profile or alias for the name: the design's "music" for a MIDI file is not the audio profile
+        # ("music" is an alias of "audio"), whose datasets hold sound, not the user's format.
+        _ALIASES.pop(name, None)
+        _FOLDER_EXT[key] = exts
+        _PROFILES[name] = _Profile(words=words, ext=exts[0] if exts else ".bin", folder=key if exts else None)
+    try:
+        return _find_probes(goal, modality, dest_root, **kwargs)
+    finally:
+        if adhoc:
+            _FOLDER_EXT.pop(key, None)
+            if saved_profile is None:
+                _PROFILES.pop(name, None)
+            else:
+                _PROFILES[name] = saved_profile
+            if saved_alias is not None:
+                _ALIASES[name] = saved_alias
+
+
+def _find_probes(goal: str, modality: str, dest_root: Path, *, wanted_labels: list[str] | None = None,
+                 emit: Callable[[dict], None] | None = None, max_candidates: int = 3, max_inspect: int = 12,
+                 total_budget_s: float | None = None, exclude_sources: list[str] | tuple = (),
+                 disjoint_from: list[str] | tuple = (), **fetch_kwargs) -> tuple[Path, dict]:
     say = emit or (lambda event: None)
     dest_root = Path(dest_root)
     fetch_budget = float(fetch_kwargs.pop("budget_s", 120))

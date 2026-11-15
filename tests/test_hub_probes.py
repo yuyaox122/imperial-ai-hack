@@ -2189,3 +2189,25 @@ def test_a_probe_set_needs_three_category_labels_that_answer_the_goal(tmp_path, 
     assert "do not answer the goal" in hub_probes._probe_set_problem(three, "what object is this", "3d", 6)
     monkeypatch.setattr(hub_probes.llm, "ask_json", lambda *a, **k: {"answers_goal": True, "reason": "objects"})
     assert hub_probes._probe_set_problem(three, "what object is this", "3d", 6) is None
+
+
+def test_an_unknown_format_searches_with_its_name_and_reads_folders_of_its_files(tmp_path, monkeypatch):
+    """The blind test's MIDI goal searched with the goal's words alone and found only audio datasets."""
+    seen = {}
+
+    def inner(goal, modality, dest_root, **kw):
+        profile = hub_probes._profile(modality)
+        seen["queries"] = hub_probes._rule_queries(goal, modality)
+        seen["exts"] = hub_probes._FOLDER_EXT[profile.folder]
+        raise ProbesUnavailable("stop here")
+
+    monkeypatch.setattr(hub_probes, "_find_probes", inner)
+    before = hub_probes._profile("music")  # "music" is an alias of the audio profile
+    with pytest.raises(ProbesUnavailable):
+        find_probes("What genre of music is this?", "Music", tmp_path, format_words=["midi", "bad word!"],
+                    suffixes=[".mid", "mid", ".toolongextension"])
+    assert any("midi" in q for q in seen["queries"]) and seen["exts"] == (".mid",)  # not the audio profile's files
+    assert hub_probes._profile("music") is before and "adhoc:music" not in hub_probes._FOLDER_EXT  # restored after
+    with pytest.raises(ProbesUnavailable):  # without hints the profile is the usual one
+        find_probes("What genre of music is this?", "music", tmp_path)
+    assert ".mid" not in seen["exts"] and ".wav" in seen["exts"]
