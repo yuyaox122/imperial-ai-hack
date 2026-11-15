@@ -80,7 +80,7 @@ where $\lambda$ is chosen by 5-fold cross-validated $R^2$. The mapped vector is 
 
 - **Our own data leaked.** GTZAN holds 14 byte-identical recordings. Once copies were kept in one split, the research run's 84.9% became 83.7%, and we re-measured everything.
 - **The model already knew.** On coordinates Claude scored 98% with no adapter, so we added the raw-file control. Without it the 100% adapter would have been installed for nothing.
-- **Single runs move.** The molecule adapter cleared the raw-file bar by 12 points in one run and missed it by 2 in an earlier one on the same data. The adapter is rewritten each time, so we report each run as one run.
+- **Single runs move.** The molecule adapter cleared the raw-file bar by 12 points in one run and missed it by 2 in an earlier one on the same data. The 3D goal held up when repeated with a different mesh from an empty sense folder (100.0% again; raw file 34% against 42% the first time). The adapter is rewritten each time, so we report each run as one run.
 - **The blind test broke three assumptions.** MP3 genre files reached the MIDI adapter as probes (it failed on all 50), so probes for an unknown format now have to match the file's first bytes. The word "music" mapped the format onto our audio profile, so unknown formats now get a temporary profile of their own. And "midi" and "genre" were searched apart, so the format word is now paired with the goal's words.
 - **Question wording.** In a forest-monitoring triage task, one phrase ("illegal logging") made the 0.8B answer "chainsaw" to silence. We caught it with the no-input control, and from then on chose wording on a dev fold and ran the choice once on the test fold.
 
