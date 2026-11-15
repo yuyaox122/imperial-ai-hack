@@ -1025,3 +1025,39 @@ def test_run_synth_raises_with_an_error_event_for_an_unknown_model(note):
         synth.run_synth("no-such-model", note, "goal", events.append)
     assert [(e.step, e.status) for e in events] == [("design", "fail"), ("error", "fail")]
     assert events[-1].data == {"step": "design", "error": "ValueError"}
+
+
+def test_web_probes_for_an_unknown_format_must_start_like_the_users_file(tmp_path, monkeypatch):
+    """The blind test: a MIDI goal found genre-labelled MP3s, and the adapter failed on every one. For a format
+    agent.detect does not know, a dataset whose files do not start like the user's file is dropped for the next."""
+    from agent import hub_probes
+
+    user = tmp_path / "mystery.bin"
+    user.write_bytes(b"MThd" + b"\x00" * 40)
+    calls = []
+
+    def find_probes(goal, modality, root, *, emit=None, exclude_sources=(), disjoint_from=(), **kw):
+        calls.append(list(exclude_sources))
+        folder = root / f"try{len(calls)}"
+        head = b"ID3\x04" if len(calls) == 1 else b"MThd"  # an MP3 dataset first, then one of the user's format
+        for label in ("waltz", "march", "reel"):
+            (folder / label).mkdir(parents=True)
+            for k in range(6):
+                (folder / label / f"{k}.bin").write_bytes(head + bytes([k]) + label.encode())
+        return folder, {"source": f"owner/set{len(calls)}", "url": f"https://huggingface.co/datasets/owner/set{len(calls)}",
+                        "licence": "mit"}
+
+    monkeypatch.setattr(hub_probes, "find_probes", find_probes)
+    design = synth.Design(modality="music", format="unknown", route="text", description="d", libraries=[],
+                          question="Which dance is this?", label_hint="dance kinds")
+    said = []
+    found, info, why = synth._web_probes("which dance", design, lambda *a, **k: said.append((a, k)),
+                                         purpose="probes", like=user)
+    assert found is not None and why == "" and info["source"] == "owner/set2"
+    assert calls == [[], ["owner/set1"]]  # the MP3 set was excluded from the second search
+    assert all(open(path, "rb").read(4) == b"MThd" for path in found.files)
+    assert any("not of the user's file format" in str(a) for a, _ in said)
+    # without `like` (a known modality), files are taken as found
+    calls.clear()
+    found, info, _ = synth._web_probes("which dance", design, lambda *a, **k: None, purpose="probes")
+    assert info["source"] == "owner/set1" and calls == [[]]

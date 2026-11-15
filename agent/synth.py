@@ -1399,9 +1399,67 @@ def _web_message(event: dict, unseen: bool) -> str:
     return f"{action or 'search'} {status or ''}: {reason}".strip(" :")
 
 
+MAGIC_BYTES = 4  # a file of a format agent.detect does not know must start like the user's file to be a probe
+WEB_TRIES = 3  # public datasets tried for one probe set when the found files are not of the user's format
+
+
+def _same_kind(path: Path, magic: bytes) -> bool:
+    try:
+        with open(path, "rb") as handle:
+            return handle.read(len(magic)) == magic
+    except OSError:
+        return False
+
+
+def _keep_like(folder: Path, magic: bytes, min_per_label: int) -> tuple[int, str]:
+    """Remove files that do not start with `magic` (the user's file's first bytes); (files dropped, why the set is
+    then too small or "")."""
+    dropped, short = 0, []
+    for label in sorted(p for p in Path(folder).iterdir() if p.is_dir()):
+        for f in [p for p in label.iterdir() if p.is_file()]:
+            if not _same_kind(f, magic):
+                f.unlink()
+                dropped += 1
+        if sum(1 for p in label.iterdir() if p.is_file()) < min_per_label:
+            short.append(label.name)
+    left = [p for p in Path(folder).iterdir() if p.is_dir() and any(q.is_file() for q in p.iterdir())]
+    if len(left) < 2 or len(short) > len(left) - 2:
+        return dropped, (f"{dropped} of its files are not of the user's file format (they do not start with the "
+                         f"same {len(magic)} bytes), which leaves too few")
+    for label in short:  # a label too short after the filter is dropped; at least two labels stay
+        shutil.rmtree(Path(folder) / label, ignore_errors=True)
+    return dropped, ""
+
+
 def _web_probes(
     goal: str, design_: Design, say: Callable[..., None], *, purpose: str, exclude_sources: list[str] | tuple = (),
-    disjoint_from: list[str] | tuple = (),
+    disjoint_from: list[str] | tuple = (), like: Path | None = None,
+) -> tuple[ProbeSet | None, dict | None, str]:
+    """As _web_probes_once; with `like` (the user's file, when agent.detect does not know its format), every probe
+    file must start with the same MAGIC_BYTES bytes as it, since a dataset found for the goal may hold another
+    format (a real run's MIDI goal found genre-labelled MP3s, and the adapter failed on every one). A dataset whose
+    files do not match is dropped and the next is tried (WEB_TRIES in all), its source excluded."""
+    if like is None:
+        return _web_probes_once(goal, design_, say, purpose=purpose, exclude_sources=exclude_sources,
+                                disjoint_from=disjoint_from)
+    try:
+        magic = Path(like).read_bytes()[:MAGIC_BYTES]
+    except OSError:
+        magic = b""
+    excluded, reasons = list(exclude_sources), []
+    for _ in range(WEB_TRIES):
+        found, info, why = _web_probes_once(goal, design_, say, purpose=purpose, exclude_sources=excluded,
+                                            disjoint_from=disjoint_from, keep=(magic, purpose))
+        if found is not None or info is None or not why.startswith("not the user's format"):
+            return found, info, why + (f" (earlier: {'; '.join(reasons)})" if reasons and found is None else "")
+        reasons.append(why)
+        excluded.append(str(info.get("source") or info.get("url") or ""))
+    return None, None, "; ".join(reasons)
+
+
+def _web_probes_once(
+    goal: str, design_: Design, say: Callable[..., None], *, purpose: str, exclude_sources: list[str] | tuple = (),
+    disjoint_from: list[str] | tuple = (), keep: tuple[bytes, str] | None = None,
 ) -> tuple[ProbeSet | None, dict | None, str]:
     """Labelled files of the design's modality from a public dataset: agent.hub_probes.find_probes(goal,
     design.modality, <SENSE_HOME>/fetched/probes/<modality>[-unseen]), read with sense.adapters.probe_folder as a
@@ -1428,6 +1486,17 @@ def _web_probes(
     except hub_probes.ProbesUnavailable as exc:
         return None, None, str(exc) or type(exc).__name__
     source = str(info.get("source") or info.get("url") or "")
+    if keep is not None and keep[0]:
+        dropped, short = _keep_like(folder, keep[0], MIN_UNSEEN_PER_LABEL if unseen else MIN_PER_LABEL)
+        if short:
+            why = f"not the user's format: {source}: {short}"
+            say("fail", f"Could not use {source}: {short}.", action="build", purpose=purpose, provenance="dataset",
+                reason=short, source=source)
+            shutil.rmtree(folder, ignore_errors=True)
+            return None, info, why
+        if dropped:
+            say("info", f"Dropped {dropped} files from {source} that are not of the user's file format.",
+                action="build", purpose=purpose, provenance="dataset", source=source)
     hashed = hashlib.sha256(source.encode("utf-8")).hexdigest()[:10]
     try:
         found = adapters.probe_folder(
@@ -1506,6 +1575,9 @@ def run_synth(
         d = found
         renamed: dict[str, str] = {}
         detected = detection.get("modality") if isinstance(detection, dict) else None
+        # A binary format agent.detect does not know: web probe files must start like the user's file.
+        unknown_format = (Path(file) if detected == "other" and isinstance(detection, dict)
+                          and detection.get("format") == "unknown" else None)
         if detected in _DETECTED_MODALITIES and d.modality != detected:
             # chat finds an installed sense by agent.detect's modality name, not by the designer's ("3d-model")
             renamed["designed_modality"] = d.modality
@@ -1586,7 +1658,7 @@ def run_synth(
                        needs_user=True, wanted=_wanted(d))
                 return [], None
         elif web:  # labelled files from a public dataset come first: their labels are independent of the agent
-            probes, fetched, web_reason = _web_probes(goal, d, say, purpose="probes")
+            probes, fetched, web_reason = _web_probes(goal, d, say, purpose="probes", like=unknown_format)
         if probes is None and d.probe_plan == "generate":
             say("start", f"Writing a generator of {GENERATED_PER_LABEL} {d.format} files per label, each built to "
                 f"have its label: {', '.join(d.labels)}.", provenance="generated", labels=d.labels,
@@ -1650,7 +1722,7 @@ def run_synth(
             exclude = [fetched["source"]] if fetched and fetched.get("source") else []
             disjoint = list(dict.fromkeys([*((fetched or {}).get("label_values") or {}).values(), *probes.labels]))
             found_unseen, _, why = _web_probes(goal, d, say, purpose="unseen", exclude_sources=exclude,
-                                               disjoint_from=disjoint)
+                                               disjoint_from=disjoint, like=unknown_format)
             if found_unseen is not None:
                 unseen_set, unseen_note = _unseen_probes(found_unseen, d, suffix, say)
             else:
