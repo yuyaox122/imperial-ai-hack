@@ -8,6 +8,16 @@ Public surface (do not rename):
   latest() -> JobState | None
   add_listener(fn) -> None         fn(job_id: str, event: TraceEvent | None, cards: list[ReportCard] | None)
   remove_listener(fn) -> None      stops calling fn; removing a function that is not registered does nothing
+  request_approval(kind, payload, *, timeout=600) -> bool
+                                   asks the user to approve something (kind "install": packages for the toolbox)
+                                   from inside a running job; blocks until answered (see Approvals)
+  answer(job_id, approval_id, approved) -> bool
+                                   True when it answered the job's open request; False for an unknown job or id, or
+                                   one already answered, timed out or cancelled
+  pending(job_id) -> dict | None   the open request: {"id", "kind", "payload", "timeout", "asked"} (asked: seconds
+                                   since the job started), or None
+  set_cli_handler(fn) -> None      fn(kind, payload) -> bool answers requests made outside any job (a script's
+                                   terminal prompt); None removes it
 
 Listeners are module-level and shared by all jobs, and are called on the job's worker thread: once per
 TraceEvent as fn(job_id, event, None), right after it is appended to the job's events, then once at the end
@@ -24,16 +34,31 @@ Cancellation stops at the next trace event (or worker return), marks the job fai
 "Cancelled.", and publishes one final error event followed by the normal final listener call with [].
 It cannot interrupt a model call already in progress or undo side effects already completed.
 
+Approvals. request_approval works only on a job's worker thread (the job context is set by the worker for the
+run's duration; a thread the run starts does not inherit it unless it runs in a copy of the worker's context,
+contextvars.copy_context()). It emits TraceEvent(step="approval", status="start", message, data={"id", "kind",
+"payload", "timeout"}), where the message is the payload's "summary" when it has one; then it waits, at most
+`timeout` seconds, for answer(job_id, id, approved). It then emits status "ok" when approved, or "fail" when
+declined, timed out or cancelled, with data {"id", "kind", "answer": bool, "reason": "approved" | "declined" |
+"timed out" | "cancelled"}, and returns the answer. Only one request may be open per job (a second raises
+RuntimeError). cancel(job_id) also releases an open request as declined (reason "cancelled"): its "fail" event is
+recorded, and the run stops at its next trace event as usual. `approved` counts only when it is True itself.
+Outside a job (a CLI run) nothing is emitted: request_approval returns the CLI handler's answer (only True
+approves; a handler that raises declines), or False when no handler is set.
+
 Jobs live in memory only and are lost when the server restarts.
 """
 
 from __future__ import annotations
 
+import contextvars
 import logging
+import math
 import threading
 import time
 import uuid
-from typing import Callable
+from dataclasses import dataclass, field
+from typing import Any, Callable
 from pathlib import Path
 
 from agent import auto, loop
@@ -49,6 +74,30 @@ _latest_id: str | None = None
 _listeners: list[_Listener] = []
 _notify_lock = threading.Lock()  # serialises listener calls across jobs
 _log = logging.getLogger(__name__)
+
+
+@dataclass
+class _Approval:
+    id: str
+    kind: str
+    payload: dict
+    timeout: float
+    asked: float  # seconds since the job started
+    done: threading.Event = field(default_factory=threading.Event)
+    answer: bool | None = None
+    reason: str = ""
+
+
+@dataclass
+class _JobContext:
+    job: JobState
+    publish: Callable[[TraceEvent, bool], None]  # (event, check_cancel)
+    started: float
+
+
+_context: contextvars.ContextVar[_JobContext | None] = contextvars.ContextVar("agent_job", default=None)
+_approvals: dict[str, _Approval] = {}  # job id -> its open request
+_cli_handler: Callable[[str, dict], bool] | None = None
 
 
 def start(request: FitRequest) -> str:
@@ -88,7 +137,97 @@ def cancel(job_id: str) -> bool:
         if job is None or job.status != "running" or job_id in _terminal_published:
             return False
         _cancel_requested.add(job_id)
+        _settle(_approvals.get(job_id), False, "cancelled")  # a run waiting for an answer stops waiting
         return True
+
+
+def _settle(request: _Approval | None, answer: bool, reason: str) -> bool:
+    """Give an open request its answer and wake the run waiting for it; False when it was already settled. Call
+    with _lock held."""
+    if request is None or request.answer is not None:
+        return False
+    request.answer, request.reason = answer, reason
+    request.done.set()
+    return True
+
+
+def request_approval(kind: str, payload: dict, *, timeout: float = 600) -> bool:
+    """Ask the user to approve `kind` (described by `payload`, JSON-ready) and wait for the answer (Approvals in
+    the module docstring). Returns True only when approved."""
+    if not isinstance(timeout, (int, float)) or isinstance(timeout, bool) or not math.isfinite(timeout) or timeout <= 0:
+        raise ValueError(f"timeout must be a positive number of seconds, not {timeout!r}.")
+    context = _context.get()
+    if context is None:
+        handler = _cli_handler
+        if handler is None:
+            return False
+        try:
+            return handler(kind, payload) is True
+        except Exception:
+            _log.warning("the approval handler failed on a %s request; treated as declined", kind, exc_info=True)
+            return False
+    job = context.job
+    request = _Approval(
+        id=uuid.uuid4().hex[:12], kind=str(kind), payload=payload, timeout=float(timeout),
+        asked=round(time.monotonic() - context.started, 3),
+    )
+    with _lock:
+        if job.id in _approvals:
+            raise RuntimeError(f"job {job.id} already waits for an answer to request {_approvals[job.id].id}")
+        _approvals[job.id] = request
+    summary = payload.get("summary") if isinstance(payload, dict) else None
+    try:
+        context.publish(TraceEvent(
+            step="approval", status="start",
+            message=f"Waiting for your approval ({kind}): {summary}" if summary else f"Waiting for your approval ({kind}).",
+            data={"id": request.id, "kind": request.kind, "payload": payload, "timeout": request.timeout},
+            t=request.asked,
+        ), True)
+        if not request.done.wait(request.timeout):
+            with _lock:
+                _settle(request, False, "timed out")
+    finally:
+        with _lock:
+            _settle(request, False, "cancelled")  # only when the start event itself was refused
+            _approvals.pop(job.id, None)
+    approved = request.answer is True
+    message = {
+        "approved": "Approved.",
+        "declined": "Declined.",
+        "timed out": f"No answer within {request.timeout:g} s, so it counts as declined.",
+        "cancelled": "The run was cancelled, so it counts as declined.",
+    }[request.reason]
+    context.publish(TraceEvent(
+        step="approval", status="ok" if approved else "fail", message=message,
+        data={"id": request.id, "kind": request.kind, "answer": approved, "reason": request.reason},
+        t=round(time.monotonic() - context.started, 3),
+    ), False)  # recorded even after a cancel; the run stops at its next event
+    return approved
+
+
+def answer(job_id: str, approval_id: str, approved: bool) -> bool:
+    """Answer the job's open request; False for an unknown job or id, or one no longer open."""
+    with _lock:
+        request = _approvals.get(job_id)
+        if request is None or request.id != approval_id:
+            return False
+        return _settle(request, approved is True, "approved" if approved is True else "declined")
+
+
+def pending(job_id: str) -> dict[str, Any] | None:
+    """The job's open request, or None."""
+    with _lock:
+        request = _approvals.get(job_id)
+        if request is None or request.answer is not None:
+            return None
+        return {"id": request.id, "kind": request.kind, "payload": request.payload, "timeout": request.timeout,
+                "asked": request.asked}
+
+
+def set_cli_handler(fn: Callable[[str, dict], bool] | None) -> None:
+    """fn(kind, payload) -> bool answers requests made outside a job; None removes it."""
+    global _cli_handler
+    _cli_handler = fn
 
 
 class _Cancelled(RuntimeError):
@@ -128,9 +267,9 @@ def _run(job: JobState, run: Callable) -> None:
     also interrupts the runner's own exception-reporting trace events."""
     started = time.monotonic()
 
-    def emit(event: TraceEvent) -> None:
+    def publish(event: TraceEvent, check_cancel: bool = True) -> None:
         with _lock:
-            if job.id in _cancel_requested:
+            if check_cancel and job.id in _cancel_requested:
                 raise _Cancelled("Cancelled.")
             if event.step in ("error", "done"):
                 # Reserve the terminal outcome atomically with publication. Listeners
@@ -139,12 +278,20 @@ def _run(job: JobState, run: Callable) -> None:
             job.events.append(event)
         _notify(job.id, event, None)
 
+    def emit(event: TraceEvent) -> None:
+        publish(event, True)
+
     error = None
     cards, installed = [], None
+    token = _context.set(_JobContext(job=job, publish=publish, started=started))  # for request_approval
     try:
         cards, installed = run(job, emit)
     except Exception as exc:  # ordinary failures were already traced by the runner
         error = exc
+    finally:
+        _context.reset(token)
+        with _lock:
+            _settle(_approvals.pop(job.id, None), False, "cancelled")  # nothing is left waiting for this job
 
     cancellation_event = None
     with _lock:
