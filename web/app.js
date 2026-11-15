@@ -155,6 +155,143 @@ function h(tag, attrs, ...children) {
   return el;
 }
 
+/* Basic Markdown for model replies, built as DOM nodes (never innerHTML), so a reply cannot inject markup. Blocks:
+   paragraphs (a single newline is a line break), # headings, - * + and 1. lists (nested by indentation), > quotes,
+   ``` fences (an unclosed fence runs to the end, so a reply streaming in renders as it grows), --- rules and
+   | pipe | tables |. Inline: `code`, **bold**, __bold__, *italic*, _italic_ (not inside words, so snake_case
+   stays as written), ~~strike~~, [links](https://...) for http and https only, and \-escapes. */
+const MD_INLINE = [
+  { tag: "code", re: /`([^`\n]+)`/ },
+  { tag: "a", re: /\[([^\]\n]+)\]\(([^)\s]+)\)/ },
+  { tag: "strong", re: /\*\*(?=\S)([^\n]*?\S)\*\*/ },
+  { tag: "strong", re: /(?<![\w])__(?=\S)([^\n]*?\S)__(?![\w])/ },
+  { tag: "del", re: /~~(?=\S)([^\n]*?\S)~~/ },
+  { tag: "em", re: /(?<![*\w])\*(?=[^\s*])([^*\n]*?[^\s*])\*(?![*\w])/ },
+  { tag: "em", re: /(?<![\w])_(?=\S)([^_\n]*?\S)_(?![\w])/ },
+];
+
+function mdInline(text) {
+  const out = [];
+  let rest = text;
+  while (rest) {
+    let best = null;
+    for (const rule of MD_INLINE) {
+      const m = rule.re.exec(rest);
+      if (m && (!best || m.index < best.m.index)) best = { rule, m };
+    }
+    const esc = /\\([\\`*_~[\]()#>|-])/.exec(rest);
+    if (esc && (!best || esc.index < best.m.index)) {
+      out.push(rest.slice(0, esc.index) + esc[1]);
+      rest = rest.slice(esc.index + 2);
+      continue;
+    }
+    if (!best) break;
+    const { rule, m } = best;
+    if (m.index) out.push(rest.slice(0, m.index));
+    if (rule.tag === "code") out.push(h("code", { text: m[1] }));
+    else if (rule.tag === "a") {
+      const safe = /^https?:\/\//i.test(m[2]);
+      out.push(safe ? h("a", { href: m[2], target: "_blank", rel: "noopener noreferrer" }, mdInline(m[1])) : m[0]);
+    } else out.push(h(rule.tag, null, mdInline(m[1])));
+    rest = rest.slice(m.index + m[0].length);
+  }
+  if (rest) out.push(rest);
+  return out;
+}
+
+/** Lines joined with <br>, each line's inline Markdown rendered. */
+function mdLines(lines) {
+  return lines.flatMap((line, i) => (i ? [h("br"), ...mdInline(line)] : mdInline(line)));
+}
+
+const MD_ITEM = /^(\s*)([-*+]|\d{1,9}[.)])\s+(.*)$/;
+const MD_TABLE_RULE = /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/;
+
+function mdCells(line) {
+  return line.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map((c) => c.trim());
+}
+
+/** A list from item lines; an item indented deeper than the list's first item nests inside the item before it. */
+function mdList(items) {
+  const ordered = /\d/.test(items[0].marker);
+  const list = h(ordered ? "ol" : "ul", ordered && parseInt(items[0].marker, 10) !== 1 ? { start: parseInt(items[0].marker, 10) } : null);
+  const base = items[0].indent;
+  for (let i = 0; i < items.length;) {
+    const li = h("li", null, mdLines(items[i].lines));
+    let j = i + 1;
+    while (j < items.length && items[j].indent > base) j++;
+    if (j > i + 1) li.append(mdList(items.slice(i + 1, j)));
+    list.append(li);
+    i = j;
+  }
+  return list;
+}
+
+function renderMarkdown(src) {
+  const lines = String(src ?? "").replace(/\r\n?/g, "\n").split("\n");
+  const blocks = [];
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    if (!line.trim()) { i++; continue; }
+    const fence = /^\s*(```|~~~)\s*([\w+-]*)\s*$/.exec(line);
+    if (fence) {
+      const body = [];
+      i++;
+      while (i < lines.length && !lines[i].trim().startsWith(fence[1])) body.push(lines[i++]);
+      i++;
+      blocks.push(h("pre", { class: "md-pre" }, h("code", { text: body.join("\n"), "data-lang": fence[2] || null })));
+      continue;
+    }
+    const heading = /^\s*(#{1,6})\s+(.*?)\s*#*\s*$/.exec(line);
+    if (heading) {
+      blocks.push(h(heading[1].length <= 2 ? "h3" : heading[1].length === 3 ? "h4" : "h5", { class: "md-h" }, mdInline(heading[2])));
+      i++;
+      continue;
+    }
+    if (/^\s*([-*_])(\s*\1){2,}\s*$/.test(line)) { blocks.push(h("hr")); i++; continue; }
+    if (/^\s*>/.test(line)) {
+      const quoted = [];
+      while (i < lines.length && /^\s*>/.test(lines[i])) quoted.push(lines[i++].replace(/^\s*>\s?/, ""));
+      blocks.push(h("blockquote", null, renderMarkdown(quoted.join("\n"))));
+      continue;
+    }
+    if (line.includes("|") && i + 1 < lines.length && MD_TABLE_RULE.test(lines[i + 1])) {
+      const head = mdCells(line);
+      i += 2;
+      const rows = [];
+      while (i < lines.length && lines[i].includes("|") && lines[i].trim()) rows.push(mdCells(lines[i++]));
+      blocks.push(h("div", { class: "md-table" }, h("table", null,
+        h("thead", null, h("tr", null, head.map((c) => h("th", null, mdInline(c))))),
+        h("tbody", null, rows.map((r) => h("tr", null, head.map((_, k) => h("td", null, mdInline(r[k] ?? "")))))))));
+      continue;
+    }
+    if (MD_ITEM.test(line)) {
+      const items = [];
+      const ordered = (marker) => /\d/.test(marker);
+      while (i < lines.length) {
+        const m = MD_ITEM.exec(lines[i]);
+        // a bullet list followed by a numbered one (or the reverse) at the same depth is two lists
+        if (m && items.length && m[1].length <= items[0].indent && ordered(m[2]) !== ordered(items[0].marker)) break;
+        if (m) items.push({ indent: m[1].length, marker: m[2], lines: [m[3]] });
+        else if (items.length && lines[i].trim() && /^\s+/.test(lines[i])) items[items.length - 1].lines.push(lines[i].trim());
+        else if (!lines[i].trim() && i + 1 < lines.length && MD_ITEM.test(lines[i + 1])) { i++; continue; }
+        else break;
+        i++;
+      }
+      blocks.push(mdList(items));
+      continue;
+    }
+    const para = [];
+    while (i < lines.length && lines[i].trim() && !MD_ITEM.test(lines[i]) && !/^\s*(#{1,6}\s|>|```|~~~)/.test(lines[i])
+      && !/^\s*([-*_])(\s*\1){2,}\s*$/.test(lines[i])
+      && !(lines[i].includes("|") && i + 1 < lines.length && MD_TABLE_RULE.test(lines[i + 1]))) para.push(lines[i++]);
+    if (!para.length) para.push(lines[i++]);
+    blocks.push(h("p", null, mdLines(para)));
+  }
+  return blocks;
+}
+
 /* Interface icons: Material Design Icons 7.4.47 by Pictogrammers (Apache-2.0), the icon set Henad's app uses.
    24 px grid, drawn in the colour of the text beside them. */
 const ICONS = {
@@ -1779,11 +1916,16 @@ async function streamReply(form, turn, signal) {
   if (!(response.headers.get("content-type") || "").includes("text/event-stream") || !response.body) {
     throw new Error("The server did not return a reply stream.");
   }
-  const text = h("p", { class: "msg-text" });
+  const text = h("div", { class: "msg-text md" });
   turn.reply.replaceChildren(text);
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
-  let lineBuffer = "", eventType = "", dataLines = [], reply = "", used = [], result = null;
+  let lineBuffer = "", eventType = "", dataLines = [], reply = "", used = [], result = null, drawPending = false;
+  const draw = () => {  // at most one Markdown render per frame while tokens arrive
+    drawPending = false;
+    text.replaceChildren(...renderMarkdown(reply));
+    if (turn.root.isConnected && nearEnd($("thread"))) scrollToEnd($("thread"));
+  };
   const line = (value) => {
     if (value === "") {
       if (dataLines.length) {
@@ -1791,8 +1933,10 @@ async function streamReply(form, turn, signal) {
         if (eventType === "used") used = Array.isArray(data) ? data : [];
         else if (eventType === "token") {
           reply += data.text || "";
-          text.textContent = reply;
-          if (turn.root.isConnected && nearEnd($("thread"))) scrollToEnd($("thread"));
+          if (!drawPending) {
+            drawPending = true;
+            requestAnimationFrame(draw);
+          }
         } else if (eventType === "done") {
           // done.used is final: a tool input's detail now says whether the model called the tool.
           result = { reply: data.reply ?? reply, used: Array.isArray(data.used) ? data.used : used };
@@ -1940,7 +2084,7 @@ function fillReply(turn, result) {
   copy.addEventListener("click", () => {
     if (navigator.clipboard) navigator.clipboard.writeText(replyText).then(() => copy.replaceChildren(icon("check", 13)), () => {});
   });
-  const parts = [h("p", { class: "msg-text", text: replyText }), copy];
+  const parts = [h("div", { class: "msg-text md" }, renderMarkdown(replyText)), copy];
   if (used.length) parts.push(h("ul", { class: "used-list", "aria-label": "How each file reached the model" }, used.map(usedItem)));
   turn.reply.replaceChildren(...parts);
   let changed = false;

@@ -359,6 +359,34 @@ ul, ol { margin: 0; padding: 0; list-style: none; }
 .msg-files { display: grid; margin-bottom: 6px; }
 .msg-text { color: var(--text); line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
 .msg-text.pending { color: var(--text-secondary); }
+/* Markdown in model replies (renderMarkdown in app.js): square, ruled, mono for code, as the rest of the interface. */
+.msg-text.md { white-space: normal; }
+.md > * + * { margin-top: 8px; }
+.md p, .md ul, .md ol, .md blockquote, .md pre, .md h3, .md h4, .md h5 { margin: 0; }
+.md * + p, .md * + ul, .md * + ol, .md * + pre, .md * + blockquote, .md * + .md-table { margin-top: 8px; }
+.md .md-h { color: var(--heading); font-weight: 600; line-height: 1.3; }
+.md h3.md-h { font-size: 15px; }
+.md h4.md-h { font-size: 14px; }
+.md h5.md-h { font-size: 13px; }
+.md * + .md-h { margin-top: 14px; }
+.md strong { color: var(--text-strong); font-weight: 600; }
+.md ul, .md ol { padding-left: 20px; }
+.md ul { list-style: disc outside; }
+.md ul ul { list-style-type: circle; }
+.md ol { list-style: decimal outside; }
+.md li + li, .md li > ul, .md li > ol { margin-top: 3px; }
+.md li::marker { color: var(--text-faint); }
+.md code { padding: 1px 4px; background: var(--surface); border: var(--rule) solid var(--rule-light); color: var(--text-strong); font: 0.9em/1.4 var(--font-mono); }
+.md pre { padding: 10px 12px; background: var(--surface); border: var(--rule) solid var(--rule-light); overflow-x: auto; white-space: pre; }
+.md pre code { padding: 0; background: none; border: 0; font-size: 12px; line-height: 1.5; }
+.md blockquote { padding-left: 12px; border-left: 2px solid var(--rule-dark); color: var(--text-secondary); }
+.md hr { margin: 12px 0; border: 0; border-top: var(--rule) solid var(--rule-light); }
+.md a { color: var(--accent-ink); text-underline-offset: 2px; }
+.md a:hover { color: var(--accent-ink-hover); }
+.md-table { overflow-x: auto; }
+.md table { border-collapse: collapse; font-size: 12.5px; }
+.md th, .md td { padding: 5px 10px; border: var(--rule) solid var(--rule-light); text-align: left; vertical-align: top; }
+.md th { color: var(--text-strong); font-weight: 600; background: var(--surface); }
 .msg-text.pending::after { content: " …"; }
 .used-list { display: grid; gap: 3px; margin-top: 8px; }
 .used-item { padding-left: 9px; border-left: var(--rule) solid var(--rule-dark); color: var(--text-secondary); font: 11.5px/1.5 var(--font-mono); overflow-wrap: anywhere; }

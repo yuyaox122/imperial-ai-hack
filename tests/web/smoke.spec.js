@@ -161,6 +161,55 @@ test("restored uploads require reattachment before retry, and saved text is not 
   await expect(page.locator(".msg--user .bubble")).toHaveCount(1);
 });
 
+test("a reply's Markdown renders as structure, never as markup, live and from history", async ({ page }) => {
+  const reply = [
+    "This is a **chair**, seen from *six* angles: read via `adapter:3d-glb`.",
+    "",
+    "## Key features",
+    "- **A molded shell seat**",
+    "- Four slender legs",
+    "  - splayed outward",
+    "1. first",
+    "2. second",
+    "",
+    "> quoted line",
+    "",
+    "```python",
+    "print('<b>hi</b>')",
+    "```",
+    "",
+    "| Control | Score |",
+    "|---|---|",
+    "| raw file | 34% |",
+    "",
+    "keep geo_latlon_adapter as is, see [the card](https://example.com/card) and [bad](javascript:alert(1)).",
+    "<img src=x onerror=alert(1)> stays text",
+  ].join("\n");
+  const sse = `event: token\ndata: ${JSON.stringify({ text: reply })}\n\nevent: done\ndata: ${JSON.stringify({ reply })}\n\n`;
+  await setup(page, { stream: (route) => route.fulfill({ contentType: "text/event-stream", body: sse }) });
+  await send(page, "What object is this?");
+  for (const pass of ["live", "history"]) {
+    if (pass === "history") await page.reload();
+    const md = page.locator(".msg--model .msg-text.md, .msg-text.md").last();
+    await expect(md.locator("strong").first()).toHaveText("chair");
+    await expect(md.locator("em").first()).toHaveText("six");
+    await expect(md.locator("p code").first()).toHaveText("adapter:3d-glb");
+    await expect(md.locator("h3")).toHaveText("Key features");
+    await expect(md.locator("ul > li")).toHaveCount(3);  // two items, one nested
+    await expect(md.locator("ul ul > li")).toHaveText("splayed outward");
+    await expect(md.locator("ol > li")).toHaveText(["first", "second"]);
+    await expect(md.locator("blockquote")).toHaveText("quoted line");
+    await expect(md.locator("pre code")).toHaveText("print('<b>hi</b>')");
+    await expect(md.locator("table td")).toHaveText(["raw file", "34%"]);
+    await expect(md.locator("a")).toHaveCount(1);
+    await expect(md.locator("a")).toHaveAttribute("href", "https://example.com/card");
+    await expect(md).toContainText("[bad](javascript:alert(1))");
+    await expect(md).toContainText("geo_latlon_adapter");
+    await expect(md).toContainText("<img src=x onerror=alert(1)> stays text");
+    await expect(md.locator("img, b, script")).toHaveCount(0);
+  }
+});
+
 test("SSE metadata and tokens become a saved reply; truncated stream is retryable", async ({ page }) => {
   let complete = true;
   await setup(page, { stream: (route) => route.fulfill({
