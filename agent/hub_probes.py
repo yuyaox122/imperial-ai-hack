@@ -1,24 +1,34 @@
-"""Find labelled probe files for a new kind of input on the Hugging Face Hub, with no API key.
+"""Find labelled probe files for a new kind of input on the Hugging Face Hub, and in table files on GitHub or Zenodo.
 
 An adapter turns an input file (a 3D model, a video, a molecule, a pair of coordinates, ...) into text or images,
 and the harness verifies it on labelled probe files. The labels must come from an independent source, so this
 module finds them on the public Hub: it searches the dataset index, reads a dataset's columns through the public
 dataset viewer, picks an input column and a label column, and writes a capped sample as one sub-folder per label
-(the folder format agent.data.build_set and sense.adapters.probe_folder read).
+(the folder format agent.data.build_set and sense.adapters.probe_folder read). For some inputs the best labelled
+data is a plain table file instead (an odour table as a CSV on GitHub, a city list with a country column), so
+find_probes also asks a Linkup web search (agent.research) for datasets: the Hub ids it names join the Hub
+candidates and its file URLs become table candidates, read with the same column, label and honesty rules. The Hub
+search needs no API key; without the web search (no LINKUP_API_KEY, fake mode, no network) the Hub is searched alone.
 
 Public surface (do not rename):
   ProbesUnavailable                 raised when no usable probe set can be had; the message says why
-  HubCandidate                      hub_id, title, downloads, likes, licence, tags, url, gated; to_dict()
+  HubCandidate                      hub_id, title, downloads, likes, licence, tags, url, gated, score, found_by;
+                                    to_dict()
+  TableCandidate                    url, title, licence, licence_source, label_hint, page_url, given_url, score;
+                                    to_dict()
   Mapping                           which columns are input and label; to_dict()
-  FetchReport                       folder, labels, counts, rows_seen, skipped, licence, source_url, notes, ...
+  FetchReport                       folder, labels, counts, rows_seen, skipped, licence, source_url, notes, hub_id,
+                                    label_values, bytes, licence_source
   SEARCH_SCHEMA, MAPPING_SCHEMA     structured-output schemas for agent.llm.ask_json
+  WEB_SCHEMA                        the structured-output schema of the Linkup search (agent.research)
   search_hub(goal, modality, *, limit=20) -> list[HubCandidate]
   choose_mapping(candidate, goal, modality, *, wanted_labels=None, budget_s=None) -> Mapping
   fetch_probes(candidate, mapping, dest, *, wanted_labels=None, n_per_label=20, max_labels=8, min_per_label=6,
-               budget_s=120, max_bytes=150_000_000) -> FetchReport
+               budget_s=120, max_bytes=150_000_000, disjoint_from=()) -> FetchReport
   find_probes(goal, modality, dest_root, *, wanted_labels=None, emit=None, max_candidates=3, max_inspect=12,
-              total_budget_s=None, **fetch_kwargs) -> (folder, info)
+              total_budget_s=None, exclude_sources=(), disjoint_from=(), **fetch_kwargs) -> (folder, info)
   safe_label(text, index) -> str
+choose_mapping and fetch_probes take a HubCandidate or a TableCandidate.
 
 modality is "audio", "image", "video", "3d", "chemical", "coordinates" or "text", or an alias such as smell, taste,
 molecule, smiles, location, place, gps or mesh; any other word still works with the generic rules.
@@ -90,27 +100,84 @@ identical bytes under two labels are removed from both (skipped["conflicting_lab
 min_per_label files are dropped; fewer than 2 left, or a wanted label missing, raises ProbesUnavailable. Labels
 are always the dataset's own values, never generated.
 
-find_probes searches, then inspects candidates in rank order with choose_mapping (at most max_inspect: a look at
-the columns costs two cached viewer calls and most search hits do not fit) and runs fetch_probes into
-dest_root/<owner>__<name> for at most max_candidates of those whose columns fit. The whole step has one deadline,
-total_budget_s (default INSPECT_ALLOWANCE_S plus max_candidates fetch budgets): the search and inspections run
-within it and each fetch gets the smaller of its budget_s and the time left. emit (if given) is called with small
-JSON-serialisable dicts {"action": "search" | "candidate" | "inspect" | "fetch", "status": "start" | "ok" |
-"fail", ...}. It returns the folder and an info dict (hub_id, url, title, licence, labels, label_values, counts,
-mapping, rows_seen, skipped, queries, query_origin, tried: [{hub_id, reason}], notes), or raises ProbesUnavailable
-naming every candidate's reason.
+fetch_probes' disjoint_from: labels never chosen (matched with case, spaces, "_", "-" and other separators and a
+plural "s" ignored, so "Hip-Hop", "hip_hop" and "hiphops" are one; codes and names are not matched: "FR" is not
+"France"). A row carrying one counts only for another label it carries, like any unchosen label, and at least 2
+labels must be left; a wanted label that is also in disjoint_from is refused.
 
-Every request goes through _http_get (User-Agent "sense-harness", a timeout checked before every read, a byte cap,
-https Hugging Face hosts only), so tests replace that one function. A JSON request answered HTTP 429, 502, 503 or
-504 is retried after RETRY_WAITS (or the server's Retry-After, at most MAX_RETRY_WAIT), never past the caller's
-deadline; an HTTP 500 is the viewer's own refusal and is not retried. No API key is used or needed.
+The web search. find_probes runs research.search_structured beside the Hub search, once per goal and modality in a
+process (later calls reuse the answer: info["web"]["origin"] "memo"), with WEB_SCHEMA and include_domains
+WEB_DOMAINS (huggingface.co, github.com, raw.githubusercontent.com, zenodo.org, gist.githubusercontent.com),
+asking for up to 8 labelled datasets for the goal and the modality's input, each with a Hugging Face dataset id or
+a direct download URL of a data file, its licence, its label column and its input column (MAX_WEB_ITEMS are read).
+When it cannot answer (no LINKUP_API_KEY and nothing cached, fake mode, the network, no time, any failure) the Hub
+is searched alone and info["web"]["reason"] says why. A Hub id (owner/name, or a huggingface.co/datasets/... URL)
+joins the Hub candidates through its Hub record (/api/datasets/<id>), so gated, private and viewer-less datasets
+are dropped as in the search; a file URL becomes a TableCandidate. File URLs must be https on github.com (a blob or
+raw URL, rewritten to raw.githubusercontent.com), raw.githubusercontent.com, gist.githubusercontent.com, zenodo.org
+(a .../files/<name> URL) or huggingface.co (a dataset blob or resolve URL), with no user, password or other port,
+and name a .csv, .tsv, .tab, .json, .jsonl, .ndjson, .txt, .zip or .gz file (or no suffix); anything else, and any
+table for a media modality (a table gives text inputs only), is refused into info["web"]["refused"] before any
+request. Hub and table candidates are ranked together (_ranked: the Hub's relevance; a table's URL path and title
+words count as an id and title; a web search's recommendation adds 1), and up to max_inspect // 2 of those the web
+search named are always among the max_inspect inspected.
+
+Table candidates. choose_mapping downloads the file once (_table_get: at most TABLE_MAX_BYTES, within
+TABLE_TIMEOUT_S or the time left, https on the hosts above only, redirects too), unpacks a .zip (its first member
+named like a table file, skipping folders, __MACOSX and hidden files) or a .gz, refusing over TABLE_MAX_BYTES
+unpacked too, and parses it with the standard library: a CSV or TSV with a header row (dialect sniffed among ",",
+tab, ";" and "|", checked against the rows), a JSON list of objects (or the one list of objects in a JSON object)
+or JSON Lines; an HTML page is refused. At most MAX_TABLE_ROWS rows (fewer for wide tables: MAX_TABLE_CELLS) are
+kept, spread evenly over the file, so a file sorted by label keeps every label; a CSV column whose every value is a
+number becomes numbers (0/1 blocks, coordinates). Then the columns are chosen exactly as for a Hub dataset, on
+MAPPING_ROWS rows spread over the table: the language model's mapping validated against the real columns, else the
+rules (typed slots such as SMILES and latitude/longitude; a label column named for the goal's topic; a generic
+label column or a block of 0/1 columns only when the source's own name, its host, path and archive member, never
+the web search's title, names the topic), with the same refusal of an input column that determines the label.
+fetch_probes then reads every kept row through the same steps as a Hub dataset's rows: duplicate inputs merged,
+conflicting labels dropped, multi-label rows (list, list-literal, separator-joined and 0/1 labels) kept only with
+exactly one chosen label, the leak check for text inputs, and the same folder layout written from the template
+(row numbers count data rows from 0). The licence is always reported and never invented: the web search's answer
+when it gave one, else the first line of the repository's LICENSE (LICENSE.md, LICENSE.txt, LICENCE, COPYING) file
+for a GitHub file, the record's licence for a Zenodo file or the dataset card's for a Hugging Face file, else
+"unknown"; FetchReport.licence_source says where it was read.
+
+find_probes searches, then inspects candidates in rank order with choose_mapping (at most max_inspect: a look at
+the columns costs two cached viewer calls, or a table's download, and most search hits do not fit) and runs
+fetch_probes into dest_root/<owner>__<name> (a table: dest_root/web__<file stem>__<url hash>) for at most
+max_candidates of those whose columns fit. The whole step has one deadline, total_budget_s (default
+INSPECT_ALLOWANCE_S plus max_candidates fetch budgets): the searches and inspections run within it and each fetch
+gets the smaller of its budget_s and the time left. exclude_sources skips candidates whose Hub id, dataset page or
+file URL (a GitHub blob URL and its raw file alike) is listed, files in the same folder as a listed file (other
+files of the same dataset) and files under a listed repository or folder URL; disjoint_from goes to fetch_probes.
+For the unseen-categories control, the agent calls find_probes again after the main probe set, with
+exclude_sources=[info["source"]] and disjoint_from=list(info["label_values"].values()), and gets an independent set
+whose categories the adapter has not seen. emit (if given) is called with small JSON-serialisable dicts
+{"action": "search" | "candidate" | "inspect" | "fetch", "status": "start" | "ok" | "fail", ...}; candidate,
+inspect and fetch events carry hub_id ("" for a table), source and kind ("hub" | "table"), and the search's "ok"
+event the web search's summary and the excluded sources. It returns the folder and an info dict (hub_id, url,
+title, licence, licence_source, kind, source: the Hub id or table URL to pass to exclude_sources, labels,
+label_values, counts, mapping, rows_seen, skipped, queries, query_origin, tried: [{hub_id, reason}, or for a table
+{hub_id: "", url, reason}], notes, web: {used, reason, origin, hub_ids, tables, refused}, excluded: [{source,
+reason}], disjoint_from), or raises ProbesUnavailable naming every candidate's reason and, when it was not used,
+why the web search was not.
+
+Every Hub and viewer request and media download goes through _http_get (User-Agent "sense-harness", a timeout
+checked before every read, a byte cap, https Hugging Face hosts only), and every table file and licence request
+through _table_get (the same, on the table hosts above), so tests replace those two functions. A JSON request
+answered HTTP 429, 502, 503 or 504 is retried after RETRY_WAITS (or the server's Retry-After, at most
+MAX_RETRY_WAIT), never past the caller's deadline; an HTTP 500 is the viewer's own refusal and is not retried. The
+Hub, the viewer, GitHub and Zenodo need no API key; the web search uses research's LINKUP_API_KEY when it is set.
 """
 
 from __future__ import annotations
 
 import ast
+import csv
+import gzip
 import hashlib
 import http.client
+import io
 import itertools
 import json
 import os
@@ -124,13 +191,16 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
+import zipfile
+import zlib
 from collections import Counter, deque
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+from concurrent.futures import TimeoutError as _FutureTimeout
 from dataclasses import asdict, dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Callable
 
-from agent import llm
+from agent import llm, research
 
 HUB_SEARCH = "https://huggingface.co/api/datasets"
 VIEWER = "https://datasets-server.huggingface.co"
@@ -149,6 +219,20 @@ LEAK_SAMPLE = 12  # files scanned before a dataset whose files mostly name their
 GRACE_S = 10.0  # how long past the budget a running download may take before it is abandoned
 FFMPEG_TIMEOUT_S = 60.0
 INSPECT_ALLOWANCE_S = 120.0  # find_probes' default time for the search and inspections, on top of the fetches
+TABLE_MAX_BYTES = 50_000_000  # a table file, downloaded or unpacked, is refused above this size
+TABLE_TIMEOUT_S = 60.0  # one table download
+LICENCE_MAX_BYTES = 200_000
+LICENCE_TIMEOUT_S = 10.0
+MAX_TABLE_ROWS = 20_000  # rows kept from one table, evenly spread over the file
+MAX_TABLE_CELLS = 2_000_000  # fewer rows are kept from a wide table
+MAX_TABLE_COLUMNS = 300
+MAPPING_ROWS = 500  # rows of a table the column choice looks at, evenly spread
+WEB_TIMEOUT_S = 30.0  # the Linkup search
+MAX_WEB_ITEMS = 8  # datasets read from one web search answer
+WEB_DOMAINS = ("huggingface.co", "github.com", "raw.githubusercontent.com", "zenodo.org",
+               "gist.githubusercontent.com")
+TABLE_HOSTS = frozenset(("github.com", "raw.githubusercontent.com", "gist.githubusercontent.com", "zenodo.org"))
+TABLE_SUFFIXES = (".csv", ".tsv", ".tab", ".json", ".jsonl", ".ndjson")  # .txt is read too when named directly
 
 _now = time.monotonic  # tests replace it to run the budget
 _sleep = time.sleep  # tests replace it to skip the waits
@@ -175,6 +259,48 @@ MAPPING_SCHEMA = {
     "required": ["input_columns", "template", "label_column", "reason"],
     "additionalProperties": False,
 }
+
+# The first property's name is not one research's fake mode has canned answers for, so fake mode answers it empty.
+WEB_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "labelled_datasets": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "hub_id": {"type": "string"},
+                    "download_url": {"type": "string"},
+                    "licence": {"type": "string"},
+                    "label_column": {"type": "string"},
+                    "input_column": {"type": "string"},
+                    "page_url": {"type": "string"},
+                },
+                "required": ["name", "hub_id", "download_url", "licence", "label_column"],
+            },
+        }
+    },
+    "required": ["labelled_datasets"],
+}
+
+_WEB_INPUTS = {
+    "chemical": "a molecule given as a SMILES string",
+    "coordinates": "a place given as latitude and longitude",
+    "text": "a piece of text",
+    "audio": "an audio file", "image": "an image file", "video": "a video file", "3d": "a 3D model file",
+}
+
+_WEB_QUERY = (
+    "Find up to 8 different public labelled datasets for this goal: {goal} Each row must be one input, {input}, "
+    "with the category the goal asks about as its label, from a source independent of any model, and each category "
+    "must have many rows (one row per input, not one row per category). For each dataset give its name; either its "
+    "Hugging Face dataset id (owner/name) or a direct download URL of the data file itself (a CSV, TSV, JSON or JSON "
+    "Lines file, possibly zipped or gzipped: a raw file on GitHub such as "
+    "https://raw.githubusercontent.com/<owner>/<repo>/<branch>/<path>, or a file on Zenodo), else an empty string; "
+    "its licence as stated by the source, else an empty string; the column holding the label; the column holding "
+    "the input; and the page that describes it."
+)
 
 _SEARCH_INSTRUCTION = (
     "Suggest up to 5 short search queries (one to three words each) for the Hugging Face Hub dataset search that "
@@ -301,9 +427,30 @@ class HubCandidate:
     url: str
     gated: bool = False
     score: int = 0  # search relevance; ordering only
+    found_by: str = "hub"  # "hub" (the Hub search), "web" (the web search named it) or "both"
 
     def to_dict(self) -> dict:
         return asdict(self)
+
+
+@dataclass(eq=False)
+class TableCandidate:
+    """A labelled table file (CSV, TSV, JSON or JSON Lines, possibly in a .zip or .gz) that a web search named."""
+
+    url: str  # the https download URL (a GitHub blob URL rewritten to its raw file)
+    title: str  # the web search's name for it, else the file name: display and ordering only
+    licence: str | None = None  # the web search's claim until fetch_probes looks one up; then always set
+    licence_source: str | None = None  # where the licence was read
+    label_hint: str = ""  # the label column the web search named: shown to the language model only
+    page_url: str = ""  # the page the web search cited for it
+    given_url: str = ""  # the URL exactly as the web search gave it
+    score: int = 0  # search relevance; ordering only
+    _loaded: tuple | None = field(default=None, repr=False)  # (columns, rows, member, notes) once downloaded
+
+    def to_dict(self) -> dict:
+        return {"url": self.url, "title": self.title, "licence": self.licence,
+                "licence_source": self.licence_source, "label_hint": self.label_hint, "page_url": self.page_url,
+                "given_url": self.given_url, "score": self.score}
 
 
 @dataclass
@@ -342,6 +489,7 @@ class FetchReport:
     hub_id: str = ""
     label_values: dict[str, str] = field(default_factory=dict)  # folder name -> the dataset's own label value
     bytes: int = 0  # the kept files' total size
+    licence_source: str | None = None  # where the licence was read: the Hub card, a LICENSE file, ...
 
     def to_dict(self) -> dict:
         return asdict(self) | {"folder": str(self.folder)}
@@ -349,10 +497,18 @@ class FetchReport:
 
 # ----------------------------------------------------------------------------- HTTP
 class _Redirects(urllib.request.HTTPRedirectHandler):
+    def _ok(self, url: str) -> bool:
+        return _allowed_url(url)
+
     def redirect_request(self, req, fp, code, msg, headers, newurl):
-        if not _allowed_url(newurl):
+        if not self._ok(newurl):
             raise _HttpError("host_refused", f"refused a redirect to {_host(newurl)}")
         return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+class _TableRedirects(_Redirects):
+    def _ok(self, url: str) -> bool:
+        return _table_url_ok(url)
 
 
 def _http_get(url: str, *, timeout: float = TIMEOUT_S, max_bytes: int = JSON_MAX_BYTES) -> bytes:
@@ -361,12 +517,25 @@ def _http_get(url: str, *, timeout: float = TIMEOUT_S, max_bytes: int = JSON_MAX
     is cut to the time left, so a server that trickles bytes cannot outlast the timeout."""
     if not _allowed_url(url):
         raise _HttpError("host_refused", f"only https Hugging Face URLs are fetched, not {_host(url)}")
+    return _get(url, timeout, max_bytes, _Redirects)
+
+
+def _table_get(url: str, *, timeout: float = TABLE_TIMEOUT_S, max_bytes: int = TABLE_MAX_BYTES) -> bytes:
+    """_http_get for table files and their licences: https URLs on Hugging Face, github.com,
+    raw.githubusercontent.com, gist.githubusercontent.com or zenodo.org only, redirects too."""
+    if not _table_url_ok(url):
+        raise _HttpError("host_refused", f"only https URLs on Hugging Face, GitHub or Zenodo hosts are fetched, not "
+                                         f"{_host(url)}")
+    return _get(url, timeout, max_bytes, _TableRedirects)
+
+
+def _get(url: str, timeout: float, max_bytes: int, redirects: type) -> bytes:
     if timeout <= 0:
         raise _HttpError("timeout", "no time left")
     deadline = _now() + timeout
     request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Accept": "*/*"})
     try:
-        with urllib.request.build_opener(_Redirects).open(request, timeout=timeout) as response:
+        with urllib.request.build_opener(redirects).open(request, timeout=timeout) as response:
             length = response.headers.get("Content-Length")
             if length and length.isdigit() and int(length) > max_bytes:
                 raise _HttpError("too_large", f"{_host(url)} offers {int(length):,} bytes, over the {max_bytes:,} cap")
@@ -433,6 +602,21 @@ def _allowed_url(url: object) -> bool:
             and (host in ("huggingface.co", "hf.co") or host.endswith((".huggingface.co", ".hf.co"))))
 
 
+def _table_url_ok(url: object) -> bool:
+    """An https URL on a Hugging Face host or on github.com, raw.githubusercontent.com, gist.githubusercontent.com or
+    zenodo.org, with no user, password or port other than 443."""
+    if _allowed_url(url):
+        return True
+    try:
+        url.encode("ascii")
+        parts = urllib.parse.urlsplit(url)
+        host, port = (parts.hostname or "").lower(), parts.port
+    except (UnicodeError, ValueError, AttributeError):
+        return False
+    return (parts.scheme == "https" and not parts.username and not parts.password and port in (None, 443)
+            and host in TABLE_HOSTS)
+
+
 def _host(url: object) -> str:
     try:
         return urllib.parse.urlsplit(str(url)).hostname or "an invalid URL"
@@ -446,7 +630,7 @@ def _get_json(base: str, params: dict, *, timeout: float = TIMEOUT_S, what: str,
     (HTTP 429), a gateway error (502, 504) or a busy server (503) is retried (unless retry is False) after
     RETRY_WAITS (or the server's Retry-After, at most MAX_RETRY_WAIT), but a wait that would end within 2 s of the
     deadline is not taken."""
-    url = base + "?" + urllib.parse.urlencode(params)
+    url = base + ("?" + urllib.parse.urlencode(params) if params else "")
     for pause_s in (RETRY_WAITS if retry else ()) + (None,):
         attempt = timeout if deadline is None else min(timeout, deadline - _now())
         if attempt <= 0:
@@ -512,6 +696,14 @@ def search_hub(goal: str, modality: str, *, limit: int = 20) -> list[HubCandidat
 
 def _search(goal: str, modality: str, limit: int,
             deadline: float | None = None) -> tuple[list[HubCandidate], list[str], str]:
+    found, hits, errors, queries, origin = _hub_query(goal, modality, limit, deadline)
+    if errors and len(errors) == len(queries):
+        raise ProbesUnavailable(f"the Hub search failed for every query: {errors[0]}")
+    return _ranked(list(found.values()), hits, queries, modality)[:limit], queries, origin
+
+
+def _hub_query(goal: str, modality: str, limit: int, deadline: float | None):
+    """(found: hub_id -> HubCandidate, hits: how many queries found each, errors, queries, query origin)."""
     queries = _llm_queries(llm.ask_json(_SEARCH_INSTRUCTION, {"goal": goal, "modality": modality}, SEARCH_SCHEMA))
     origin = "llm" if queries else "rule"
     queries = queries or _rule_queries(goal, modality)
@@ -535,22 +727,38 @@ def _search(goal: str, modality: str, limit: int,
             if candidate is not None:
                 found.setdefault(candidate.hub_id, candidate)
                 hits[candidate.hub_id] += 1
-    if errors and len(errors) == len(queries):
-        raise ProbesUnavailable(f"the Hub search failed for every query: {errors[0]}")
+    return found, hits, errors, queries, origin
+
+
+def _ranked(candidates: list, hits: Counter, queries: list[str], modality: str) -> list:
+    """Hub and table candidates in one order: relevance (2 for each topic word and 1 for each input word of the
+    queries found in the id or title, or a table's URL path and title; plus the Hub's modality and classification
+    tag bonus; plus 1 for a web search's recommendation), then how many searches found it, then downloads."""
     profile = _profile(modality)
     words = {_singular(w) for q in queries for w in re.findall(r"[a-z0-9]+", q.lower()) if w not in _STOP}
     inputs = set(profile.input_words) if profile else set(_content_words(modality))
-    for candidate in found.values():
-        candidate.score = (2 * _relevance(candidate, words - inputs) + _relevance(candidate, words & inputs)
-                           + _tag_bonus(candidate.tags, profile))
-    ranked = sorted(found.values(), key=lambda c: (-c.score, -hits[c.hub_id], -c.downloads, c.hub_id))
-    return ranked[:limit], queries, origin
+    for candidate in candidates:
+        candidate.score = 2 * _relevance(candidate, words - inputs) + _relevance(candidate, words & inputs)
+        if isinstance(candidate, TableCandidate):
+            candidate.score += 1
+        else:
+            candidate.score += _tag_bonus(candidate.tags, profile) + (candidate.found_by != "hub")
+    return sorted(candidates, key=lambda c: (-c.score, -hits[_source_of(c)], -getattr(c, "downloads", 0),
+                                             _source_of(c)))
 
 
-def _relevance(candidate: HubCandidate, words: set[str]) -> int:
+def _relevance(candidate, words: set[str]) -> int:
     """How many of the search words appear in the dataset's id or title (plurals and word stems alike)."""
-    tokens = set(_tokens(candidate.hub_id) + _tokens(candidate.title))
+    if isinstance(candidate, TableCandidate):
+        tokens = set(_tokens(urllib.parse.urlsplit(candidate.url).path) + _tokens(candidate.title))
+    else:
+        tokens = set(_tokens(candidate.hub_id) + _tokens(candidate.title))
     return sum(1 for word in words if any(_same_word(token, word) for token in tokens))
+
+
+def _source_of(candidate) -> str:
+    """What names a candidate in exclude_sources, info["source"] and hits: a Hub id, or a table's URL."""
+    return candidate.url if isinstance(candidate, TableCandidate) else candidate.hub_id
 
 
 def _same_word(token: str, word: str) -> bool:
@@ -648,14 +856,27 @@ class _Column:
     names: list[str] | None = None  # ClassLabel names (also for a list of ClassLabel)
 
 
-def choose_mapping(candidate: HubCandidate, goal: str, modality: str, *, wanted_labels: list[str] | None = None,
-                   budget_s: float | None = None) -> Mapping:
+@dataclass(frozen=True)
+class _Named:
+    """What the column choice knows of a source: its name (a Hub id, or a table's host and path), its own title (a
+    Hub card's pretty_name, or a table's file name) and a web search's label column hint (shown to the model only)."""
+
+    name: str
+    title: str
+    hint: str = ""
+
+
+def choose_mapping(candidate: HubCandidate | TableCandidate, goal: str, modality: str, *,
+                   wanted_labels: list[str] | None = None, budget_s: float | None = None) -> Mapping:
     deadline = None if budget_s is None else _now() + budget_s
+    if isinstance(candidate, TableCandidate):
+        return _choose_table(candidate, goal, modality, list(wanted_labels or []), deadline)
     return _choose(candidate, goal, modality, list(wanted_labels or []), deadline)
 
 
 def _choose(candidate: HubCandidate, goal: str, modality: str, wanted: list[str], deadline: float | None) -> Mapping:
     hub_id = candidate.hub_id
+    named = _Named(hub_id, candidate.title)
     splits = _get_json(f"{VIEWER}/splits", {"dataset": hub_id}, what=f"the viewer's splits of {hub_id}",
                        deadline=deadline)
     config, split = _pick_split(splits, hub_id)
@@ -673,7 +894,7 @@ def _choose(candidate: HubCandidate, goal: str, modality: str, wanted: list[str]
         raise ProbesUnavailable(f"the viewer shows no rows for {hub_id} ({config}/{split})")
     profile = _profile(modality)
     try:
-        mapping = _map(candidate, goal, modality, columns, rows, profile, wanted)
+        mapping = _map(named, goal, modality, columns, rows, profile, wanted)
     except _NoLabel:
         # A split sorted by label can show one label in its first rows: look once more, in the middle.
         try:
@@ -683,8 +904,8 @@ def _choose(candidate: HubCandidate, goal: str, modality: str, wanted: list[str]
                 raise ProbesUnavailable("no more rows")
             rows += _rows(_rows_page(params, total // 2, what=what, timeout=ROWS_TIMEOUT_S, deadline=deadline))
         except ProbesUnavailable:
-            raise _NoLabel(_map_error(candidate, goal, modality, columns, rows, profile, wanted)) from None
-        mapping = _map(candidate, goal, modality, columns, rows, profile, wanted)
+            raise _NoLabel(_map_error(named, goal, modality, columns, rows, profile, wanted)) from None
+        mapping = _map(named, goal, modality, columns, rows, profile, wanted)
     mapping.config, mapping.split = config, split
     return mapping
 
@@ -693,19 +914,19 @@ class _NoLabel(ProbesUnavailable):
     """The columns fit the input but no label column was found in the rows looked at."""
 
 
-def _map_error(candidate, goal, modality, columns, rows, profile, wanted) -> str:
+def _map_error(named: _Named, goal, modality, columns, rows, profile, wanted) -> str:
     try:
-        _map(candidate, goal, modality, columns, rows, profile, wanted)
+        _map(named, goal, modality, columns, rows, profile, wanted)
     except ProbesUnavailable as exc:
         return str(exc)
-    return f"{candidate.hub_id} has no usable label column"
+    return f"{named.name} has no usable label column"
 
 
-def _map(candidate, goal, modality, columns, rows, profile, wanted) -> Mapping:
-    mapping = _llm_mapping(candidate, goal, modality, columns, rows, profile)
+def _map(named: _Named, goal, modality, columns, rows, profile, wanted) -> Mapping:
+    mapping = _llm_mapping(named, goal, modality, columns, rows, profile)
     if mapping is not None:
         return mapping
-    return _rule_mapping(candidate, goal, columns, rows, profile, modality, wanted)
+    return _rule_mapping(named, goal, columns, rows, profile, modality, wanted)
 
 
 def _pick_split(answer: object, hub_id: str) -> tuple[str, str]:
@@ -813,9 +1034,11 @@ def _column(name: str, kind: dict) -> _Column:
     return _Column(name, "other")
 
 
-def _llm_mapping(candidate, goal, modality, columns, rows, profile) -> Mapping | None:
-    data = {"goal": goal, "modality": modality, "dataset": candidate.hub_id, "title": candidate.title,
+def _llm_mapping(named: _Named, goal, modality, columns, rows, profile) -> Mapping | None:
+    data = {"goal": goal, "modality": modality, "dataset": named.name, "title": named.title,
             "columns": [_describe(col, rows) for col in list(columns.values())[:80]]}
+    if named.hint:
+        data["label_column_named_by_a_web_search"] = named.hint
     answer = llm.ask_json(_MAPPING_INSTRUCTION, data, MAPPING_SCHEMA, max_tokens=300)
     if not isinstance(answer, dict):
         return None
@@ -890,8 +1113,8 @@ def _describe(col: _Column, rows) -> dict:
     return out
 
 
-def _rule_mapping(candidate, goal, columns, rows, profile, modality, wanted) -> Mapping:
-    hub_id, names = candidate.hub_id, ", ".join(list(columns)[:30])
+def _rule_mapping(named: _Named, goal, columns, rows, profile, modality, wanted) -> Mapping:
+    hub_id, names = named.name, ", ".join(list(columns)[:30])
     inputs, media_type, ext, template = _rule_inputs(columns, rows, profile, modality)
     if not inputs:
         if profile and profile.media:
@@ -904,7 +1127,7 @@ def _rule_mapping(candidate, goal, columns, rows, profile, modality, wanted) -> 
         raise ProbesUnavailable(f"{hub_id}'s {inputs[0]} cells do not link to https Hugging Face files "
                                 f"(e.g. {_example_src(columns[inputs[0]], rows)})")
     topic = _topic_words(goal, modality, profile)
-    on_topic = any(_same_word(token, word) for token in _tokens(hub_id) + _tokens(candidate.title) for word in topic)
+    on_topic = any(_same_word(token, word) for token in _tokens(hub_id) + _tokens(named.title) for word in topic)
     weights = _topic_weights(goal, modality, profile)
     goal_words = [w for w in weights if w in _content_words(goal)]
     label = _rule_label(weights, columns, rows, set(inputs), on_topic, goal_words, wanted)
@@ -1177,16 +1400,20 @@ def _list_literal(text: str) -> list[str] | None:
 
 
 # ----------------------------------------------------------------------------- fetching probes
-def fetch_probes(candidate: HubCandidate, mapping: Mapping, dest: Path, *, wanted_labels: list[str] | None = None,
-                 n_per_label: int = 20, max_labels: int = 8, min_per_label: int = 6, budget_s: float = 120,
-                 max_bytes: int = 150_000_000) -> FetchReport:
+def fetch_probes(candidate: HubCandidate | TableCandidate, mapping: Mapping, dest: Path, *,
+                 wanted_labels: list[str] | None = None, n_per_label: int = 20, max_labels: int = 8,
+                 min_per_label: int = 6, budget_s: float = 120, max_bytes: int = 150_000_000,
+                 disjoint_from: list[str] | tuple = ()) -> FetchReport:
     dest = Path(dest)
     shutil.rmtree(dest, ignore_errors=True)  # dest belongs to this fetch: an older sample is replaced
     try:
         dest.mkdir(parents=True, exist_ok=True)
         start = _now()
-        return _fetch(candidate, mapping, dest, wanted_labels or [], n_per_label, max_labels, min_per_label,
-                      start, start + budget_s, max_bytes)
+        limits = _Limits(list(wanted_labels or []), n_per_label, max_labels, min_per_label, max_bytes,
+                         _disjoint(disjoint_from, wanted_labels))
+        if isinstance(candidate, TableCandidate):
+            return _fetch_table(candidate, mapping, dest, limits, start + budget_s)
+        return _fetch(candidate, mapping, dest, limits, start, start + budget_s)
     except ProbesUnavailable:
         shutil.rmtree(dest, ignore_errors=True)
         raise
@@ -1198,7 +1425,42 @@ def fetch_probes(candidate: HubCandidate, mapping: Mapping, dest: Path, *, wante
         raise
 
 
-def _fetch(candidate, mapping, dest, wanted, n_per_label, max_labels, min_per_label, start, deadline, max_bytes):
+@dataclass(frozen=True)
+class _Limits:
+    wanted: list[str]
+    n_per_label: int
+    max_labels: int
+    min_per_label: int
+    max_bytes: int
+    disjoint: tuple[str, ...] = ()  # labels never to choose (disjoint_from), as given
+
+
+def _disjoint(values, wanted) -> tuple[str, ...]:
+    """disjoint_from as strings; a wanted label that is also in it is a contradiction."""
+    out = tuple(str(v).strip() for v in values or () if isinstance(v, str) and v.strip())
+    keys = _loose_keys(out)
+    clash = [w for w in wanted or [] if _loose_hit(w, keys)]
+    if clash:
+        raise ProbesUnavailable(f"wanted labels {clash} are also in disjoint_from")
+    return out
+
+
+def _loose_keys(labels) -> set[str]:
+    """Label keys with case, separators and a plural ending ignored ("Hip-Hop", "hip_hop" and "hiphops" alike)."""
+    keys = set()
+    for label in labels:
+        key = re.sub(r"[\W_]+", "", str(label).lower())
+        if key:
+            keys |= {key, _singular(key)}
+    return keys
+
+
+def _loose_hit(label: str, keys: set[str]) -> bool:
+    key = re.sub(r"[\W_]+", "", str(label).lower())
+    return bool(key) and (key in keys or _singular(key) in keys)
+
+
+def _fetch(candidate, mapping, dest, limits: _Limits, start, deadline):
     hub_id = candidate.hub_id
     params = {"dataset": hub_id, "config": mapping.config, "split": mapping.split}
     what = f"the viewer's rows of {hub_id}"
@@ -1233,23 +1495,36 @@ def _fetch(candidate, mapping, dest, wanted, n_per_label, max_labels, min_per_la
                          + ("; later pages get one try each" if skipped["page_failed"] == 1 else ""))
             continue
         rows_seen += _take(page, mapping, seen, read, skipped)
+    report = _write_probes(hub_id, mapping, dest, seen, rows_seen, skipped, notes, limits, deadline)
+    report.licence, report.source_url, report.hub_id = candidate.licence, candidate.url, hub_id
+    report.licence_source = "the Hub dataset card" if candidate.licence else None
+    return report
+
+
+def _write_probes(name: str, mapping: Mapping, dest: Path, seen: dict, rows_seen: int, skipped: Counter,
+                  notes: list, limits: _Limits, deadline: float) -> FetchReport:
+    """The rows read (seen: row index -> (input, labels)) into dest/<label>/<row index><extension>: inputs merged,
+    labels chosen, multi-labelled and leaking rows dropped, files written or downloaded. The caller fills in the
+    licence and the source."""
     if not seen:
-        raise ProbesUnavailable(f"none of the {rows_seen} rows read from {hub_id} had both an input and a label")
+        raise ProbesUnavailable(f"none of the {rows_seen} rows read from {name} had both an input and a label")
     entries, mixed = _merge_inputs(seen, skipped, notes)
     multi = mapping.label_kind in ("list", "multihot") or bool(mixed)
-    chosen = _choose_labels(entries, mapping, wanted, max_labels, min_per_label, notes, hub_id, multi)
+    chosen = _choose_labels(entries, mapping, limits.wanted, limits.max_labels, limits.min_per_label, notes, name,
+                            multi, limits.disjoint)
     by_label = _assign(entries, chosen, mapping, mixed, skipped, notes)
     if mapping.input_kind == "text":
-        _leak_check(by_label, chosen, skipped, notes, hub_id)
+        _leak_check(by_label, chosen, skipped, notes, name)
     folders = {value: safe_label(value, i) for i, value in enumerate(chosen)}
+    n_per_label, min_per_label = limits.n_per_label, limits.min_per_label
     queues = {value: _spread(sorted(by_label[value]), n_per_label) for value in chosen}
     if mapping.input_kind == "text":
         counts, sizes = _write_texts(queues, folders, mapping, dest, n_per_label)
     else:
-        counts, sizes, scanned = _download_all(queues, folders, mapping, dest, n_per_label, deadline, max_bytes,
-                                               skipped, notes)
+        counts, sizes, scanned = _download_all(queues, folders, mapping, dest, n_per_label, deadline,
+                                               limits.max_bytes, skipped, notes)
         if scanned and skipped["leak"] * 2 > scanned:
-            raise ProbesUnavailable(f"{hub_id}'s files name their own label in their metadata in {skipped['leak']} "
+            raise ProbesUnavailable(f"{name}'s files name their own label in their metadata in {skipped['leak']} "
                                     f"of {scanned} downloaded files, so they cannot test a sense")
     kept = {}
     for value in chosen:
@@ -1258,16 +1533,16 @@ def _fetch(candidate, mapping, dest, wanted, n_per_label, max_labels, min_per_la
         else:
             shutil.rmtree(dest / folders[value], ignore_errors=True)
             notes.append(f"dropped label {value!r}: {counts[value]} files, fewer than {min_per_label}")
-    missing = [w for w in wanted if _key(w) not in {_key(v) for v in kept}]
+    missing = [w for w in limits.wanted if _key(w) not in {_key(v) for v in kept}]
     if missing:
-        raise ProbesUnavailable(f"wanted labels without {min_per_label} probe files in {hub_id}: {missing}")
+        raise ProbesUnavailable(f"wanted labels without {min_per_label} probe files in {name}: {missing}")
     if len(kept) < 2:
-        raise ProbesUnavailable(f"only {len(kept)} label(s) of {hub_id} reached {min_per_label} probe files "
+        raise ProbesUnavailable(f"only {len(kept)} label(s) of {name} reached {min_per_label} probe files "
                                 f"({sum(counts.values())} files written; skipped: {dict(skipped)})")
     order = sorted(kept, key=lambda v: -kept[v])
     return FetchReport(dest, [folders[v] for v in order], {folders[v]: kept[v] for v in order}, rows_seen,
-                       dict(skipped), candidate.licence, candidate.url, notes, hub_id,
-                       {folders[v]: v for v in order}, sum(sizes[v] for v in order))
+                       dict(skipped), None, "", notes, "", {folders[v]: v for v in order},
+                       sum(sizes[v] for v in order))
 
 
 def _offsets(total: int) -> list[int]:
@@ -1280,8 +1555,12 @@ def _offsets(total: int) -> list[int]:
 
 def _take(page: dict, mapping: Mapping, seen: dict, read: set, skipped: Counter) -> int:
     """Read one page's rows into seen; returns how many new rows it held."""
+    return _take_rows(_rows(page), mapping, seen, read, skipped)
+
+
+def _take_rows(rows, mapping: Mapping, seen: dict, read: set, skipped: Counter) -> int:
     n = 0
-    for idx, row, truncated in _rows(page):
+    for idx, row, truncated in rows:
         if idx in read:
             continue
         read.add(idx)
@@ -1369,7 +1648,8 @@ def _merge_inputs(seen: dict, skipped: Counter, notes: list) -> tuple[dict, set]
     return entries, mixed
 
 
-def _choose_labels(entries, mapping, wanted, max_labels, min_per_label, notes, hub_id, multi) -> list[str]:
+def _choose_labels(entries, mapping, wanted, max_labels, min_per_label, notes, hub_id, multi,
+                   disjoint: tuple[str, ...] = ()) -> list[str]:
     rows_labels = [labels for _, labels in entries.values()]
     freq = Counter(v for labels in rows_labels for v in labels)
     if wanted:
@@ -1387,10 +1667,14 @@ def _choose_labels(entries, mapping, wanted, max_labels, min_per_label, notes, h
         notes.append(f"labels are the wanted ones, matched to the dataset's values: {chosen}")
         return chosen
     observed = {_key(v) for v in freq}
+    avoid, avoided = _loose_keys(disjoint), []
     chosen, taken, combined = [], set(), set()
     for value, count in sorted(freq.items(), key=lambda kv: -kv[1]):
         if len(chosen) >= max_labels or count < min_per_label:
             break
+        if avoid and _loose_hit(value, avoid):
+            avoided.append(value)
+            continue
         folder = _folder(value)
         if folder is None or folder in taken:
             notes.append(f"skipped label {value!r}: its folder name would be empty or shared")
@@ -1407,10 +1691,16 @@ def _choose_labels(entries, mapping, wanted, max_labels, min_per_label, notes, h
         if multi and min(_exclusive(rows_labels, trial).values()) < min_per_label:
             continue
         chosen, taken, combined = trial, taken | {folder}, combined | parts
+    if avoided:
+        notes.append(f"labels in disjoint_from were not chosen: {', '.join(map(repr, avoided[:12]))}"
+                     + (f" and {len(avoided) - 12} more" if len(avoided) > 12 else "")
+                     + "; a row carrying one counts only for another label it carries, like any unchosen label")
     if len(chosen) < 2:
         raise ProbesUnavailable(f"{hub_id} has fewer than 2 label values with {min_per_label} usable rows among "
                                 f"{len(entries)} inputs read"
-                                + (" (inputs carrying exactly one label)" if multi else ""))
+                                + (" (inputs carrying exactly one label)" if multi else "")
+                                + (f", once the {len(avoided)} labels in disjoint_from are left out" if avoided
+                                   else ""))
     return chosen
 
 
@@ -1818,64 +2108,760 @@ def _remux(data: bytes, ext: str, media_type: str, ffmpeg: str, timeout_s: float
         return target.read_bytes() or None
 
 
+# ----------------------------------------------------------------------------- table files a web search names
+_NUMBER = re.compile(r"[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?")
+_INTEGER = re.compile(r"[+-]?\d+")
+_NO_LICENCE = frozenset(("", "unknown", "none", "null", "n/a", "na", "not specified", "unspecified", "not stated",
+                         "not available", "unclear", "not found", "no license", "no licence", "see source"))
+_NOT_IDS = frozenset(("n/a", "na/na", "none/none", "owner/name", "unknown/unknown", "not/applicable"))
+
+
+def _hub_id_of(text: object) -> str | None:
+    """The Hugging Face dataset id in a plain "owner/name" (or "datasets/owner/name"), or in an https
+    huggingface.co/datasets/owner/name[/...] URL; else None."""
+    if not isinstance(text, str) or not text.strip() or len(text) > 2000:
+        return None
+    text = text.strip()
+    if "://" in text:
+        try:
+            parts = urllib.parse.urlsplit(text)
+            host = (parts.hostname or "").lower()
+        except ValueError:
+            return None
+        bits = [b for b in parts.path.split("/") if b]
+        if parts.scheme != "https" or host not in ("huggingface.co", "www.huggingface.co", "hf.co") or len(bits) < 3 \
+                or bits[0] != "datasets":
+            return None
+        hub_id = f"{bits[1]}/{bits[2]}"
+    else:
+        hub_id = text[len("datasets/"):] if text.startswith("datasets/") else text
+    if not _HUB_ID.match(hub_id) or {".", ".."} & set(hub_id.split("/")) or hub_id.lower() in _NOT_IDS:
+        return None
+    return hub_id
+
+
+def _file_url(url: object) -> tuple[str | None, str | None]:
+    """(the https download URL of a table file, None) or (None, why it is not one). A GitHub blob or raw page URL
+    becomes its raw.githubusercontent.com file, a Hugging Face blob URL its resolve URL; the file must be named
+    like a CSV, TSV, JSON or JSON Lines file, a .zip or .gz, or have no suffix."""
+    if not isinstance(url, str) or not url.strip():
+        return None, "no URL"
+    url = url.strip()
+    try:
+        url.encode("ascii")
+        parts = urllib.parse.urlsplit(url)
+        host, port = (parts.hostname or "").lower(), parts.port
+    except (UnicodeError, ValueError):
+        return None, "not a plain ASCII URL"
+    if parts.scheme != "https":
+        return None, f"not an https URL ({parts.scheme or 'no scheme'})"
+    if parts.username or parts.password or port not in (None, 443):
+        return None, "a URL with a user, password or port"
+    bits = [b for b in parts.path.split("/") if b]
+    if host in ("github.com", "www.github.com"):
+        if len(bits) < 5 or bits[2] not in ("blob", "raw"):
+            return None, "a GitHub page, not a file (only blob and raw file URLs are read)"
+        url = f"https://raw.githubusercontent.com/{bits[0]}/{bits[1]}/{'/'.join(bits[3:])}"
+    elif host in ("huggingface.co", "www.huggingface.co", "hf.co"):
+        if len(bits) < 6 or bits[0] != "datasets" or bits[3] not in ("blob", "resolve", "raw"):
+            return None, "a Hugging Face page, not a dataset file"
+        url = f"https://huggingface.co/datasets/{bits[1]}/{bits[2]}/resolve/{'/'.join(bits[4:])}"
+    elif host == "zenodo.org":
+        if "files" not in bits[:-1]:
+            return None, "a Zenodo page, not a file"
+        url = urllib.parse.urlunsplit(("https", host, parts.path, parts.query, ""))
+    elif host in ("raw.githubusercontent.com", "gist.githubusercontent.com"):
+        if len(bits) < 4:
+            return None, "not a file"
+        url = urllib.parse.urlunsplit(("https", host, parts.path, "", ""))
+    else:
+        return None, f"{host or 'no host'} is not an allowed host (Hugging Face, GitHub or Zenodo)"
+    name = _file_name(url).lower()
+    inner = name[:-3] if name.endswith(".gz") else name
+    suffix = PurePosixPath(inner).suffix
+    if suffix and suffix not in TABLE_SUFFIXES + (".txt", ".zip") and not re.fullmatch(r"\.\d+", suffix):
+        return None, f"{name!r} is not a CSV, TSV, JSON or JSON Lines file, or a .zip or .gz of one"
+    return url, None
+
+
+def _file_name(url: str) -> str:
+    bits = [b for b in urllib.parse.urlsplit(url).path.split("/") if b]
+    if len(bits) >= 2 and bits[-1] == "content":  # zenodo.org/api/records/<id>/files/<name>/content
+        bits = bits[:-1]
+    return urllib.parse.unquote(bits[-1]) if bits else ""
+
+
+def _table_display(url: str) -> str:
+    parts = urllib.parse.urlsplit(url)
+    return (parts.hostname or "") + urllib.parse.unquote(parts.path)[:200]
+
+
+@dataclass
+class _Web:
+    used: bool
+    reason: str | None = None  # why the web search was not used
+    origin: str | None = None  # "live", "cache" (research's disk cache) or "memo" (an earlier answer this run)
+    hub_ids: list[str] = field(default_factory=list)
+    tables: list[TableCandidate] = field(default_factory=list)
+    refused: list[dict] = field(default_factory=list)  # [{"url" or "hub_id", "reason"}]
+
+    def summary(self) -> dict:
+        return {"used": self.used, "reason": self.reason, "origin": self.origin, "hub_ids": list(self.hub_ids),
+                "tables": [t.url for t in self.tables], "refused": [dict(r) for r in self.refused]}
+
+
+_WEB_MEMO: dict[str, tuple[dict, str]] = {}  # query -> (answer data, origin): a goal searched again costs nothing
+
+
+def _web_query(goal: str, modality: str) -> str:
+    key = re.sub(r"\s+", " ", str(modality).strip().lower())
+    what = _WEB_INPUTS.get(_ALIASES.get(key, key)) or f"a {key or 'file'} input"
+    return _WEB_QUERY.format(goal=" ".join(str(goal).split())[:300], input=what)
+
+
+def _web_search(goal: str, modality: str, deadline: float) -> _Web:
+    """The web search's Hub ids and table files, or _Web(used=False, reason) when it cannot be had: no Linkup key,
+    fake mode, the network, no time, or any failure. Never raises."""
+    try:
+        query = _web_query(goal, modality)
+        memo = _WEB_MEMO.get(query)
+        if memo is not None:
+            data, origin = memo[0], "memo"
+        else:
+            left = deadline - _now()
+            if left < 3:
+                return _Web(False, "no time was left for the web search")
+            try:
+                found = research.search_structured(query, WEB_SCHEMA, include_domains=list(WEB_DOMAINS),
+                                                   max_results=10, timeout=min(WEB_TIMEOUT_S, left))
+            except research.ResearchUnavailable as exc:
+                return _Web(False, f"the web search is unavailable: {exc}")
+            if found.origin == "fake":
+                return _Web(False, "fake mode (SENSE_FAKE) has no web search, so only the Hub was searched")
+            data, origin = found.data, found.origin
+            if len(_WEB_MEMO) >= 32:
+                _WEB_MEMO.clear()
+            _WEB_MEMO[query] = (data, origin)
+        web = _web_items(data, modality)
+        web.origin = origin
+        return web
+    except Exception as exc:  # the web search is optional: any failure leaves the Hub search alone
+        return _Web(False, f"the web search failed: {type(exc).__name__}: {str(exc)[:200]}")
+
+
+def _web_items(data: object, modality: str) -> _Web:
+    items = data.get("labelled_datasets") if isinstance(data, dict) else None
+    web = _Web(True)
+    profile = _profile(modality)
+    urls = set()
+    for item in (items if isinstance(items, list) else [])[:MAX_WEB_ITEMS]:
+        if not isinstance(item, dict):
+            continue
+        name, hint = _short(item.get("name"), 120), _short(item.get("label_column"), 80)
+        given = _short(item.get("download_url"), 2000)
+        hub_id = _hub_id_of(_short(item.get("hub_id"), 300)) or _hub_id_of(given)
+        if hub_id and hub_id not in web.hub_ids:
+            web.hub_ids.append(hub_id)
+        if not given or (_hub_id_of(given) and _file_url(given)[0] is None):
+            continue  # no file, or a Hugging Face dataset page: the Hub id covers it
+        url, problem = _file_url(given)
+        if problem is None and profile and profile.media:
+            problem = f"a table file gives text inputs only, not {modality} files"
+        if problem is not None:
+            web.refused.append({"url": given[:300], "reason": problem})
+            continue
+        if url in urls:
+            continue
+        urls.add(url)
+        licence = _web_licence(item.get("licence"))
+        web.tables.append(TableCandidate(url, name or _file_name(url), licence,
+                                         "the web search's answer" if licence else None, hint,
+                                         _short(item.get("page_url"), 300), given))
+    return web
+
+
+def _short(value: object, limit: int) -> str:
+    return " ".join(value.split())[:limit] if isinstance(value, str) else ""
+
+
+def _web_licence(value: object) -> str | None:
+    text = _short(value, 120)
+    return None if text.lower().strip(" .") in _NO_LICENCE else text
+
+
+# ----------------------------------------------------------------------------- reading a table
+def _choose_table(table: TableCandidate, goal: str, modality: str, wanted: list[str],
+                  deadline: float | None) -> Mapping:
+    """Download and parse the table (once), then choose its columns as for a Hub dataset, on MAPPING_ROWS rows
+    spread evenly over it. The source's own names (its host, path and archive member, never the web search's title)
+    say whether it is about the goal's topic."""
+    columns, rows, member, _ = _load_table(table, deadline)
+    named = _Named(_table_display(table.url), member, table.label_hint)
+    mapping = _map(named, goal, modality, columns, _even(rows, MAPPING_ROWS), _profile(modality), wanted)
+    mapping.config, mapping.split = member, ""
+    return mapping
+
+
+def _fetch_table(table: TableCandidate, mapping: Mapping, dest: Path, limits: _Limits,
+                 deadline: float) -> FetchReport:
+    columns, rows, member, load_notes = _load_table(table, deadline)
+    name = _table_display(table.url)
+    needed = list(mapping.input_columns) + ([mapping.label_column] if mapping.label_column else []) + (
+        list(mapping.label_names or []) if mapping.label_kind == "multihot" else [])
+    if mapping.input_kind != "text" or any(column not in columns for column in needed):
+        raise ProbesUnavailable(f"the mapping does not fit the table {name}: a table gives text inputs from its own "
+                                "columns")
+    skipped: Counter = Counter()
+    notes = list(load_notes)
+    seen: dict[int, tuple[str, list[str]]] = {}
+    rows_seen = _take_rows(rows, mapping, seen, set(), skipped)
+    report = _write_probes(name, mapping, dest, seen, rows_seen, skipped, notes, limits, deadline)
+    table.licence, table.licence_source = _table_licence(table, deadline)
+    report.licence, report.licence_source, report.source_url = table.licence, table.licence_source, table.url
+    return report
+
+
+def _load_table(table: TableCandidate, deadline: float | None):
+    """(columns, rows as (row number, row, set()), archive member or "", notes), downloaded and parsed once."""
+    if table._loaded is None:
+        name = _table_display(table.url)
+        if not _table_url_ok(table.url):
+            raise ProbesUnavailable(f"{table.url[:120]!r} is not an https URL on a Hugging Face, GitHub or Zenodo "
+                                    "host")
+        left = TABLE_TIMEOUT_S if deadline is None else min(TABLE_TIMEOUT_S, deadline - _now())
+        try:
+            data = _table_get(table.url, timeout=left, max_bytes=TABLE_MAX_BYTES)
+        except _HttpError as exc:
+            raise _RequestFailed(exc.reason, f"downloading {name} failed: {exc}") from None
+        body, inner, member = _unpack(data, _file_name(table.url), name)
+        columns, rows, notes = _parse_table(body, inner, name)
+        if member:
+            notes.insert(0, f"read {member!r}, the first table file in the zip archive")
+        table._loaded = (columns, rows, member, notes)
+    return table._loaded
+
+
+def _unpack(data: bytes, name: str, display: str) -> tuple[bytes, str, str]:
+    """(file bytes, file name, zip member or ""): a .zip's first member named like a table file, a .gz unpacked;
+    either at most TABLE_MAX_BYTES once unpacked."""
+    lower = name.lower()
+    if data[:4] == b"PK\x03\x04" or lower.endswith(".zip"):
+        try:
+            with zipfile.ZipFile(io.BytesIO(data)) as archive:
+                for entry in archive.infolist():
+                    member = entry.filename
+                    base = PurePosixPath(member).name
+                    if entry.is_dir() or member.startswith("__MACOSX/") or base.startswith(".") \
+                            or PurePosixPath(base.lower()).suffix not in TABLE_SUFFIXES:
+                        continue
+                    if entry.file_size > TABLE_MAX_BYTES:
+                        raise ProbesUnavailable(f"{display}'s member {member!r} unpacks to {entry.file_size:,} "
+                                                f"bytes, over the {TABLE_MAX_BYTES:,} byte cap")
+                    with archive.open(entry) as handle:
+                        body = handle.read(TABLE_MAX_BYTES + 1)
+                    if len(body) > TABLE_MAX_BYTES:
+                        raise ProbesUnavailable(f"{display}'s member {member!r} unpacks to over the "
+                                                f"{TABLE_MAX_BYTES:,} byte cap")
+                    return body, base, member
+        except (zipfile.BadZipFile, zipfile.LargeZipFile, NotImplementedError, RuntimeError, EOFError, OSError,
+                zlib.error, ValueError) as exc:
+            raise ProbesUnavailable(f"{display} is not a readable zip archive: {type(exc).__name__}") from None
+        raise ProbesUnavailable(f"{display} holds no CSV, TSV, JSON or JSON Lines file")
+    if data[:2] == b"\x1f\x8b" or lower.endswith(".gz"):
+        try:
+            with gzip.GzipFile(fileobj=io.BytesIO(data)) as handle:
+                body = handle.read(TABLE_MAX_BYTES + 1)
+        except (OSError, EOFError, zlib.error, ValueError) as exc:
+            raise ProbesUnavailable(f"{display} is not a readable gzip file: {type(exc).__name__}") from None
+        if len(body) > TABLE_MAX_BYTES:
+            raise ProbesUnavailable(f"{display} unpacks to over the {TABLE_MAX_BYTES:,} byte cap")
+        return body, name[:-3] if lower.endswith(".gz") else name, ""
+    return data, name, ""
+
+
+def _decode(data: bytes) -> str:
+    if data.startswith((b"\xff\xfe", b"\xfe\xff")):
+        return data.decode("utf-16", errors="replace")
+    try:
+        return data.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        return data.decode("latin-1")
+
+
+class _Sampler:
+    """Every step-th row, the step doubling whenever more than cap rows are kept: rows spread evenly over a file of
+    any length, without holding all of it."""
+
+    def __init__(self, cap: int):
+        self.cap, self.step, self.kept, self.total = cap, 1, [], 0
+
+    def add(self, idx: int, row) -> None:
+        self.total += 1
+        if idx % self.step:
+            return
+        self.kept.append((idx, row))
+        if len(self.kept) > self.cap:
+            self.step *= 2
+            self.kept = [(i, r) for i, r in self.kept if i % self.step == 0]
+
+
+def _row_cap(n_columns: int) -> int:
+    return max(1_000, min(MAX_TABLE_ROWS, MAX_TABLE_CELLS // max(1, n_columns)))
+
+
+def _parse_table(body: bytes, name: str, display: str):
+    """(columns, rows, notes) of a CSV or TSV (header row; dialect sniffed), a JSON list of objects or JSON Lines
+    file, read with the standard library. At most _row_cap rows are kept, spread evenly over the file; CSV columns
+    whose every value is a number become numbers."""
+    text = _decode(body)
+    suffix = PurePosixPath(name.lower()).suffix
+    start = text.lstrip()[:1]
+    if start == "<":
+        raise ProbesUnavailable(f"{display} is an HTML or XML page, not a data file")
+    notes: list[str] = []
+    if suffix in (".jsonl", ".ndjson") or (suffix != ".json" and start == "{"):
+        names, sampler, bad = _json_rows(_json_lines(text), display)
+        kind = "JSON Lines"
+    elif suffix == ".json" or start == "[":
+        records = _json_list(text, display)
+        if records is None:  # a .json file holding one object per line
+            names, sampler, bad = _json_rows(_json_lines(text), display)
+            kind = "JSON Lines"
+        else:
+            names, sampler, bad = _json_rows(records, display)
+            kind = "JSON"
+    else:
+        names, sampler, bad = _csv_rows(text, suffix, display, notes)
+        kind = "TSV" if suffix in (".tsv", ".tab") else "CSV"
+    if kind in ("CSV", "TSV"):
+        rows = [(idx, dict(zip(names, (f.strip() or None for f in fields))), set()) for idx, fields in sampler.kept]
+    else:
+        rows = [(idx, {k: record[k] for k in names if k in record}, set()) for idx, record in sampler.kept]
+    if not rows:
+        raise ProbesUnavailable(f"{display} holds no data rows")
+    if kind in ("CSV", "TSV"):
+        _numbers(names, rows)
+    columns = {n: _table_column(n, [row.get(n) for _, row, _ in rows]) for n in names}
+    notes.insert(0, f"read {sampler.total:,} rows of {display} ({kind}, {len(names)} columns)"
+                 + (f"; kept {len(rows):,} spread evenly over them" if len(rows) < sampler.total else "")
+                 + (f"; skipped {bad:,} malformed rows" if bad else ""))
+    return columns, rows, notes
+
+
+def _dialect(sample: str, suffix: str):
+    lines = sample.splitlines()
+    probe = "\n".join((lines[:-1] if len(lines) > 2 else lines)[:50])  # the last line may be cut
+    options = [csv.excel_tab] if suffix in (".tsv", ".tab") else []
+    try:
+        options.append(csv.Sniffer().sniff(probe, delimiters=",\t;|"))
+    except csv.Error:
+        pass
+    options += [csv.excel, csv.excel_tab]
+    for dialect in options:
+        try:
+            rows = [r for r in csv.reader(io.StringIO(probe, newline=""), dialect) if r]
+        except csv.Error:
+            continue
+        if rows and len(rows[0]) >= 2 and sum(len(r) == len(rows[0]) for r in rows) >= 0.8 * len(rows):
+            return dialect
+    return options[0]
+
+
+def _column_names(header: list) -> list[str]:
+    names = []
+    for i, raw in enumerate(header):
+        name = " ".join(str(raw).split())[:100] or f"column_{i}"
+        while name in names:
+            name += "_2"
+        names.append(name)
+    return names
+
+
+def _csv_rows(text: str, suffix: str, display: str, notes: list):
+    reader = csv.reader(io.StringIO(text, newline=""), _dialect(text[:65_536], suffix))
+    try:
+        header = next(reader)
+    except StopIteration:
+        raise ProbesUnavailable(f"{display} is empty") from None
+    except csv.Error as exc:
+        raise ProbesUnavailable(f"{display} could not be read as CSV: {exc}") from None
+    names = _column_names(header)[:MAX_TABLE_COLUMNS]
+    if len(names) < 2:
+        raise ProbesUnavailable(f"{display} has fewer than 2 columns")
+    sampler, bad, idx = _Sampler(_row_cap(len(names))), 0, 0
+    try:
+        for fields in reader:
+            if not any(f.strip() for f in fields):
+                continue
+            if len(fields) > len(header) and any(f.strip() for f in fields[len(header):]):
+                bad += 1
+                continue
+            sampler.add(idx, (fields + [""] * len(names))[:len(names)])
+            idx += 1
+    except csv.Error as exc:
+        notes.append(f"stopped reading at data row {idx}: {exc}")
+    return names, sampler, bad
+
+
+def _json_list(text: str, display: str) -> list | None:
+    """The objects of a JSON list (or of the one list of objects in a JSON object); None when the text is not one
+    JSON value (it may be JSON Lines)."""
+    try:
+        value = json.loads(text)
+    except ValueError:
+        return None
+    if isinstance(value, dict):
+        lists = [v for v in value.values() if isinstance(v, list) and v and all(isinstance(x, dict) for x in v[:50])]
+        value = lists[0] if len(lists) == 1 else None
+    if not isinstance(value, list):
+        raise ProbesUnavailable(f"{display} is JSON but not a list of objects")
+    return value
+
+
+def _json_lines(text: str):
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            yield json.loads(line)
+        except ValueError:
+            yield None
+
+
+def _json_rows(records, display: str):
+    names: list[str] = []
+    known: set[str] = set()
+    sampler, bad, idx = None, 0, 0
+    for record in records:
+        if not isinstance(record, dict):
+            bad += 1
+            continue
+        for key in record:
+            if key not in known and len(names) < MAX_TABLE_COLUMNS and isinstance(key, str):
+                known.add(key)
+                names.append(key)
+        if sampler is None:
+            sampler = _Sampler(_row_cap(len(record)))
+        sampler.add(idx, record)
+        idx += 1
+    if sampler is None:
+        raise ProbesUnavailable(f"{display} holds no JSON objects")
+    return names, sampler, bad
+
+
+def _numbers(names: list[str], rows) -> None:
+    """Turn each CSV column whose every value is a number into ints or floats (so 0/1 blocks and coordinates read as
+    numbers)."""
+    for name in names:
+        values = [row[name] for _, row, _ in rows if row.get(name) is not None]
+        if values and all(_NUMBER.fullmatch(v) for v in values):
+            for _, row, _ in rows:
+                value = row.get(name)
+                if value is not None:
+                    row[name] = int(value) if _INTEGER.fullmatch(value) else float(value)
+
+
+def _table_column(name: str, values: list) -> _Column:
+    present = [v for v in values if v is not None and v != "" and v != []]
+    if not present:
+        return _Column(name, "other")
+    if all(isinstance(v, (int, float)) for v in present):
+        return _Column(name, "number")
+    if all(isinstance(v, str) for v in present):
+        return _Column(name, "string")
+    if all(isinstance(v, list) and all(isinstance(x, str) for x in v) for v in present):
+        return _Column(name, "list")
+    return _Column(name, "other")
+
+
+def _even(items: list, k: int) -> list:
+    return list(items) if len(items) <= k else [items[int(i * len(items) / k)] for i in range(k)]
+
+
+# ----------------------------------------------------------------------------- a table's licence
+def _table_licence(table: TableCandidate, deadline: float) -> tuple[str, str]:
+    """(licence, where it was read). The web search's answer when it gave one; else the first line of the
+    repository's LICENSE file (GitHub), the record's licence (Zenodo) or the dataset card's licence (Hugging Face);
+    else "unknown". Never invented."""
+    if table.licence:
+        return table.licence, table.licence_source or "the web search's answer"
+    parts = urllib.parse.urlsplit(table.url)
+    host, bits = (parts.hostname or "").lower(), [b for b in parts.path.split("/") if b]
+    if host == "raw.githubusercontent.com" and len(bits) >= 4:
+        ref = "/".join(bits[2:5]) if bits[2] == "refs" and len(bits) >= 6 else bits[2]
+        base = f"https://raw.githubusercontent.com/{bits[0]}/{bits[1]}/{ref}/"
+        for name in ("LICENSE", "LICENSE.md", "LICENSE.txt", "LICENCE", "COPYING"):
+            data = _licence_get(base + name, deadline, LICENCE_MAX_BYTES)
+            line = _first_line(data) if data else ""
+            if line:
+                return line, f"the first line of {base + name}"
+        return "unknown", f"no LICENSE file could be read in github.com/{bits[0]}/{bits[1]} at {ref}"
+    if host == "zenodo.org":
+        record = next((bits[i + 1] for i, b in enumerate(bits[:-1]) if b in ("records", "record")), None)
+        if record and record.isdigit():
+            data = _licence_get(f"https://zenodo.org/api/records/{record}", deadline, 5_000_000)
+            licence = _zenodo_licence(data)
+            if licence:
+                return licence, f"the Zenodo record {record}"
+        return "unknown", "the Zenodo record's licence could not be read"
+    hub_id = _hub_id_of(table.url) if _allowed_url(table.url) else None
+    if hub_id:
+        try:
+            record = _get_json(f"{HUB_SEARCH}/{hub_id}", {}, what=f"the Hub record of {hub_id}", deadline=deadline,
+                               retry=False)
+        except ProbesUnavailable:
+            record = None
+        found = _candidate(record) if isinstance(record, dict) else None
+        if found and found.licence:
+            return found.licence, f"the Hub dataset card of {hub_id}"
+        return "unknown", f"the Hub dataset card of {hub_id} states no licence that could be read"
+    return "unknown", "the source states no licence that could be read"
+
+
+def _licence_get(url: str, deadline: float, max_bytes: int) -> bytes | None:
+    left = min(LICENCE_TIMEOUT_S, deadline - _now())
+    if left < 0.5:
+        return None
+    try:
+        return _table_get(url, timeout=left, max_bytes=max_bytes)
+    except _HttpError:
+        return None
+
+
+def _first_line(data: bytes) -> str:
+    for line in _decode(data).splitlines():
+        line = " ".join(line.strip().lstrip("#").split())
+        if re.search(r"[A-Za-z0-9]", line):
+            return line[:200]
+    return ""
+
+
+def _zenodo_licence(data: bytes | None) -> str | None:
+    try:
+        record = json.loads(data) if data else None
+    except ValueError:
+        return None
+    licence = record.get("metadata", {}).get("license") if isinstance(record, dict) else None
+    if isinstance(licence, dict):
+        licence = licence.get("id") or licence.get("title")
+    return _short(licence, 120) or None if isinstance(licence, str) else None
+
+
 # ----------------------------------------------------------------------------- the whole step
+class _Exclusions:
+    """exclude_sources: Hub ids, dataset pages, file URLs (GitHub blob or raw alike), folders or repositories. A
+    candidate is excluded when its id or URL is one of them, when it is a file in the same folder as an excluded file
+    (another file of the same dataset), or when its URL lies under an excluded URL (a repository or folder)."""
+
+    def __init__(self, values):
+        self.keys, self.folders, self.prefixes = set(), set(), set()
+        for value in values or ():
+            if not isinstance(value, str) or not value.strip():
+                continue
+            value = value.strip().rstrip("/")
+            self.keys.add(value.lower())
+            hub_id = _hub_id_of(value)
+            if hub_id:
+                self.keys.add(hub_id.lower())
+            url, _ = _file_url(value)
+            if url:
+                self.keys.add(url.lower())
+                self.folders.add(url.lower().rsplit("/", 1)[0])
+            if "://" in value:
+                self.prefixes.add(value.lower() + "/")
+                bits = [b for b in urllib.parse.urlsplit(value).path.split("/") if b]
+                if (urllib.parse.urlsplit(value).hostname or "").lower() in ("github.com", "www.github.com") \
+                        and len(bits) >= 2:
+                    self.prefixes.add(f"https://raw.githubusercontent.com/{bits[0]}/{bits[1]}/".lower())
+
+    def why(self, candidate) -> str | None:
+        if isinstance(candidate, TableCandidate):
+            url = candidate.url.lower()
+            keys = {url, candidate.given_url.strip().rstrip("/").lower()}
+            hub_id = _hub_id_of(candidate.url)
+            keys |= {hub_id.lower()} if hub_id else set()
+            if keys & self.keys:
+                return "in exclude_sources"
+            if url.rsplit("/", 1)[0] in self.folders:
+                return "a file in the same folder as an excluded file"
+            if any(url.startswith(prefix) for prefix in self.prefixes):
+                return "under an excluded URL"
+            return None
+        return "in exclude_sources" if {candidate.hub_id.lower(), candidate.url.lower()} & self.keys else None
+
+
+def _from_web(candidate) -> bool:
+    return isinstance(candidate, TableCandidate) or candidate.found_by != "hub"
+
+
+def _window(ranked: list, n: int) -> list:
+    """The first n candidates in rank order, but with up to n // 2 of those a web search named among them."""
+    web = [c for c in ranked if _from_web(c)][:n // 2]
+    keep = {id(c) for c in web}
+    for candidate in ranked:
+        if len(keep) >= n:
+            break
+        keep.add(id(candidate))
+    return [c for c in ranked if id(c) in keep]
+
+
+def _folder_for(candidate) -> str:
+    if isinstance(candidate, TableCandidate):
+        stem = PurePosixPath(_file_name(candidate.url)).name.split(".")[0]
+        return f"web__{safe_label(stem, 0)}__{hashlib.sha256(candidate.url.encode()).hexdigest()[:8]}"
+    return candidate.hub_id.replace("/", "__")
+
+
+def _tried(candidate, reason: str) -> dict:
+    if isinstance(candidate, TableCandidate):
+        return {"hub_id": "", "url": candidate.url, "reason": reason}
+    return {"hub_id": candidate.hub_id, "reason": reason}
+
+
+def _web_note(web: _Web) -> str:
+    if not web.used:
+        return f"; the web search was not used ({web.reason})"
+    if not (web.hub_ids or web.tables):
+        return "; the web search named no usable source"
+    return ""
+
+
+def _add_web_hub_ids(web: _Web, found: dict, hits: Counter, exclusions: _Exclusions, excluded: list,
+                     deadline: float) -> None:
+    """The Hub ids the web search named join the Hub candidates, from their Hub records (so gated, private and
+    viewer-less datasets are dropped as in the search)."""
+    known = {hub_id.lower(): hub_id for hub_id in found}
+    for hub_id in web.hub_ids:
+        if exclusions.keys & {hub_id.lower(), f"https://huggingface.co/datasets/{hub_id}".lower()}:
+            excluded.append({"source": hub_id, "reason": "in exclude_sources"})
+            continue
+        if hub_id.lower() in known:
+            same = found[known[hub_id.lower()]]
+            same.found_by = "both" if same.found_by == "hub" else same.found_by
+            hits[same.hub_id] += 1
+            continue
+        if deadline - _now() < 5:
+            web.refused.append({"hub_id": hub_id, "reason": "no time was left to read its Hub record"})
+            continue
+        try:
+            record = _get_json(f"{HUB_SEARCH}/{hub_id}", {}, what=f"the Hub record of {hub_id}", deadline=deadline)
+        except ProbesUnavailable as exc:
+            web.refused.append({"hub_id": hub_id, "reason": str(exc)})
+            continue
+        candidate = _candidate(record)
+        if candidate is None:
+            web.refused.append({"hub_id": hub_id, "reason": "gated, private, disabled, or its card turns the "
+                                                            "viewer off"})
+            continue
+        candidate.found_by = "web"
+        found[candidate.hub_id] = candidate
+        known[candidate.hub_id.lower()] = candidate.hub_id
+        hits[candidate.hub_id] += 1
+
+
 def find_probes(goal: str, modality: str, dest_root: Path, *, wanted_labels: list[str] | None = None,
                 emit: Callable[[dict], None] | None = None, max_candidates: int = 3, max_inspect: int = 12,
-                total_budget_s: float | None = None, **fetch_kwargs) -> tuple[Path, dict]:
+                total_budget_s: float | None = None, exclude_sources: list[str] | tuple = (),
+                disjoint_from: list[str] | tuple = (), **fetch_kwargs) -> tuple[Path, dict]:
     say = emit or (lambda event: None)
     dest_root = Path(dest_root)
     fetch_budget = float(fetch_kwargs.pop("budget_s", 120))
     total = INSPECT_ALLOWANCE_S + max_candidates * fetch_budget if total_budget_s is None else float(total_budget_s)
     deadline = _now() + total
+    wanted = list(wanted_labels or [])
+    disjoint = _disjoint(disjoint_from, wanted)
+    exclusions = _Exclusions(exclude_sources)
     say({"action": "search", "status": "start", "goal": str(goal)[:300], "modality": str(modality)})
-    try:
-        candidates, queries, origin = _search(goal, modality, 20, deadline)
-    except ProbesUnavailable as exc:
-        say({"action": "search", "status": "fail", "reason": str(exc)})
-        raise
-    say({"action": "search", "status": "ok", "queries": queries, "origin": origin, "found": len(candidates),
-         "top": [c.hub_id for c in candidates[:max_inspect]]})
-    if not candidates:
-        raise ProbesUnavailable(f"the Hub search found no open dataset for queries {queries}")
+    pool = ThreadPoolExecutor(1)
+    try:  # the web search runs beside the Hub search
+        web_job = pool.submit(_web_search, goal, modality, deadline)
+        hub_error = None
+        try:
+            found, hits, errors, queries, origin = _hub_query(goal, modality, 20, deadline)
+            if errors and len(errors) == len(queries):
+                hub_error = ProbesUnavailable(f"the Hub search failed for every query: {errors[0]}")
+        except ProbesUnavailable as exc:
+            hub_error, found, hits, queries, origin = exc, {}, Counter(), [], "rule"
+        try:
+            web = web_job.result(timeout=max(1.0, min(WEB_TIMEOUT_S + 10, deadline - _now())))
+        except _FutureTimeout:
+            web = _Web(False, "the web search did not answer within the time budget")
+    finally:
+        pool.shutdown(wait=False)
+    excluded: list[dict] = []
+    _add_web_hub_ids(web, found, hits, exclusions, excluded, deadline)
+    for table in web.tables:
+        hits[table.url] += 1
+    candidates = []
+    for candidate in list(found.values()) + list(web.tables):
+        why = exclusions.why(candidate)
+        if why:
+            excluded.append({"source": _source_of(candidate), "reason": why})
+        else:
+            candidates.append(candidate)
+    ranked = [c for i, c in enumerate(_ranked(candidates, hits, queries, modality)) if i < 20 or _from_web(c)]
+    window = _window(ranked, max_inspect)
+    if not ranked and hub_error is not None:
+        reason = str(hub_error) + _web_note(web)
+        say({"action": "search", "status": "fail", "reason": reason})
+        raise ProbesUnavailable(reason)
+    web_info = web.summary()
+    say({"action": "search", "status": "ok", "queries": queries, "origin": origin, "found": len(ranked),
+         "top": [_source_of(c) for c in window], "web": web_info, "excluded": excluded})
+    if not ranked:
+        raise ProbesUnavailable(f"the Hub search found no open dataset for queries {queries}" + _web_note(web)
+                                + (f"; {len(excluded)} sources were in exclude_sources" if excluded else ""))
     tried, fetched, out_of_time = [], 0, False
-    for candidate in candidates[:max_inspect]:
+    for candidate in window:
         if fetched >= max_candidates:
             break
         if deadline - _now() < 5:
             out_of_time = True
             break
-        hub_id = candidate.hub_id
-        say({"action": "candidate", "status": "start", "hub_id": hub_id, "downloads": candidate.downloads,
-             "licence": candidate.licence, "url": candidate.url})
-        say({"action": "inspect", "status": "start", "hub_id": hub_id})
+        is_table = isinstance(candidate, TableCandidate)
+        source = _source_of(candidate)
+        tag = {"hub_id": "" if is_table else candidate.hub_id, "source": source, "kind": "table" if is_table else "hub"}
+        about = {"title": candidate.title} if is_table else {"downloads": candidate.downloads,
+                                                             "found_by": candidate.found_by}
+        say({"action": "candidate", "status": "start"} | tag | about
+            | {"licence": candidate.licence, "url": candidate.url})
+        say({"action": "inspect", "status": "start"} | tag)
         try:
-            mapping = _choose(candidate, goal, modality, list(wanted_labels or []), deadline)
-        except ProbesUnavailable as exc:
-            tried.append({"hub_id": hub_id, "reason": f"inspect: {exc}"})
-            say({"action": "inspect", "status": "fail", "hub_id": hub_id, "reason": str(exc)})
-            say({"action": "candidate", "status": "fail", "hub_id": hub_id, "reason": str(exc)})
-            continue
-        say({"action": "inspect", "status": "ok", "hub_id": hub_id, "mapping": mapping.to_dict()})
-        fetched += 1
-        dest = dest_root / hub_id.replace("/", "__")
-        say({"action": "fetch", "status": "start", "hub_id": hub_id, "folder": str(dest)})
-        try:
-            report = fetch_probes(candidate, mapping, dest, wanted_labels=wanted_labels,
-                                  budget_s=min(fetch_budget, max(0.0, deadline - _now())), **fetch_kwargs)
-        except ProbesUnavailable as exc:
-            tried.append({"hub_id": hub_id, "reason": f"fetch: {exc}"})
-            say({"action": "fetch", "status": "fail", "hub_id": hub_id, "reason": str(exc)})
-            say({"action": "candidate", "status": "fail", "hub_id": hub_id, "reason": str(exc)})
-            continue
-        say({"action": "fetch", "status": "ok", "hub_id": hub_id, "counts": dict(report.counts),
-             "rows_seen": report.rows_seen, "skipped": dict(report.skipped), "bytes": report.bytes})
-        say({"action": "candidate", "status": "ok", "hub_id": hub_id, "labels": list(report.labels)})
-        info = {"hub_id": hub_id, "url": candidate.url, "title": candidate.title, "licence": candidate.licence,
+            try:
+                mapping = (_choose_table if is_table else _choose)(candidate, goal, modality, wanted, deadline)
+            except ProbesUnavailable as exc:
+                tried.append(_tried(candidate, f"inspect: {exc}"))
+                say({"action": "inspect", "status": "fail"} | tag | {"reason": str(exc)})
+                say({"action": "candidate", "status": "fail"} | tag | {"reason": str(exc)})
+                continue
+            say({"action": "inspect", "status": "ok"} | tag | {"mapping": mapping.to_dict()})
+            fetched += 1
+            dest = dest_root / _folder_for(candidate)
+            say({"action": "fetch", "status": "start"} | tag | {"folder": str(dest)})
+            try:
+                report = fetch_probes(candidate, mapping, dest, wanted_labels=wanted_labels, disjoint_from=disjoint,
+                                      budget_s=min(fetch_budget, max(0.0, deadline - _now())), **fetch_kwargs)
+            except ProbesUnavailable as exc:
+                tried.append(_tried(candidate, f"fetch: {exc}"))
+                say({"action": "fetch", "status": "fail"} | tag | {"reason": str(exc)})
+                say({"action": "candidate", "status": "fail"} | tag | {"reason": str(exc)})
+                continue
+        finally:
+            if is_table:
+                candidate._loaded = None  # the parsed rows are not needed again
+        say({"action": "fetch", "status": "ok"} | tag | {"counts": dict(report.counts), "rows_seen": report.rows_seen,
+                                                         "skipped": dict(report.skipped), "bytes": report.bytes})
+        say({"action": "candidate", "status": "ok"} | tag | {"labels": list(report.labels),
+                                                             "licence": report.licence})
+        info = {"hub_id": tag["hub_id"], "url": candidate.url, "title": candidate.title, "licence": report.licence,
                 "labels": list(report.labels), "label_values": dict(report.label_values),
                 "counts": dict(report.counts), "mapping": mapping.to_dict(), "rows_seen": report.rows_seen,
                 "skipped": dict(report.skipped), "queries": queries, "query_origin": origin, "tried": tried,
-                "notes": [mapping.reason] + list(report.notes)}
+                "notes": [mapping.reason] + list(report.notes), "kind": tag["kind"], "source": source,
+                "licence_source": report.licence_source, "web": web_info, "excluded": excluded,
+                "disjoint_from": list(disjoint)}
         return report.folder, info
-    reasons = "; ".join(f"{t['hub_id']} ({t['reason']})" for t in tried) or "none was tried"
+    reasons = "; ".join(f"{t['hub_id'] or t.get('url')} ({t['reason']})" for t in tried) or "none was tried"
     raise ProbesUnavailable("no candidate dataset gave usable probes: " + reasons
-                            + (f"; the {total:.0f} s time budget ran out" if out_of_time else ""))
+                            + (f"; the {total:.0f} s time budget ran out" if out_of_time else "") + _web_note(web))

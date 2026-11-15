@@ -1,32 +1,38 @@
 """Finding labelled probe files on the Hugging Face Hub (agent.hub_probes), offline.
 
-No test touches the network: hub_probes._http_get is replaced by FakeHub, which answers the Hub search, the dataset
-viewer's /splits and /rows, and media file URLs from small in-memory tables shaped like the real answers (the
-trimmed real responses in tests/fixtures/hub/ pin those shapes). ask_json answers None in fake mode, so the rule
-fallbacks run unless a test replaces it.
+No test touches the network: hub_probes._http_get and _table_get are replaced by FakeHub, which answers the Hub
+search and dataset records, the dataset viewer's /splits and /rows, and media and table file URLs from small
+in-memory tables shaped like the real answers (the trimmed real responses in tests/fixtures/hub/ pin those shapes).
+The web search (agent.research.search_structured) is unavailable unless a test gives it canned answers. ask_json
+answers None in fake mode, so the rule fallbacks run unless a test replaces it.
 Run: SENSE_FAKE=1 .venv/bin/python -m pytest -q tests/test_hub_probes.py
 """
 
 from __future__ import annotations
 
+import csv
+import gzip
 import hashlib
+import io
 import json
 import shutil
 import struct
 import subprocess
 import time
 import urllib.parse
+import zipfile
 import zlib
 from pathlib import Path
 
 import pytest
 
-from agent import hub_probes
+from agent import hub_probes, research
 from agent.hub_probes import (
     FetchReport,
     HubCandidate,
     Mapping,
     ProbesUnavailable,
+    TableCandidate,
     choose_mapping,
     fetch_probes,
     find_probes,
@@ -36,6 +42,9 @@ from agent.hub_probes import (
 
 FIXTURES = Path(__file__).parent / "fixtures" / "hub"
 ASSETS = "https://datasets-server.huggingface.co/assets"
+REAL_SEARCH_STRUCTURED = research.search_structured
+REAL_TABLE_GET = hub_probes._table_get
+REAL_HTTP_GET = hub_probes._http_get
 
 
 class Dataset:
@@ -57,6 +66,7 @@ class FakeHub:
 
     def __init__(self):
         self.search: dict[str, list] = {}
+        self.records: dict[str, dict] = {}  # /api/datasets/<id>
         self.datasets: dict[str, Dataset] = {}
         self.files: dict[str, bytes] = {}
         self.calls: list[str] = []
@@ -69,6 +79,11 @@ class FakeHub:
         if parts.netloc == "huggingface.co" and parts.path == "/api/datasets":
             assert query["full"] == "true"
             return json.dumps(self.search.get(query["search"], [])).encode()
+        if parts.netloc == "huggingface.co" and parts.path.startswith("/api/datasets/"):
+            record = self.records.get(parts.path[len("/api/datasets/"):])
+            if record is None:
+                raise hub_probes._HttpError("http_404", "HTTP 404 from huggingface.co")
+            return json.dumps(record).encode()
         if parts.netloc == "datasets-server.huggingface.co" and parts.path in ("/splits", "/rows", "/first-rows",
                                                                                "/size"):
             ds = self.datasets.get(query["dataset"])
@@ -107,10 +122,17 @@ class FakeHub:
         return [u for u in self.calls if u.startswith(prefix)]
 
 
+def no_web(*args, **kwargs):
+    raise research.ResearchUnavailable("these tests have no web search")
+
+
 @pytest.fixture
 def hub(monkeypatch):
     fake = FakeHub()
     monkeypatch.setattr(hub_probes, "_http_get", fake)
+    monkeypatch.setattr(hub_probes, "_table_get", fake)
+    monkeypatch.setattr(hub_probes.research, "search_structured", no_web)
+    monkeypatch.setattr(hub_probes, "_WEB_MEMO", {})
     monkeypatch.setattr(hub_probes, "_sleep", lambda s: None)
     monkeypatch.setattr(hub_probes, "_ffmpeg", lambda: None)  # the fake files are not real media
     return fake
@@ -1246,3 +1268,433 @@ def test_after_a_page_fails_when_retried_later_pages_get_one_try(hub, tmp_path):
     assert (offsets.count("209"), offsets.count("418"), offsets.count("627")) == (3, 1, 1)
     assert report.skipped["page_failed"] == 3 and report.rows_seen == 900
     assert any("later pages get one try each" in note for note in report.notes)
+
+
+# ----------------------------------------------------------------------------- web search and table files
+RAW = "https://raw.githubusercontent.com"
+SMELL = "What does this molecule smell like?"
+WHERE = "Which country is this place in?"
+ODOURS = ["fruity", "green", "woody", "floral"]
+
+
+def web_answer(monkeypatch, items, origin="live"):
+    """The web search answers these labelled_datasets items; returns the list of calls it received."""
+    calls = []
+
+    def search(query, schema, *, include_domains=None, max_results=8, timeout=25.0):
+        calls.append({"query": query, "schema": schema, "include_domains": include_domains, "timeout": timeout})
+        return research.Research({"labelled_datasets": json.loads(json.dumps(items))}, [], origin)
+
+    monkeypatch.setattr(hub_probes.research, "search_structured", search)
+    return calls
+
+
+def web_item(url="", hub_id="", licence="", label="", name="A labelled dataset"):
+    return {"name": name, "hub_id": hub_id, "download_url": url, "licence": licence, "label_column": label,
+            "input_column": "", "page_url": ""}
+
+
+def csv_bytes(header, rows, delimiter=","):
+    out = io.StringIO()
+    writer = csv.writer(out, delimiter=delimiter, lineterminator="\n")
+    writer.writerow(header)
+    writer.writerows(rows)
+    return out.getvalue().encode()
+
+
+def odour_csv(n=80):
+    """Like pyrfume's leffingwell_data.csv: a name, a SMILES string, a list-literal label and a number column."""
+    rows = [[f"Name {i}", "C" * (i % 40 + 1) + "O" * (i // 40 + 1), f"['{ODOURS[i % 4]}']", f"{i % 2}.0"]
+            for i in range(n)]
+    return csv_bytes(["chemical_name", "smiles", "odor_labels", "labels_cv0"], rows)
+
+
+def smiles_of(i):
+    return "C" * (i % 40 + 1) + "O" * (i // 40 + 1)
+
+
+PLACES = ["France", "Japan", "Chile", "Peru", "India", "Egypt"]
+
+
+def place_rows(n=120, countries=PLACES):
+    return [{"name": f"Town {i}", "lat": round(-40 + (i * 0.731) % 80, 4), "lng": round(-170 + (i * 2.17) % 340, 4),
+             "country": countries[i % len(countries)]} for i in range(n)]
+
+
+def places_csv(n=120, countries=PLACES):
+    rows = place_rows(n, countries)
+    return csv_bytes(["name", "lat", "lng", "country"], [[r["name"], r["lat"], r["lng"], r["country"]] for r in rows])
+
+
+def table(url, **kwargs):
+    return TableCandidate(url, kwargs.pop("title", "a table"), **kwargs)
+
+
+def test_a_web_search_github_csv_becomes_a_table_candidate_fetched_into_label_folders(hub, tmp_path, monkeypatch):
+    blob = "https://github.com/o/odor-data/blob/main/data/molecules.csv"
+    raw = f"{RAW}/o/odor-data/main/data/molecules.csv"
+    calls = web_answer(monkeypatch, [web_item(blob, label="odor_labels", name="Odour molecules")])
+    hub.files[raw] = odour_csv()
+    hub.files[f"{RAW}/o/odor-data/main/LICENSE"] = b"\n  MIT License\n\nCopyright (c) 2020 Someone\n"
+    events = []
+    folder, info = find_probes(SMELL, "molecule", tmp_path, emit=events.append, n_per_label=5, min_per_label=4)
+    assert folder.parent == tmp_path and folder.name.startswith("web__molecules__")
+    got = files_in(folder)
+    assert sorted(got) == sorted(ODOURS) and all(len(v) == 5 for v in got.values())
+    for label, names in got.items():
+        for name in names:
+            i = int(name[:-4])
+            assert name.endswith(".smi") and ODOURS[i % 4] == label
+            assert (folder / label / name).read_text() == smiles_of(i) + "\n"
+    assert (info["kind"], info["source"], info["url"], info["hub_id"]) == ("table", raw, raw, "")
+    assert (info["licence"], info["licence_source"]) == ("MIT License",
+                                                         f"the first line of {RAW}/o/odor-data/main/LICENSE")
+    assert info["mapping"]["input_columns"] == ["smiles"] and info["mapping"]["label_column"] == "odor_labels"
+    assert info["mapping"]["label_kind"] == "list" and info["title"] == "Odour molecules"
+    assert info["web"]["used"] is True and info["web"]["tables"] == [raw] and info["web"]["origin"] == "live"
+    assert not hub.fetched("https://github.com")  # the blob page itself is never fetched
+    assert calls[0]["include_domains"] == list(hub_probes.WEB_DOMAINS) and "smell" in calls[0]["query"]
+    assert "SMILES" in calls[0]["query"] and calls[0]["schema"] is hub_probes.WEB_SCHEMA
+    json.dumps(info)
+    for event in events:
+        assert json.loads(json.dumps(event)) == event
+    assert ("candidate", "ok", "table") in [(e["action"], e["status"], e.get("kind")) for e in events]
+
+
+@pytest.mark.parametrize("given, url, problem", [
+    ("https://github.com/o/r/blob/main/data/x.csv", f"{RAW}/o/r/main/data/x.csv", None),
+    ("https://github.com/o/r/raw/v1.0/x.tsv?raw=true", f"{RAW}/o/r/v1.0/x.tsv", None),
+    (f"{RAW}/o/r/refs/heads/main/x.csv?token=abc", f"{RAW}/o/r/refs/heads/main/x.csv", None),
+    ("https://huggingface.co/datasets/o/d/blob/main/train.jsonl",
+     "https://huggingface.co/datasets/o/d/resolve/main/train.jsonl", None),
+    ("https://zenodo.org/records/123/files/cities.csv.gz?download=1",
+     "https://zenodo.org/records/123/files/cities.csv.gz?download=1", None),
+    ("https://gist.githubusercontent.com/u/abc/raw/def/data.zip",
+     "https://gist.githubusercontent.com/u/abc/raw/def/data.zip", None),
+    ("https://github.com/o/r", None, "a GitHub page"),
+    ("https://github.com/o/r/tree/main/data", None, "a GitHub page"),
+    ("https://zenodo.org/records/123", None, "a Zenodo page"),
+    ("http://raw.githubusercontent.com/o/r/main/x.csv", None, "not an https URL"),
+    ("https://example.org/data/x.csv", None, "example.org is not an allowed host"),
+    ("https://raw.githubusercontent.com.example.org/o/r/main/x.csv", None, "is not an allowed host"),
+    ("https://user@raw.githubusercontent.com/o/r/main/x.csv", None, "a user, password or port"),
+    (f"{RAW}/o/r/main/paper.pdf", None, "'paper.pdf' is not a CSV"),
+])
+def test_table_urls_are_rewritten_to_raw_files_or_refused(given, url, problem):
+    got, why = hub_probes._file_url(given)
+    assert got == url
+    assert (why is None) if problem is None else (problem in why)
+
+
+def test_a_disallowed_host_is_refused_before_any_request(hub, tmp_path, monkeypatch):
+    cities_dataset(hub)
+    hub.search = {"cities": [item("o/world-cities", 20)]}
+    web_answer(monkeypatch, [web_item("https://example.org/places.csv"),
+                             web_item("http://raw.githubusercontent.com/o/r/main/places.csv"),
+                             web_item("https://github.com/o/r")])
+    folder, info = find_probes(WHERE, "coordinates", tmp_path, n_per_label=5, min_per_label=4)
+    assert info["kind"] == "hub" and info["web"]["tables"] == []
+    assert [r["reason"].split(" (")[0] for r in info["web"]["refused"]] == [
+        "example.org is not an allowed host", "not an https URL", "a GitHub page, not a file"]
+    assert not [u for u in hub.calls if "example.org" in u or u.startswith("http://")]
+    with pytest.raises(ProbesUnavailable, match="not an https URL on a Hugging Face, GitHub or Zenodo host"):
+        choose_mapping(table("https://example.org/places.csv"), WHERE, "coordinates")
+    assert not [u for u in hub.calls if "example.org" in u]
+    with pytest.raises(hub_probes._HttpError) as caught:  # the real helper refuses before any I/O
+        REAL_TABLE_GET("https://example.org/places.csv")
+    assert caught.value.reason == "host_refused"
+    request = hub_probes.urllib.request.Request(f"{RAW}/o/r/main/places.csv")
+    with pytest.raises(hub_probes._HttpError, match="example.org"):
+        hub_probes._TableRedirects().redirect_request(request, None, 302, "Found", {}, "https://example.org/x.csv")
+    assert hub_probes._TableRedirects().redirect_request(request, None, 302, "Found", {},
+                                                         "https://zenodo.org/api/records/1/files/x.csv/content")
+    seen = fake_opener(monkeypatch, FakeResponse(b"a,b\n1,2\n"))
+    assert REAL_TABLE_GET(f"{RAW}/o/r/main/places.csv") == b"a,b\n1,2\n"
+    assert seen["handlers"] == (hub_probes._TableRedirects,)
+    with pytest.raises(hub_probes._HttpError) as caught:  # the viewer and media helper still takes Hugging Face only
+        REAL_HTTP_GET(f"{RAW}/o/r/main/places.csv")
+    assert caught.value.reason == "host_refused"
+
+
+def zipped(members: dict[str, bytes]) -> bytes:
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as archive:
+        for name, data in members.items():
+            archive.writestr(name, data)
+    return out.getvalue()
+
+
+def test_zip_and_gz_tables_are_read_from_their_first_table_member(hub, tmp_path):
+    zip_url = "https://zenodo.org/records/7/files/places.zip?download=1"
+    hub.files[zip_url] = zipped({"README.md": b"# about", "__MACOSX/._places.csv": b"junk", "notes.txt": b"x,y\n1,2",
+                                 "data/places.csv": places_csv(), "data/other.csv": places_csv(60, ["Chad", "Iran"])})
+    mapping = choose_mapping(table(zip_url), WHERE, "coordinates")
+    assert (mapping.config, mapping.input_columns, mapping.label_column) == ("data/places.csv", ["lat", "lng"],
+                                                                             "country")
+    report = fetch_probes(table(zip_url), mapping, tmp_path / "z", n_per_label=5, min_per_label=4)
+    assert sorted(report.labels) == sorted(p.lower() for p in PLACES)
+    assert any("'data/places.csv', the first table file in the zip archive" in note for note in report.notes)
+    gz_url = f"{RAW}/o/geo/main/places.csv.gz"
+    hub.files[gz_url] = gzip.compress(places_csv())
+    mapping = choose_mapping(table(gz_url), WHERE, "coordinates")
+    report = fetch_probes(table(gz_url), mapping, tmp_path / "g", n_per_label=5, min_per_label=4)
+    assert sorted(report.labels) == sorted(p.lower() for p in PLACES)
+    first = place_rows()[0]
+    assert (tmp_path / "g" / "france" / "0.txt").read_text() == f"{first['lat']}, {first['lng']}\n"
+    hub.files[f"{RAW}/o/geo/main/empty.zip"] = zipped({"README.md": b"# nothing here"})
+    with pytest.raises(ProbesUnavailable, match="holds no CSV, TSV, JSON or JSON Lines file"):
+        choose_mapping(table(f"{RAW}/o/geo/main/empty.zip"), WHERE, "coordinates")
+
+
+def test_tables_over_the_byte_cap_are_refused_downloaded_or_unpacked(hub, monkeypatch):
+    monkeypatch.setattr(hub_probes, "TABLE_MAX_BYTES", 2_000)
+    hub.files[f"{RAW}/o/geo/main/big.csv"] = places_csv(200)
+    with pytest.raises(ProbesUnavailable, match="byte cap"):
+        choose_mapping(table(f"{RAW}/o/geo/main/big.csv"), WHERE, "coordinates")
+    hub.files[f"{RAW}/o/geo/main/bomb.csv.gz"] = gzip.compress(b"lat,lng,country\n" + b"1.0,2.0,France\n" * 500)
+    assert len(hub.files[f"{RAW}/o/geo/main/bomb.csv.gz"]) < 2_000
+    with pytest.raises(ProbesUnavailable, match="unpacks to over the 2,000 byte cap"):
+        choose_mapping(table(f"{RAW}/o/geo/main/bomb.csv.gz"), WHERE, "coordinates")
+
+
+def test_json_lists_json_lines_and_other_dialects_are_read(hub, tmp_path):
+    rows = place_rows()
+    as_strings = [{"name": r["name"], "lat": str(r["lat"]), "lng": str(r["lng"]), "country": r["country"]}
+                  for r in rows]  # like cities.json: coordinates as strings
+    sources = {
+        f"{RAW}/o/geo/main/cities.json": json.dumps(as_strings).encode(),
+        f"{RAW}/o/geo/main/wrapped.json": json.dumps({"meta": {"n": 120}, "data": rows}).encode(),
+        f"{RAW}/o/geo/main/cities.jsonl": "\n".join(json.dumps(r) for r in rows).encode() + b"\nnot json\n",
+        f"{RAW}/o/geo/main/cities.tsv": csv_bytes(["name", "lat", "lng", "country"],
+                                                  [list(r.values()) for r in rows], "\t"),
+        f"{RAW}/o/geo/main/semicolons.csv": csv_bytes(["name", "lat", "lng", "country"],
+                                                      [[f"{r['name']}, old town", r["lat"], r["lng"], r["country"]]
+                                                       for r in rows], ";"),
+    }
+    for n, (url, data) in enumerate(sources.items()):
+        hub.files[url] = data
+        mapping = choose_mapping(table(url), WHERE, "coordinates")
+        assert (mapping.input_columns, mapping.label_column, mapping.label_kind) == (["lat", "lng"], "country",
+                                                                                     "string"), url
+        report = fetch_probes(table(url), mapping, tmp_path / str(n), n_per_label=5, min_per_label=4)
+        assert sorted(report.labels) == sorted(p.lower() for p in PLACES), url
+        assert (tmp_path / str(n) / "japan" / "1.txt").read_text() == f"{rows[1]['lat']}, {rows[1]['lng']}\n", url
+    jsonl =choose_mapping(table(f"{RAW}/o/geo/main/cities.jsonl"), WHERE, "coordinates")
+    report = fetch_probes(table(f"{RAW}/o/geo/main/cities.jsonl"), jsonl, tmp_path / "l", n_per_label=5,
+                          min_per_label=4)
+    assert any("JSON Lines" in note and "skipped 1 malformed rows" in note for note in report.notes)
+    hub.files[f"{RAW}/o/geo/main/page.csv"] = b"<!DOCTYPE html><html>Not found</html>"
+    with pytest.raises(ProbesUnavailable, match="an HTML or XML page"):
+        choose_mapping(table(f"{RAW}/o/geo/main/page.csv"), WHERE, "coordinates")
+
+
+def test_a_long_table_sorted_by_label_is_sampled_evenly(hub, tmp_path, monkeypatch):
+    monkeypatch.setattr(hub_probes, "MAX_TABLE_ROWS", 1_000)
+    countries = ["Chile", "Egypt", "France", "India"]
+    rows = [[f"Town {i}", round((i * 0.0073) % 80, 4), round((i * 0.0119) % 170, 4), countries[i // 2_000]]
+            for i in range(8_000)]  # sorted by country, 2,000 rows each
+    url = f"{RAW}/o/geo/main/sorted.csv"
+    hub.files[url] = csv_bytes(["name", "lat", "lng", "country"], rows)
+    mapping = choose_mapping(table(url), WHERE, "coordinates")
+    report = fetch_probes(table(url), mapping, tmp_path / "p", n_per_label=5, min_per_label=4)
+    assert sorted(report.labels) == ["chile", "egypt", "france", "india"]
+    assert 500 <= report.rows_seen <= 1_000
+    assert any("read 8,000 rows" in note and "spread evenly" in note for note in report.notes)
+
+
+def descriptor_csv(n=80):
+    names = ["fruity", "green", "woody", "musky"]
+    rows = [[smiles_of(i)] + [int(j == i % 4 or (i % 7 == 0 and j == 0)) for j in range(4)] for i in range(n)]
+    return csv_bytes(["IsomericSMILES"] + names, rows), names
+
+
+def test_a_block_of_0_1_descriptor_columns_labels_only_a_table_named_for_the_topic(hub, tmp_path):
+    data, names = descriptor_csv()
+    on_topic, off_topic = f"{RAW}/o/odor-descriptors/main/table.csv", f"{RAW}/o/chem-props/main/table.csv"
+    hub.files[on_topic] = hub.files[off_topic] = data
+    mapping = choose_mapping(table(on_topic, title="Odour descriptors"), SMELL, "chemical")
+    assert (mapping.input_columns, mapping.label_kind, mapping.label_names) == (["IsomericSMILES"], "multihot", names)
+    report = fetch_probes(table(on_topic), mapping, tmp_path / "p", min_per_label=5, max_labels=4)
+    assert sorted(report.labels) == sorted(names) and report.skipped["multi_label"] > 0
+    assert any("exactly one of the chosen labels" in note for note in report.notes)
+    # the web search's own title ("Odour descriptors") never vouches for a table: its URL does not name the topic
+    with pytest.raises(ProbesUnavailable, match="does not mention the goal's topic"):
+        choose_mapping(table(off_topic, title="Odour descriptors"), SMELL, "chemical")
+
+
+def test_a_separator_joined_label_string_in_a_table_keeps_single_label_rows(hub, tmp_path):
+    joined = ["fruity;sweet", "fruity", "woody", "woody;green", "fruity"]
+    rows = [[smiles_of(i), joined[i % 5]] for i in range(60)]
+    url = f"{RAW}/o/scents/main/descriptors.tsv"
+    hub.files[url] = csv_bytes(["smiles", "descriptors"], rows, "\t")
+    mapping = choose_mapping(table(url), SMELL, "chemical")
+    assert (mapping.label_kind, mapping.label_separator) == ("list", ";")
+    report = fetch_probes(table(url), mapping, tmp_path / "p", n_per_label=40, min_per_label=5)
+    assert report.counts == {"fruity": 36, "woody": 24}
+
+
+def test_the_leak_and_input_determines_label_refusals_apply_to_tables(hub, tmp_path, monkeypatch):
+    url = f"{RAW}/o/notes/main/country_notes.csv"
+    hub.files[url] = csv_bytes(["text", "country"], [[f"A note about {COUNTRIES[i % 4]} food, number {i}",
+                                                      COUNTRIES[i % 4]] for i in range(80)])
+    mapping = choose_mapping(table(url), "Which country is this sentence about?", "text")
+    assert mapping.input_columns == ["text"]
+    with pytest.raises(ProbesUnavailable, match="names the label in 80 of 80 rows"):
+        fetch_probes(table(url), mapping, tmp_path / "p", min_per_label=5)
+    assert not (tmp_path / "p").exists()
+    url = f"{RAW}/o/notes/main/postcards.csv"
+    hub.files[url] = csv_bytes(["text", "country"], [[f"Postcard type {i % 8}", COUNTRIES[i % 4]] for i in range(80)])
+    with pytest.raises(ProbesUnavailable, match="input column 'text' determines the label 'country'"):
+        choose_mapping(table(url), "Which country is this postcard from?", "text")
+    # a language model's mapping that adds a column giving the label away is refused, and the rule decides
+    url = f"{RAW}/o/geo/main/coded.csv"
+    hub.files[url] = csv_bytes(["lat", "lng", "country_name", "country_code"],
+                               [[r["lat"], r["lng"], r["country"], r["country"][:2].upper()] for r in place_rows()])
+    answer = {"input_columns": ["lat", "lng", "country_name"], "label_column": "country_code",
+              "template": "{lat}, {lng} ({country_name})", "reason": "x"}
+    monkeypatch.setattr(hub_probes.llm, "ask_json", lambda *a, **k: answer)
+    mapping = choose_mapping(table(url), WHERE, "coordinates")
+    assert (mapping.origin, mapping.input_columns, mapping.label_column) == ("rule", ["lat", "lng"], "country_code")
+
+
+def test_a_table_licence_comes_from_the_answer_else_the_source_else_unknown(hub, tmp_path, monkeypatch):
+    url = f"{RAW}/o/geo/main/places.csv"
+    hub.files[url] = places_csv()
+    deadline = hub_probes._now() + 30
+    assert hub_probes._table_licence(table(url, licence="CC-BY-4.0", licence_source="the web search's answer"),
+                                     deadline) == ("CC-BY-4.0", "the web search's answer")
+    assert hub_probes._table_licence(table(url), deadline) == (
+        "unknown", "no LICENSE file could be read in github.com/o/geo at main")
+    hub.files[f"{RAW}/o/geo/main/LICENSE.md"] = b"# Apache License\nVersion 2.0\n"
+    assert hub_probes._table_licence(table(url), deadline)[0] == "Apache License"
+    zenodo = "https://zenodo.org/records/42/files/places.csv?download=1"
+    assert hub_probes._table_licence(table(zenodo), deadline)[0] == "unknown"
+    hub.files["https://zenodo.org/api/records/42"] = json.dumps({"metadata": {"license": {"id": "cc-by-4.0"}}}).encode()
+    assert hub_probes._table_licence(table(zenodo), deadline) == ("cc-by-4.0", "the Zenodo record 42")
+    hf = "https://huggingface.co/datasets/o/places/resolve/main/places.csv"
+    hub.records["o/places"] = item("o/places", cardData={"license": "odbl"})
+    assert hub_probes._table_licence(table(hf), deadline) == ("odbl", "the Hub dataset card of o/places")
+    gist = "https://gist.githubusercontent.com/u/abc/raw/def/places.csv"
+    assert hub_probes._table_licence(table(gist), deadline) == ("unknown",
+                                                                "the source states no licence that could be read")
+    web_answer(monkeypatch, [web_item(url, licence="Not specified"), web_item(zenodo, licence=" ODbL-1.0 ")])
+    web = hub_probes._web_search(WHERE, "coordinates", hub_probes._now() + 60)
+    assert [(t.url, t.licence) for t in web.tables] == [(url, None), (zenodo, "ODbL-1.0")]
+
+
+def test_hub_ids_the_web_search_names_join_the_hub_candidates(hub, tmp_path, monkeypatch):
+    smiles_dataset(hub, "o/scent-molecules", [["fruity"], ["floral"], ["woody"]])
+    hub.records["o/scent-molecules"] = item("o/scent-molecules", 3, cardData={"license": "cc0-1.0"})
+    hub.records["g/gated-odors"] = item("g/gated-odors", gated="manual")
+    web_answer(monkeypatch, [web_item(hub_id="o/scent-molecules"), web_item(hub_id="g/gated-odors"),
+                             web_item(hub_id="N/A"),
+                             web_item("https://huggingface.co/datasets/z/missing-odors")])
+    events = []
+    folder, info = find_probes(SMELL, "molecule", tmp_path, emit=events.append, n_per_label=5, min_per_label=4)
+    assert (info["kind"], info["hub_id"], info["licence"]) == ("hub", "o/scent-molecules", "cc0-1.0")
+    assert folder == tmp_path / "o__scent-molecules" and info["licence_source"] == "the Hub dataset card"
+    assert info["web"]["hub_ids"] == ["o/scent-molecules", "g/gated-odors", "z/missing-odors"]
+    refused = {r["hub_id"]: r["reason"] for r in info["web"]["refused"]}
+    assert "gated" in refused["g/gated-odors"] and "HTTP 404" in refused["z/missing-odors"]
+    start = next(e for e in events if e["action"] == "candidate" and e["status"] == "start")
+    assert (start["hub_id"], start["found_by"], start["kind"]) == ("o/scent-molecules", "web", "hub")
+
+
+def test_without_the_web_search_find_probes_uses_the_hub_alone_and_says_why(hub, tmp_path, monkeypatch):
+    cities_dataset(hub)
+    hub.search = {"cities": [item("o/world-cities", 20)]}
+    monkeypatch.setattr(hub_probes.research, "search_structured", REAL_SEARCH_STRUCTURED)
+    monkeypatch.setenv("SENSE_FAKE", "1")  # fake mode: research answers canned data, which is never used
+    folder, info = find_probes(WHERE, "coordinates", tmp_path, n_per_label=5, min_per_label=4)
+    assert info["kind"] == "hub" and info["web"]["used"] is False and "fake mode" in info["web"]["reason"]
+
+    def down(*args, **kwargs):
+        raise research.ResearchUnavailable("api.linkup.so could not be reached: timed out, and nothing is cached")
+
+    monkeypatch.setattr(hub_probes.research, "search_structured", down)
+    folder, info = find_probes(WHERE, "coordinates", tmp_path, n_per_label=5, min_per_label=4)
+    assert info["hub_id"] == "o/world-cities" and info["web"] == {
+        "used": False, "origin": None, "hub_ids": [], "tables": [], "refused": [],
+        "reason": "the web search is unavailable: api.linkup.so could not be reached: timed out, and nothing is "
+                  "cached"}
+    monkeypatch.setattr(hub_probes.research, "search_structured", REAL_SEARCH_STRUCTURED)
+    monkeypatch.delenv("SENSE_FAKE")
+    monkeypatch.delenv("LINKUP_API_KEY", raising=False)
+    monkeypatch.setattr(hub_probes.llm, "ask_json", lambda *a, **k: None)
+    folder, info = find_probes(WHERE, "coordinates", tmp_path, n_per_label=5, min_per_label=4)
+    assert info["kind"] == "hub" and "LINKUP_API_KEY is not set" in info["web"]["reason"]
+    hub.datasets.clear()  # and when nothing works, the error says the web search was not used
+    with pytest.raises(ProbesUnavailable, match="the web search was not used .the web search is unavailable: "
+                                                "LINKUP_API_KEY is not set"):
+        find_probes(WHERE, "coordinates", tmp_path, n_per_label=5, min_per_label=4)
+
+
+def test_web_sources_are_inspected_even_below_many_hub_candidates(hub, tmp_path, monkeypatch):
+    hubs = [HubCandidate(f"o/cities-{n}", f"o/cities-{n}", 100 - n, 0, None, [], "u") for n in range(10)]
+    tables = [table(f"{RAW}/o/geo/main/t{n}.csv") for n in range(3)]
+    assert hub_probes._window(hubs + tables, 4) == hubs[:2] + tables[:2]
+    assert hub_probes._window(hubs + tables, 1) == hubs[:1]
+    hub.search = {"cities": [item(f"o/cities-{n}", 100 - n) for n in range(5)]}  # they rank first, and all fail
+    url = f"{RAW}/o/geo/main/places.csv"
+    hub.files[url] = places_csv()
+    web_answer(monkeypatch, [web_item(url)])
+    folder, info = find_probes(WHERE, "coordinates", tmp_path, max_inspect=2, n_per_label=5, min_per_label=4)
+    assert info["source"] == url and [t["hub_id"] for t in info["tried"]] == ["o/cities-0"]
+
+
+def two_sources(hub, monkeypatch):
+    """A Hub dataset (France, Japan, Brazil, Kenya) and a GitHub table (France, Japan, Chile, Peru, India, Egypt)."""
+    cities_dataset(hub)
+    hub.search = {"cities": [item("o/world-cities", 20)], "country": [item("o/world-cities", 20)]}
+    url = f"{RAW}/o/geo-places/main/places.csv"
+    hub.files[url] = places_csv()
+    calls = web_answer(monkeypatch, [web_item("https://github.com/o/geo-places/blob/main/places.csv",
+                                              licence="CC0-1.0")])
+    return url, calls
+
+
+def test_a_second_disjoint_source_gives_the_unseen_categories_control(hub, tmp_path, monkeypatch):
+    url, calls = two_sources(hub, monkeypatch)
+    folder, first = find_probes(WHERE, "coordinates", tmp_path, n_per_label=5, min_per_label=4)
+    assert first["source"] == "o/world-cities" and sorted(first["labels"]) == ["brazil", "france", "japan", "kenya"]
+    folder2, second = find_probes(WHERE, "coordinates", tmp_path, n_per_label=5, min_per_label=4,
+                                  exclude_sources=[first["source"]],
+                                  disjoint_from=list(first["label_values"].values()))
+    assert (second["kind"], second["source"], second["licence"]) == ("table", url, "CC0-1.0")
+    assert sorted(second["labels"]) == ["chile", "egypt", "india", "peru"]  # France and Japan are left out
+    assert sorted(files_in(folder2)) == ["chile", "egypt", "india", "peru"]
+    assert second["excluded"] == [{"source": "o/world-cities", "reason": "in exclude_sources"}]
+    assert second["disjoint_from"] == ["France", "Japan", "Brazil", "Kenya"]
+    assert any("labels in disjoint_from were not chosen: 'France', 'Japan'" in n for n in second["notes"])
+    assert len(calls) == 1 and second["web"]["origin"] == "memo"  # the same goal is not searched twice
+    # folder names, other spellings and plurals match too; fewer than 2 labels left is a failure
+    with pytest.raises(ProbesUnavailable, match="fewer than 2 label values .* disjoint_from"):
+        find_probes(WHERE, "coordinates", tmp_path, n_per_label=5, min_per_label=4, exclude_sources=["o/world-cities"],
+                    disjoint_from=["FRANCE", "ja-pan", "chiles", "peru", "INDIA"])
+    with pytest.raises(ProbesUnavailable, match="also in disjoint_from"):
+        find_probes(WHERE, "coordinates", tmp_path, wanted_labels=["Chile", "Peru"], disjoint_from=["chile"])
+
+
+@pytest.mark.parametrize("excluded, why", [
+    (f"{RAW}/o/geo-places/main/places.csv", "in exclude_sources"),
+    ("https://github.com/o/geo-places/blob/main/places.csv", "in exclude_sources"),
+    (f"{RAW}/o/geo-places/main/other_file.csv", "a file in the same folder as an excluded file"),
+    ("https://github.com/o/geo-places", "under an excluded URL"),
+    ("https://github.com/o/geo-elsewhere", None),
+    (f"{RAW}/o/geo-places/main/sub/places.csv", None),
+])
+def test_exclude_sources_matches_ids_urls_folders_and_repositories(excluded, why):
+    exclusions = hub_probes._Exclusions([excluded])
+    assert exclusions.why(table(f"{RAW}/o/geo-places/main/places.csv")) == why
+    hub_exclusions = hub_probes._Exclusions(["https://huggingface.co/datasets/o/world-cities"])
+    assert hub_exclusions.why(cand("o/world-cities")) == "in exclude_sources" and not hub_exclusions.why(cand("o/x"))
+    hf_table = table("https://huggingface.co/datasets/o/world-cities/resolve/main/cities.csv")
+    assert hub_probes._Exclusions(["o/world-cities"]).why(hf_table) == "in exclude_sources"
+
+
+def test_table_files_are_not_candidates_for_media_inputs(hub, tmp_path, monkeypatch):
+    web_answer(monkeypatch, [web_item(f"{RAW}/o/music/main/genres.csv")])
+    hub.search = {}
+    with pytest.raises(ProbesUnavailable, match="the web search named no usable source"):
+        find_probes("Make it recognise music genres", "audio", tmp_path)
+    assert not hub.fetched(RAW)
