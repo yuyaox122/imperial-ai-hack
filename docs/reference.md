@@ -280,6 +280,7 @@ Auth comes from `~/.databrickscfg` or `DATABRICKS_HOST` and `DATABRICKS_TOKEN` (
 | `web/` | the interface (no build step) |
 | `scripts/demo_cli.py` | the agent from the command line, on a built-in set or a folder |
 | `scripts/score_free_text.py` | free-text answers through an installed bridge |
+| `scripts/fetch_demo_inputs.py` | rebuilds the 3D, video and molecule demo inputs from their public sources, checked against the recorded runs' inputs |
 | `scripts/setup_machine.py` | second-machine guide: check, fetch the weights, copy or rebuild the embeddings |
 | `eval/triage.py` | the forest-monitoring triage task |
 | `integrations/databricks/` | the Databricks writer and its command line |
@@ -289,6 +290,7 @@ Auth comes from `~/.databrickscfg` or `DATABRICKS_HOST` and `DATABRICKS_TOKEN` (
 | `docs/reference.md` | this file: the detail behind the README |
 | `docs/plan.md` | the original plan (14 November) |
 | `docs/workstreams.md` | the four workloads the team lead approved on 14 November |
+| `demo/reproduce.md` | how to repeat the 3D, video and molecule runs live |
 | `docs/devpost.md`, `docs/pitch.md`, `demo/script.md` | the submission text, the pitch and the demo script |
 | `design/` | interface mockup and board diagrams |
 | `tools/board` | the team's message board on a pinned GitHub issue |

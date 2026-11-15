@@ -71,6 +71,7 @@ The full list is in the [reference](docs/reference.md#known-limits).
 
 - [docs/reference.md](docs/reference.md): setup and every setting, each step of a run, the acceptance rules, all measured results, the forest-monitoring triage task, Databricks, and the repository layout.
 - [socket_pilot/README.md](socket_pilot/README.md): the research scripts and a description of every recorded run.
+- [demo/reproduce.md](demo/reproduce.md): how to repeat the 3D, video and molecule runs in a demo.
 - [docs/devpost.md](docs/devpost.md): the submission. [docs/plan.md](docs/plan.md): the plan from 14 November.
 
 Built by Yuyao (lead; data platform, demo, submission), Michael (harness and verification), Jayden (agent autonomy) and Alex (interface and design). The team coordinates on a pinned GitHub issue with `tools/board`; see [AGENTS.md](AGENTS.md).
