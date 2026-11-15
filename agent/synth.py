@@ -1449,7 +1449,9 @@ def _web_probes(
     excluded, reasons = list(exclude_sources), []
     for _ in range(WEB_TRIES):
         found, info, why = _web_probes_once(goal, design_, say, purpose=purpose, exclude_sources=excluded,
-                                            disjoint_from=disjoint_from, keep=(magic, purpose))
+                                            disjoint_from=disjoint_from, keep=(magic, purpose),
+                                            hints={"format_words": [design_.format],
+                                                   "suffixes": [Path(like).suffix] if Path(like).suffix else []})
         if found is not None or info is None or not why.startswith("not the user's format"):
             return found, info, why + (f" (earlier: {'; '.join(reasons)})" if reasons and found is None else "")
         reasons.append(why)
@@ -1459,7 +1461,7 @@ def _web_probes(
 
 def _web_probes_once(
     goal: str, design_: Design, say: Callable[..., None], *, purpose: str, exclude_sources: list[str] | tuple = (),
-    disjoint_from: list[str] | tuple = (), keep: tuple[bytes, str] | None = None,
+    disjoint_from: list[str] | tuple = (), keep: tuple[bytes, str] | None = None, hints: dict | None = None,
 ) -> tuple[ProbeSet | None, dict | None, str]:
     """Labelled files of the design's modality from a public dataset: agent.hub_probes.find_probes(goal,
     design.modality, <SENSE_HOME>/fetched/probes/<modality>[-unseen]), read with sense.adapters.probe_folder as a
@@ -1482,7 +1484,7 @@ def _web_probes_once(
     try:
         folder, info = hub_probes.find_probes(goal, design_.modality, root, emit=forward,
                                               exclude_sources=list(exclude_sources),
-                                              disjoint_from=list(disjoint_from), **options)
+                                              disjoint_from=list(disjoint_from), **options, **(hints or {}))
     except hub_probes.ProbesUnavailable as exc:
         return None, None, str(exc) or type(exc).__name__
     source = str(info.get("source") or info.get("url") or "")
